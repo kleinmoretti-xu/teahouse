@@ -197,6 +197,13 @@ export interface ConversationView {
   preview: string
 }
 
+export interface TableTextMeta {
+  /** 表格图片消息的原始 TSV 文字视图；仅图片消息可有。 */
+  tableText: string
+  /** tableText 因上限被截断时为 true。 */
+  tableTextTruncated?: boolean
+}
+
 /** 文件消息引用（messages.file_ref 的 JSON 结构） */
 export interface FileRefView {
   transferId: string
@@ -206,6 +213,10 @@ export interface FileRefView {
   size: number
   count: number
   dir: boolean
+  /** 表格图片消息的原始 TSV 文字视图；仅图片消息可有。 */
+  tableText?: string
+  /** tableText 因上限被截断时为 true。 */
+  tableTextTruncated?: boolean
   /** 是否由发送方文件卡片请求直接发送，接收方按本地设置自动保存。 */
   direct?: boolean
 }
@@ -546,11 +557,21 @@ export interface PantryApi {
   exportData(format: ExportFormat, options?: DataExportOptions): Promise<string | null>
   importData(): Promise<DataImportResult | null>
   /** 粘贴的图片字节 → 落本机图片缓存 → 以 purpose:image 发起传输 */
-  sendImageBytes(peerNodeId: string, name: string, bytes: ArrayBuffer): Promise<MessageView | null>
+  sendImageBytes(
+    peerNodeId: string,
+    name: string,
+    bytes: ArrayBuffer,
+    tableText?: TableTextMeta
+  ): Promise<MessageView | null>
   /** 磁盘上的图片文件按图片消息发送（拖拽/选择器入口） */
   offerImagePath(peerNodeId: string, path: string): Promise<MessageView | null>
   /** 群聊图片：≤10MB 按图片 offer，超限退化为普通文件 offer */
-  sendGroupImageBytes(groupId: string, name: string, bytes: ArrayBuffer): Promise<MessageView | null>
+  sendGroupImageBytes(
+    groupId: string,
+    name: string,
+    bytes: ArrayBuffer,
+    tableText?: TableTextMeta
+  ): Promise<MessageView | null>
   offerGroupImagePath(groupId: string, path: string): Promise<MessageView | null>
   /** 在独立图片窗口中查看，不遮挡主聊天窗口 */
   openImageViewer(transferId: string): Promise<boolean>

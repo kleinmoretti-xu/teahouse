@@ -121,7 +121,9 @@ export const CAPS = {
   /** 私聊文件支持发送方在文件卡片上请求免确认直接接收（收端仍受本地开关控制）。 */
   fileDirect: 'fd1',
   /** 支持 file-ctl offer.msgId，并可撤回图片 / 未完成文件。 */
-  mediaRecall: 'mrec1'
+  mediaRecall: 'mrec1',
+  /** 支持表格图片消息在图片 / 原始 TSV 文本视图间本地切换。 */
+  tableText: 'tbl1'
 } as const
 
 /** 报文信封（protocol §4） */
@@ -268,6 +270,8 @@ export interface FileMeta {
 export const IMG_AUTO_ACCEPT = 20 * 1024 * 1024
 /** 群聊图片内联上限（决议 #33）：超限按普通文件发送，由收端手动接收 */
 export const GROUP_IMG_AUTO_ACCEPT = 10 * 1024 * 1024
+/** 表格图片消息原始 TSV 文字视图上限（决议 #190） */
+export const TABLE_TEXT_LIMIT_BYTES = TEXT_TCP_LIMIT
 
 export interface FileCtlOffer {
   op: 'offer'
@@ -284,6 +288,10 @@ export interface FileCtlOffer {
   rootName: string
   /** image/sticker：聊天媒体；update：局域网自更新安装包（不入聊天/接收目录） */
   purpose?: 'image' | 'sticker' | 'update'
+  /** 表格图片消息的原始 TSV 文字视图；仅 purpose=image 单图可携带。 */
+  tableText?: string
+  /** tableText 因上限被截断时为 true；仅与 tableText 同时出现。 */
+  tableTextTruncated?: boolean
   /** 群聊媒体上下文；存在时收端把本地消息写入 group:<groupId> 会话 */
   groupId?: string
   groupRev?: number

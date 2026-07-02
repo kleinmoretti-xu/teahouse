@@ -5,7 +5,8 @@ import type {
   ForwardTarget,
   MessageView,
   NudgeEvent,
-  NudgeResult
+  NudgeResult,
+  TableTextMeta
 } from '../../../shared/ipc'
 import type { PkGame } from '../../../shared/pk'
 
@@ -403,13 +404,13 @@ export const useChatStore = defineStore('chat', {
     },
 
     /** 粘贴的图片字节（截图 Ctrl+V） */
-    async sendImageBytes(name: string, bytes: ArrayBuffer): Promise<boolean> {
+    async sendImageBytes(name: string, bytes: ArrayBuffer, tableText?: TableTextMeta): Promise<boolean> {
       const conv = this.activeConv
       if (!conv) return false
       const view =
         conv.type === 'group'
-          ? await window.pantry.sendGroupImageBytes(conv.peerId, name, bytes)
-          : await window.pantry.sendImageBytes(conv.peerId, name, bytes)
+          ? await window.pantry.sendGroupImageBytes(conv.peerId, name, bytes, tableText)
+          : await window.pantry.sendImageBytes(conv.peerId, name, bytes, tableText)
       return this.pushOwn(view)
     },
 

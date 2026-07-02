@@ -8,6 +8,7 @@ import {
   OFFER_FILES_PER_PACKET,
   PROTOCOL_VERSION,
   SCAN_RANGES_PER_PACKET,
+  TABLE_TEXT_LIMIT_BYTES,
   TEXT_TCP_LIMIT,
   TEXT_UDP_LIMIT,
   UDP_MAX_INBOUND,
@@ -61,6 +62,10 @@ function isStrAllowEmpty(x: unknown, max: number): x is string {
 
 function isInt(x: unknown): x is number {
   return typeof x === 'number' && Number.isFinite(x) && Number.isInteger(x)
+}
+
+function utf8ByteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8')
 }
 
 function isCidr(x: unknown): x is string {
@@ -233,6 +238,27 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
       }
       if (!Array.isArray(o.files) || o.files.length === 0 || o.files.length > OFFER_FILES_PER_PACKET)
         return false
+      if (
+        o.tableText !== undefined ||
+        (o as { tableTextTruncated?: unknown }).tableTextTruncated !== undefined
+      ) {
+        if (
+          typeof o.tableText !== 'string' ||
+          o.tableText.length === 0 ||
+          utf8ByteLength(o.tableText) > TABLE_TEXT_LIMIT_BYTES
+        ) {
+          return false
+        }
+        if (
+          (o as { tableTextTruncated?: unknown }).tableTextTruncated !== undefined &&
+          (o as { tableTextTruncated?: unknown }).tableTextTruncated !== true
+        ) {
+          return false
+        }
+        if (o.purpose !== 'image' || o.fileCount !== 1 || o.files.length !== 1 || o.files[0].isDir) {
+          return false
+        }
+      }
       return o.files.every(
         (m) =>
           isRecord(m) &&

@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v0.35，P1 协议基线已落地；媒体 offer 携带跨端一致消息 ID |
-| 日期 | 2026-06-30 |
+| 状态 | v0.36，表格图片消息 `tbl1` 能力与 `tableText` 元数据已实现 |
+| 日期 | 2026-07-02 |
 | 关系 | 本文是**线上协议的唯一事实来源**；功能取舍依据 [requirements.md](requirements.md)（决议 #5：借鉴 ipmsg/iptux 机制、报文自有、不互通、不加密） |
 
 ## 1. 设计原则
@@ -49,7 +49,7 @@
 }
 ```
 
-**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
+**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`tbl1` 表格图片文字视图**（决议 #190，支持 `file-ctl offer.tableText/tableTextTruncated`，图片气泡可在图片 / 原始 TSV 文本间切换）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
 
 ## 4. 报文信封（UDP 与 TCP 控制帧通用）
 
@@ -168,7 +168,7 @@ sequenceDiagram
 - 私聊窗口震动：`msg(kind:"nudge")` 仅单聊使用，payload 除 `kind` 外不带正文、群字段或文件引用；它是可靠即时提醒动作。发送走可靠 ACK；若对端无响应则失败且**不进入离线补发队列**。发送成功后发送端写入本地 `system` 提示行；收端未限流时写入本地 `system` 提示行、唤起主窗并定位到 `single:<from>` 会话；若该单聊免打扰，收端不得唤起、置前或震动主窗。这些提示行不写 FTS，不改变线上载荷。收发两端均按同一对端限流：60 秒最多 2 次，且任意两次至少间隔 15 秒；收端超限时仍回 ACK，但丢弃本地震动动作与提示，防止重传放大骚扰（决议 #109/#110/#112）。
 - PK 分歧解决：`msg(kind:"pk")` 用于骰子与猜拳（决议 #139）。`game` 取 `dice` 或 `rps`；`dice.result` 为整数 1–6，`rps.result` 为 `rock|paper|scissors`。每条 PK 都是独立消息，不使用回合关联字段，对方点击参与时也发送新的独立 `pk` 消息。结果由发送端主进程在发送瞬间生成并写入载荷；接收端不得重新随机，只播放本地动画并定格到载荷结果。PK 是在线即时娱乐：单聊只在对端在线时发送，群聊只向当时在线的其他成员逐个单播，不进入离线补发队列，payload 也不带 `resend`；发送失败后的重试必须复用同一 `msgId` 与同一 `result`，不得重新随机。通知 / 会话预览 / 历史搜索不得从线上摘要提前暴露结果；旧版本客户端不发送 fallback 文本，混用时按不支持 PK 处理。PK 不提供承诺揭示、签名或加密公平性证明。
 - 群内 @：`group-text.mentions` 为可选 nodeId 数组，最多 50 个；收端若包含本机 nodeId，则会话列表本地标记"有人@我"，打开会话后清除。`mentions` 只影响提醒，不影响投递范围；投递仍按群成员列表逐个单播。
-- 图片消息：线上即一次 `file-ctl` 传输，offer 携带 `purpose:"image"` 标记（单聊单文件 ≤20MB；群聊单文件 ≤10MB）和发送端生成的 `msgId`，收端**免确认**自动拉取进图片缓存，并使用同一 `msgId` 生成 `kind:"image"` 的消息记录；超限或多文件退化为普通文件流程（群聊超 10MB 图片必须由接收者手动接收后才开始 TCP 拉取，决议 #33）。不另发 msg 报文——单一事实源，避免双报文乱序协调。群聊图片同样不新增 `msg(kind:"image")`，而是在逐成员 offer 中携带 `groupId/groupRev` 作为群会话上下文。
+- 图片消息：线上即一次 `file-ctl` 传输，offer 携带 `purpose:"image"` 标记（单聊单文件 ≤20MB；群聊单文件 ≤10MB）和发送端生成的 `msgId`，收端**免确认**自动拉取进图片缓存，并使用同一 `msgId` 生成 `kind:"image"` 的消息记录；超限或多文件退化为普通文件流程（群聊超 10MB 图片必须由接收者手动接收后才开始 TCP 拉取，决议 #33）。不另发 msg 报文——单一事实源，避免双报文乱序协调。群聊图片同样不新增 `msg(kind:"image")`，而是在逐成员 offer 中携带 `groupId/groupRev` 作为群会话上下文。表格粘贴图片（决议 #190）仍是普通 `purpose:"image"`，仅在收件端声明 `tbl1` 时额外携带可选 `tableText`（原始制表符文本，≤4096B UTF-8）与 `tableTextTruncated`（发送端截断时为 true）；旧端忽略这些字段并只显示图片。
 - `file-ctl offer` 接收侧必须以所有非目录文件的 `size` 重新求和，且该值必须等于 offer 声明的 `totalSize`；图片/表情免确认阈值也以接收侧复核后的总大小为准（决议 #132）。
 - 表情包消息（`kind:"sticker"`）：复用图片通道且**一律免确认**——发送端收藏入库时已压缩（静图 ≤512px WebP / GIF ≤2MB，见 ui-design.md §5），体积天然受控；收端进表情缓存，气泡内固定小尺寸渲染（需求 F-MSG-7）。
 
@@ -229,7 +229,7 @@ sequenceDiagram
     Note over R: 校验通过 → 重命名落盘；逐文件重复 pull 直至完毕
 ```
 
-- **offer**（UDP，≤1200B 装不下时拆多条同 transferId）：`msgId` 为可选聊天消息 ID；新端发送图片 / 普通文件 / 群文件等会出现在聊天流里的媒体时必须填写，接收端若识别该字段则用它作为 `messages.id`，以支撑撤回与去重；`purpose:"update"` 等隐藏传输不填写。`files[]: {fileId, path, size, isDir}`，`path` 为相对路径（文件夹传输即展平的相对路径树，含空目录条目）。可选 `purpose:"image"|"sticker"|"update"` 表示免确认图片 / 表情 / 自更新安装包；可选 `groupId/groupRev` 表示该 transfer 是群聊媒体的一次点对点投递，收端据此入 `group:<groupId>` 会话。入站校验须拒绝 `groupId` 存在且 `purpose` 存在但总大小超过 10MB 的 offer。旧端忽略未知 `msgId` 字段并按旧逻辑生成本地消息；新端仅在对端声明 `mrec1` 时展示媒体撤回入口。`purpose:"update"` 由 updater 接管（落临时目录、不入聊天 / 不存到接收目录），不受 10MB 限制，见 §8.1。
+- **offer**（UDP，≤1200B 装不下时拆多条同 transferId；单个可靠信封超过 UDP 上限时走既有 TCP 控制帧兜底）：`msgId` 为可选聊天消息 ID；新端发送图片 / 普通文件 / 群文件等会出现在聊天流里的媒体时必须填写，接收端若识别该字段则用它作为 `messages.id`，以支撑撤回与去重；`purpose:"update"` 等隐藏传输不填写。`files[]: {fileId, path, size, isDir}`，`path` 为相对路径（文件夹传输即展平的相对路径树，含空目录条目）。可选 `purpose:"image"|"sticker"|"update"` 表示免确认图片 / 表情 / 自更新安装包；可选 `tableText` 仅允许在 `purpose:"image"`、单文件、非目录图片 offer 中携带，用于表格图片消息的文字视图；可选 `tableTextTruncated:true` 仅允许与 `tableText` 同时出现，表示发送端已按上限截断文字视图，图片内容仍完整；可选 `groupId/groupRev` 表示该 transfer 是群聊媒体的一次点对点投递，收端据此入 `group:<groupId>` 会话。入站校验须拒绝 `groupId` 存在且 `purpose` 存在但总大小超过 10MB 的 offer。旧端忽略未知 `msgId/tableText/tableTextTruncated` 字段并按旧逻辑生成本地消息；新端仅在对端声明 `mrec1` 时展示媒体撤回入口，仅在本地消息 `file_ref.tableText` 存在时展示表格图片/文字切换。`purpose:"update"` 由 updater 接管（落临时目录、不入聊天 / 不存到接收目录），不受 10MB 限制，见 §8.1。
 - **direct**（UDP，发送方在已有私聊文件卡片上触发）：`{op:"direct", transferId}`。发送端只在本地已有该 transfer、普通文件 offer 已送达、对端在线且 caps 含 `fd1`、非群聊会话时发送。收端仅在该 transfer 是私聊入站普通文件、状态仍为 `offering` 且本地允许直接接收时自动 accept；否则忽略，继续保持普通文件卡片。**群聊文件不允许直接发送**，即使收到 direct 控制帧也不得自动接收。
 - **默认接收落盘（本地策略）**：普通手动「接收」和 direct 自动 accept 都不改变 TCP 拉取式数据面，仍由接收方连接发送方拉取、校验 SHA-256、写 `.part` 后重命名。未使用「另存为」时，默认落点由接收方本地计算为 `文件保存位置/联系人名称/`（direct 场景即发送人名字）；目录名以本地备注优先、其次 profile 昵称生成并清洗。点击「另存为」时直接使用用户选择目录。该目录名不入协议，避免远端控制本机路径。
 - **TCP 帧格式**：4 字节大端长度前缀 + UTF-8 JSON 控制帧；`pull-ok` 后紧跟声明长度的裸字节流（零拷贝直传，不做 base64）。帧型：`msg`（承载超长消息/大控制信封）/ `msg-ack` / `pull` / `pull-ok` / `done`（带整文件 SHA-256）/ `finish`（接收方全部拉完，发送方据此判定完成）/ `err`（拒绝原因，如未授权 `not-found`、并发 `busy`）。同一连接内文件串行拉取；`msg` 帧独立短连接发送。
@@ -273,6 +273,7 @@ sequenceDiagram
 | NUDGE_RATE_WINDOW / MAX | 60 s / 2 次 | 同一对端发送端与接收端各自限流（决议 #109） |
 | IMG_AUTO_ACCEPT | ≤ 20 MB | 决议 #2，用户指定 |
 | GROUP_IMG_AUTO_ACCEPT | ≤ 10 MB | 决议 #33；超限群图片按普通文件手动接收 |
+| TABLE_TEXT_LIMIT | ≤ 4096B UTF-8 | 决议 #190；表格图片消息的原始 TSV 文字视图上限 |
 | GROUP_MAX_MEMBERS | 50 | |
 | GROUP_ADMIN_PASSWORD | ≤ 64 字符 | 可空；只生成摘要，不传明文 |
 | GROUP_ADMIN_HINT | ≤ 40 字符 | 可空；仅在有管理密码时展示，不作为鉴权依据 |
@@ -340,3 +341,4 @@ sequenceDiagram
 - 2026-06-28 v0.33 决议 #179：明确默认接收落盘本地策略，不改线上字段。普通手动「接收」与 direct 自动 accept 在未另存为时都保存到 `文件保存位置/联系人名称/`；另存为直接使用用户选择目录；目录名仍只由接收方本地生成并清洗，不入协议。
 - 2026-06-28 v0.34 决议 #181：Linux 发布矩阵新增 Debian 10 / UOS 20 arm64 包后，`update{op:"req"}` 增加可选 `arch:"x64"|"arm64"`，源端按请求架构匹配本地安装包；旧端缺 `arch` 时保持同平台兼容，新端避免 x64 / arm64 deb 混用。
 - 2026-06-30 v0.35 决议 #188：媒体撤回协议方案。§3 caps 新增 `mrec1`；§8 `file-ctl offer` 新增可选 `msgId`，新端发送图片 / 普通文件 / 群文件等聊天媒体时用发送端消息 ID 填写，收发两端据此共享同一 `messages.id`；撤回仍复用 `msg(kind:"recall", targetId)`。图片可撤回并隐藏；文件仅未完成接收时接受撤回，已完成保存的文件忽略迟到撤回；群文件须所有关联 transfer 均未完成才可撤回。旧端忽略 `msgId`，新端仅对声明 `mrec1` 的对端展示媒体撤回入口。
+- 2026-07-02 v0.36 决议 #190：表格粘贴图片消息协议扩展。§3 caps 新增 `tbl1`；§8 `file-ctl offer` 新增可选 `tableText` 与 `tableTextTruncated`，仅允许 `purpose:"image"` 的单图媒体携带，文字长度上限 4096B UTF-8。发送端只向声明 `tbl1` 的在线收件人附带原始 TSV 文本；群聊按成员能力分别发送，超限时截断文字视图并标记 `tableTextTruncated:true`。收端把字段写入本地图片消息 `file_ref`，用于同一气泡内图片 / 文字视图切换；旧端忽略未知字段并按普通图片显示。

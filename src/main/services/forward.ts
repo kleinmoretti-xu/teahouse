@@ -1,4 +1,4 @@
-import type { FileRefView, ForwardResult, ForwardTarget, MessageView } from '../../shared/ipc'
+import type { FileRefView, ForwardResult, ForwardTarget, MessageView, TableTextMeta } from '../../shared/ipc'
 import type { FilesService } from './files'
 import type { GroupsService } from './groups'
 import type { ChatService } from './chat'
@@ -59,9 +59,18 @@ export class ForwardService {
     const transfer = this.deps.files.transferView(ref.transferId)
     if (!transfer?.savedPath) return null
     const purpose = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'file'
+    const tableText = this.tableTextForForward(row.kind, ref)
     return target.type === 'group'
-      ? this.deps.files.offerGroupPaths(target.id, [transfer.savedPath], purpose)
-      : this.deps.files.offerPaths(target.id, [transfer.savedPath], purpose)
+      ? this.deps.files.offerGroupPaths(target.id, [transfer.savedPath], purpose, tableText)
+      : this.deps.files.offerPaths(target.id, [transfer.savedPath], purpose, tableText)
+  }
+
+  private tableTextForForward(kind: string, ref: FileRefView): TableTextMeta | undefined {
+    if (kind !== 'image' || !ref.tableText) return undefined
+    return {
+      tableText: ref.tableText,
+      ...(ref.tableTextTruncated ? { tableTextTruncated: true } : {})
+    }
   }
 
   private parseFileRef(raw: string | null): FileRefView | null {
