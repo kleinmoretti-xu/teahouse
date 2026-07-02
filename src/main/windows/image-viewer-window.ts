@@ -1,6 +1,10 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { resolveDevRendererUrl } from '../util/renderer-url'
+import {
+  IMAGE_VIEWER_MIN_WINDOW_HEIGHT,
+  IMAGE_VIEWER_MIN_WINDOW_WIDTH
+} from './image-viewer-sizing'
 
 let win: BrowserWindow | null = null
 
@@ -43,8 +47,8 @@ export function openImageViewerWindow(transferId: string, name: string): void {
   win = new BrowserWindow({
     width: 640,
     height: 480,
-    minWidth: 1,
-    minHeight: 1,
+    minWidth: IMAGE_VIEWER_MIN_WINDOW_WIDTH,
+    minHeight: IMAGE_VIEWER_MIN_WINDOW_HEIGHT,
     show: false,
     title,
     backgroundColor: '#111412',

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.00，表格粘贴图片消息技术方案已实现（决议 #190） |
+| 状态 | v1.01，图片查看器小图窗口最小尺寸修复已实现（决议 #191） |
 | 日期 | 2026-07-02 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -310,6 +310,7 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-06-15 v0.41 决议 #94：新增 `windows/image-viewer-window.ts` 与 `#/image-viewer` 渲染入口，聊天/历史搜索通过 `img:open-viewer` 打开独立普通窗口；主窗不再挂图片覆盖层，`img:save-as` 保存对话框按调用方 webContents 绑定图片窗口。
 - 2026-06-15 v0.42 决议 #95：新增 `img:fit-viewer-window` IPC，图片窗口渲染层在解码后上报 natural size，主进程按调用窗口所在 display 的 workArea 70% 计算初始 zoom 与 content size；图片窗口标题只取 transfer name，底部半透明工具条在渲染层覆盖绘制。
 - 2026-06-15 v0.43 决议 #96：图片查看器不再用 `transform: scale()` 表达缩放，改为渲染层显式计算 `<img>` CSS width/height（natural size × zoom），`transform` 仅用于 translate/rotate；图片窗口 BrowserWindow 最小内容尺寸降到 1×1，由实际图片缩放结果决定内容区大小，避免大图/极端比例图因布局盒子或最小尺寸产生空白。
+- 2026-07-02 v0.44a 决议 #191：在保留 #96 显式图片宽高与小图 100% 显示的前提下，撤回“窗口可小到 1×1”的极端交互结果。`windows/image-viewer-sizing.ts` 统一计算图片窗口 fit 尺寸：缩放比例仍按屏幕工作区 70% 与原图尺寸决定，但最终内容区宽高不得低于 560×360；`image-viewer-window.ts` 同步设置 BrowserWindow 最小外框尺寸，避免用户手动缩到工具条挤压。无协议、IPC 签名、存储或传输改动。
 - 2026-06-15 v0.44 决议 #97：图片查看器 OCR 采用 Tesseract.js 浏览器 worker，本地复制 `worker/core/lang` 静态资源到 renderer public 目录并显式传入 `workerPath/corePath/langPath/workerBlobURL:false`，禁止 CDN fallback；新增只读 `img:ocr-source` IPC，主进程按已登记 transferId 返回受限图片字节，不暴露文件路径。渲染层在 `ImageViewer` 内维护 OCR 内存状态，小图自动识别，大图手动识别，识别框按 natural image 坐标随现有 zoom/offset 叠加；本轮不写数据库、不加协议字段、不做“大爆炸”UI。
 - 2026-06-15 v0.45 决议 #98：OCR 结果归一化时优先使用 Tesseract `word.symbols[].bbox` 生成字符级 token，并给 token 记录 `wordIndex`；复制时按 lineIndex/tokenIndex 排序，同一 wordIndex 内不插空格，跨英文/数字 wordIndex 才补空格，中文连续拼接。此调整只改渲染层选择/复制算法和 CSS cursor，不触碰 IPC、主进程读取口或 OCR 资源加载。
 - 2026-06-15 v0.46 决议 #99：图片查看器双击从 fit 切到 100% 时，渲染层用当前 `.image-plane` 屏幕矩形把鼠标点换算为图片原始坐标，再按目标 zoom 反推出 offset，使该坐标保持在鼠标下；键盘/工具栏原始大小仍居中。OCR 缓存键改为 `transferId:naturalWidthxnaturalHeight`，`ImageViewer` 在请求 `img:ocr-source` 前先查 `ocr.ts` 的内存结果缓存，命中即恢复 tokens/状态；缩放、平移、旋转均不触发 OCR。无协议、IPC、存储或主进程改动。
@@ -367,3 +368,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-06-30 v0.98 决议 #188：媒体撤回技术方案实现。新增 caps `mrec1` 与 `file-ctl offer.msgId`；图片 / 文件 / 群文件收发两端共享同一 `messages.id`，撤回仍走 `msg:recall` / `msg(kind:"recall")`。ChatService 负责撤回窗口、发送者和会话判断，FilesService 负责媒体能力、文件 transfer 是否已完成、取消传输和清理 `.part`；不新增 SQLite 表列。版本 0.29.6 → 0.30.0。
 - 2026-06-30 v0.99 决议 #189：修复发送图片贴底与截图后回前台。`chatStore.pushOwn()` 在当前会话成功追加自己发送的消息后触发 `requestConversationScroll('latest')` 并退出历史态；主进程抽出 `showWindowForeground()`，截图窗口关闭 / 发送截图时用短暂 `alwaysOnTop` 把主窗带回前台后释放。版本 0.30.0 → 0.30.1。
 - 2026-07-02 v1.00 决议 #190：表格粘贴图片消息技术方案实现。新增 caps `tbl1` 与 `file-ctl offer.tableText/tableTextTruncated`，不新增消息类型或 SQLite 迁移；renderer 在粘贴分流中识别 HTML table / TSV，默认生成表格图片，额外提取原始 TSV 作为受限元数据，超出 4096B UTF-8 时安全截断并标记；FilesService 按收件人能力附带或丢弃字段，接收端写入 `file_ref`；ImageBubble 以本地状态显示图片 / 文字滑块。旧端仍只显示普通图片，纯内网与日志脱敏约束不变。版本 0.30.1 → 0.31.0。
+- 2026-07-02 v1.01 决议 #191：图片查看器小图窗口最小尺寸修复。新增纯函数 `fitImageViewerContent()` 统一初始 fit 计算，内容区最小 560×360，BrowserWindow 最小外框同步抬高；小图仍按原始尺寸居中，底部工具条获得稳定空间。版本 0.31.0 → 0.31.1。

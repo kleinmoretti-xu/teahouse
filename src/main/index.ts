@@ -69,6 +69,7 @@ import { setupTray, stopTrayUnreadFlash, updateTrayUnread } from './windows/tray
 import { openSettingsWindow } from './windows/settings-window'
 import { closeCaptureWindow, openCaptureWindow } from './windows/capture-window'
 import { openImageViewerWindow } from './windows/image-viewer-window'
+import { fitImageViewerContent } from './windows/image-viewer-sizing'
 import { showWindowForeground } from './windows/foreground'
 import {
   incomingNotificationOptions,
@@ -1765,16 +1766,17 @@ if (!gotLock) {
     if (!imageWidth || !imageHeight) return 1
 
     const display = screen.getDisplayMatching(viewerWindow.getBounds())
-    const maxWidth = Math.max(1, Math.floor(display.workAreaSize.width * 0.7))
-    const maxHeight = Math.max(1, Math.floor(display.workAreaSize.height * 0.7))
-    const scale = Math.min(1, maxWidth / imageWidth, maxHeight / imageHeight)
-    const contentWidth = Math.max(1, Math.round(imageWidth * scale))
-    const contentHeight = Math.max(1, Math.round(imageHeight * scale))
+    const fit = fitImageViewerContent({
+      imageWidth,
+      imageHeight,
+      workAreaWidth: display.workAreaSize.width,
+      workAreaHeight: display.workAreaSize.height
+    })
 
     if (viewerWindow.isMaximized()) viewerWindow.unmaximize()
-    viewerWindow.setContentSize(contentWidth, contentHeight)
+    viewerWindow.setContentSize(fit.contentWidth, fit.contentHeight)
     viewerWindow.center()
-    return scale
+    return fit.scale
   })
 
   ipcMain.handle(IpcChannels.imgOcrSource, (event, transferId: unknown): ImageOcrSource | null => {
