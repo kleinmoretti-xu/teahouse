@@ -175,9 +175,9 @@ export const useChatStore = defineStore('chat', {
       this.requestConversationScroll(scroll)
     },
 
-    /** 按会话 id 打开（群会话 / 通知跳转通用） */
-    async openConv(convId: string, options: OpenConversationOptions = {}): Promise<void> {
-      const scroll = options.scroll ?? 'restore'
+    /** 按会话 id 打开（会话列表 / 群会话 / 通知跳转通用）：用户主动进入默认看最新（决议 #192）。 */
+    async openConv(convId: string, options: OpenConversationOptions = { scroll: 'latest' }): Promise<void> {
+      const scroll = options.scroll ?? 'latest'
       if (convId.startsWith('single:')) {
         await this.openPeer(convId.slice(7), { scroll })
         return
