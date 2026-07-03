@@ -5,7 +5,8 @@ import type {
   ForwardTarget,
   MessageView,
   NudgeEvent,
-  NudgeResult
+  NudgeResult,
+  TableTextMeta
 } from '../../../shared/ipc'
 import type { PkGame } from '../../../shared/pk'
 
@@ -174,9 +175,9 @@ export const useChatStore = defineStore('chat', {
       this.requestConversationScroll(scroll)
     },
 
-    /** 按会话 id 打开（群会话 / 通知跳转通用） */
-    async openConv(convId: string, options: OpenConversationOptions = {}): Promise<void> {
-      const scroll = options.scroll ?? 'restore'
+    /** 按会话 id 打开（会话列表 / 群会话 / 通知跳转通用）：用户主动进入默认看最新（决议 #192）。 */
+    async openConv(convId: string, options: OpenConversationOptions = { scroll: 'latest' }): Promise<void> {
+      const scroll = options.scroll ?? 'latest'
       if (convId.startsWith('single:')) {
         await this.openPeer(convId.slice(7), { scroll })
         return
@@ -403,13 +404,13 @@ export const useChatStore = defineStore('chat', {
     },
 
     /** 粘贴的图片字节（截图 Ctrl+V） */
-    async sendImageBytes(name: string, bytes: ArrayBuffer): Promise<boolean> {
+    async sendImageBytes(name: string, bytes: ArrayBuffer, tableText?: TableTextMeta): Promise<boolean> {
       const conv = this.activeConv
       if (!conv) return false
       const view =
         conv.type === 'group'
-          ? await window.pantry.sendGroupImageBytes(conv.peerId, name, bytes)
-          : await window.pantry.sendImageBytes(conv.peerId, name, bytes)
+          ? await window.pantry.sendGroupImageBytes(conv.peerId, name, bytes, tableText)
+          : await window.pantry.sendImageBytes(conv.peerId, name, bytes, tableText)
       return this.pushOwn(view)
     },
 

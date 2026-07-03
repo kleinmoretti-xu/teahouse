@@ -5,7 +5,13 @@ import { useChatStore } from '../stores/chat'
 import { useGroupsStore } from '../stores/groups'
 import { useTransfersStore } from '../stores/transfers'
 import { splitEmojiText } from '../utils/compat-emoji'
-import { hasClipboardText, shouldSuppressNativeImageFallback } from '../utils/clipboard'
+import {
+  hasClipboardText,
+  normalizeClipboardText,
+  readClipboardTableText,
+  shouldSuppressNativeImageFallback,
+  type ClipboardTableText
+} from '../utils/clipboard'
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
 import { listTime, separatorTime } from '../utils/time'
@@ -160,6 +166,10 @@ let nudgeRetryTimer: ReturnType<typeof setInterval> | null = null
 let applyingConversationScroll = false
 const SCROLL_BOTTOM_THRESHOLD = 24
 const CLIPBOARD_NATIVE_FALLBACK_DELAY_MS = 80
+const TABLE_RENDER_MAX_COL_WIDTH = 220
+const TABLE_RENDER_MIN_COL_WIDTH = 56
+const TABLE_RENDER_PAD_X = 10
+const TABLE_RENDER_ROW_HEIGHT = 28
 // 贴底意图（决议 #133）：用户处于"看最新"状态时，图片 / 文件卡片等异步撑高后继续贴底
 let stickBottom = false
 let bottomKeeper: ResizeObserver | null = null
@@ -836,6 +846,21 @@ function insertNewline(): void {
   })
 }
 
+function insertTextAtCursor(text: string): void {
+  const ta = inputEl.value
+  if (!ta) {
+    draft.value += text
+    return
+  }
+  const start = ta.selectionStart ?? draft.value.length
+  const end = ta.selectionEnd ?? start
+  draft.value = draft.value.slice(0, start) + text + draft.value.slice(end)
+  void nextTick(() => {
+    ta.focus()
+    ta.selectionStart = ta.selectionEnd = start + text.length
+  })
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   if (!text || overLimit.value || !canSend.value) return
@@ -1184,6 +1209,114 @@ async function sendImage(): Promise<void> {
   }
 }
 
+interface ClipboardImagePayload {
+  bytes: ArrayBuffer
+  ext: string
+}
+
+function imageExtFromMime(type: string): string {
+  if (type === 'image/jpeg') return '.jpg'
+  if (type === 'image/webp') return '.webp'
+  if (type === 'image/gif') return '.gif'
+  return '.png'
+}
+
+async function readClipboardImageItem(data: DataTransfer): Promise<ClipboardImagePayload | null> {
+  for (const item of Array.from(data.items)) {
+    if (!item.type.startsWith('image/')) continue
+    const file = item.getAsFile()
+    if (!file) continue
+    return { bytes: await file.arrayBuffer(), ext: imageExtFromMime(item.type) }
+  }
+  return null
+}
+
+function parseTableRows(text: string): string[][] {
+  return normalizeClipboardText(text)
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => line.split('\t'))
+}
+
+async function renderTableTextImageBytes(text: string): Promise<ArrayBuffer | null> {
+  const rows = parseTableRows(text)
+  if (rows.length === 0) return null
+  const colCount = Math.max(...rows.map((row) => row.length))
+  if (colCount === 0) return null
+
+  const measureCanvas = document.createElement('canvas')
+  const measureCtx = measureCanvas.getContext('2d')
+  if (!measureCtx) return null
+  measureCtx.font =
+    '14px -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif'
+  const widths = Array.from({ length: colCount }, (_, col) => {
+    const measured = rows.reduce((max, row) => {
+      const text = row[col] ?? ''
+      return Math.max(max, Math.ceil(measureCtx.measureText(text).width))
+    }, 0)
+    return Math.max(
+      TABLE_RENDER_MIN_COL_WIDTH,
+      Math.min(TABLE_RENDER_MAX_COL_WIDTH, measured + TABLE_RENDER_PAD_X * 2)
+    )
+  })
+  const width = widths.reduce((sum, value) => sum + value, 0) + 1
+  const height = rows.length * TABLE_RENDER_ROW_HEIGHT + 1
+  if (width <= 1 || height <= 1 || width > 12000 || height > 12000) return null
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.strokeStyle = '#D8DED9'
+  ctx.lineWidth = 1
+  ctx.font = measureCtx.font
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#1F2A24'
+
+  let y = 0
+  for (const row of rows) {
+    let x = 0
+    for (let col = 0; col < colCount; col++) {
+      const cellWidth = widths[col]
+      ctx.strokeRect(x + 0.5, y + 0.5, cellWidth, TABLE_RENDER_ROW_HEIGHT)
+      const text = row[col] ?? ''
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(x + TABLE_RENDER_PAD_X, y + 1, cellWidth - TABLE_RENDER_PAD_X * 2, TABLE_RENDER_ROW_HEIGHT - 2)
+      ctx.clip()
+      ctx.fillText(text, x + TABLE_RENDER_PAD_X, y + TABLE_RENDER_ROW_HEIGHT / 2 + 0.5)
+      ctx.restore()
+      x += cellWidth
+    }
+    y += TABLE_RENDER_ROW_HEIGHT
+  }
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null)
+        return
+      }
+      blob.arrayBuffer().then(resolve, () => resolve(null))
+    }, 'image/png')
+  })
+}
+
+async function sendTablePaste(data: DataTransfer, meta: ClipboardTableText): Promise<void> {
+  const plainText = normalizeClipboardText(data.getData('text/plain'))
+  const rawText = plainText.includes('\t') ? plainText : meta.tableText
+  const imageItem = await readClipboardImageItem(data)
+  const bytes = imageItem?.bytes ?? (await renderTableTextImageBytes(rawText))
+  if (!bytes) {
+    insertTextAtCursor(rawText)
+    return
+  }
+  await chatStore.sendImageBytes(`粘贴表格${imageItem?.ext ?? '.png'}`, bytes, meta)
+}
+
 /** Ctrl+V 粘贴：复制的文件按路径发（保留文件名/类型），截图位图按 bytes 发（F-MSG-3 / 决议 #76） */
 async function onPaste(event: ClipboardEvent): Promise<void> {
   if (!canSendMedia.value) return
@@ -1203,21 +1336,24 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
       else if (granted.length > 0) await chatStore.sendFilePaths(granted)
       return
     }
+    const tableText = readClipboardTableText(data)
+    if (tableText) {
+      markClipboardPasteHandled()
+      event.preventDefault()
+      await sendTablePaste(data, tableText)
+      return
+    }
     // 复制网页 / 富文本 emoji 时，剪贴板常同时带 text/plain 和 image/png；文本交给 textarea 原生粘贴。
     if (hasClipboardText(data)) {
       markClipboardPasteHandled()
       return
     }
     // 2) 截图位图（无对应文件路径）：直接按图片 bytes 发送
-    for (const item of Array.from(data.items)) {
-      if (!item.type.startsWith('image/')) continue
-      const file = item.getAsFile()
-      if (!file) continue
+    const imageItem = await readClipboardImageItem(data)
+    if (imageItem) {
       markClipboardPasteHandled()
       event.preventDefault()
-      const bytes = await file.arrayBuffer()
-      const ext = item.type === 'image/jpeg' ? '.jpg' : '.png'
-      await chatStore.sendImageBytes(`粘贴图片${ext}`, bytes)
+      await chatStore.sendImageBytes(`粘贴图片${imageItem.ext}`, imageItem.bytes)
       return
     }
   }

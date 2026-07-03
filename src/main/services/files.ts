@@ -11,13 +11,14 @@ import {
   OFFER_ASSEMBLE_TIMEOUT,
   OFFER_FILES_PER_PACKET,
   CAPS,
+  TABLE_TEXT_LIMIT_BYTES,
   type Envelope,
   type FileCtlOffer,
   type FileCtlPayload,
   type FileMeta,
   type GroupPayload
 } from '../../shared/protocol'
-import type { FileRefView, MessageView, MsgStatusEvent, TransferView } from '../../shared/ipc'
+import type { FileRefView, MessageView, MsgStatusEvent, TableTextMeta, TransferView } from '../../shared/ipc'
 import { makeEnvelope } from '../net/codec'
 import type { Messenger } from '../net/messenger'
 import type { PeerRegistry } from '../net/peer-registry'
@@ -59,6 +60,8 @@ interface AssemblingOffer {
   purpose?: FileCtlOffer['purpose']
   groupId?: string
   groupRev?: number
+  tableText?: string
+  tableTextTruncated?: boolean
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -175,7 +178,8 @@ export class FilesService extends EventEmitter {
   async offerPaths(
     peerId: string,
     paths: string[],
-    want: 'file' | 'image' | 'sticker' = 'file'
+    want: 'file' | 'image' | 'sticker' = 'file',
+    tableTextMeta?: TableTextMeta
   ): Promise<MessageView | null> {
     const peer = this.deps.registry.get(peerId)
     if (!peer || !peer.online || paths.length === 0) return null
@@ -184,12 +188,14 @@ export class FilesService extends EventEmitter {
     const transferId = randomUUID()
     const convId = this.deps.convRepo.ensureSingle(peerId)
     const msgId = randomUUID()
+    const tableText = normalizeTableTextMeta(prepared.purpose, tableTextMeta)
     const fileRef: FileRefView = {
       transferId,
       name: prepared.rootName,
       size: prepared.totalSize,
       count: prepared.fileCount,
-      dir: prepared.hasDir
+      dir: prepared.hasDir,
+      ...(tableText ?? {})
     }
     const now = Date.now()
     this.deps.msgRepo.insert({
@@ -235,7 +241,7 @@ export class FilesService extends EventEmitter {
     this.emitTransfer(transferId, true)
 
     // offer 分包可靠发送。注意：发送成败要以「数据面真实结果」为准，不能只看 offer 回程 ACK（issue #3）
-    void this.sendOfferPackets(peerId, transferId, prepared, undefined, msgId).then((ok) => {
+    void this.sendOfferPackets(peerId, transferId, prepared, tableText, undefined, msgId).then((ok) => {
       if (ok) {
         this.applyMsgStatus(msgId, 'sent')
         return
@@ -255,7 +261,8 @@ export class FilesService extends EventEmitter {
   async offerGroupPaths(
     groupId: string,
     paths: string[],
-    want: 'file' | 'image' | 'sticker' = 'file'
+    want: 'file' | 'image' | 'sticker' = 'file',
+    tableTextMeta?: TableTextMeta
   ): Promise<MessageView | null> {
     const meta = this.deps.groupRepo?.get(groupId)
     if (!meta || !meta.members.includes(this.deps.selfId) || paths.length === 0) return null
@@ -271,13 +278,15 @@ export class FilesService extends EventEmitter {
     const transfers = recipients.map((peerId) => ({ peerId, transferId: randomUUID() }))
     const convId = this.deps.convRepo.ensureGroup(groupId)
     const msgId = randomUUID()
+    const tableText = normalizeTableTextMeta(prepared.purpose, tableTextMeta)
     const fileRef: FileRefView = {
       transferId: transfers[0].transferId,
       ...(transfers.length > 1 ? { transferIds: transfers.map((t) => t.transferId) } : {}),
       name: prepared.rootName,
       size: prepared.totalSize,
       count: prepared.fileCount,
-      dir: prepared.hasDir
+      dir: prepared.hasDir,
+      ...(tableText ?? {})
     }
     const now = Date.now()
     this.deps.msgRepo.insert({
@@ -330,6 +339,7 @@ export class FilesService extends EventEmitter {
           target.peerId,
           target.transferId,
           prepared,
+          tableText,
           {
             groupId,
             groupRev: meta.rev
@@ -386,7 +396,7 @@ export class FilesService extends EventEmitter {
       accepted: false
     })
 
-    const ok = await this.sendOfferPackets(peerId, transferId, prepared)
+    const ok = await this.sendOfferPackets(peerId, transferId, prepared, undefined)
     if (ok) return true
     const row = this.deps.transferRepo.get(transferId)
     if (row && (row.status === 'accepted' || row.status === 'done')) return true
@@ -490,6 +500,7 @@ export class FilesService extends EventEmitter {
     peerId: string,
     transferId: string,
     prepared: PreparedOutgoing,
+    tableText: TableTextMeta | undefined,
     group?: GroupOfferContext,
     msgId?: string
   ): Promise<boolean> {
@@ -510,6 +521,7 @@ export class FilesService extends EventEmitter {
         rootName: prepared.rootName,
         ...(msgId ? { msgId } : {}),
         ...(prepared.purpose ? { purpose: prepared.purpose } : {}),
+        ...(tableText && this.peerSupportsTableText(peerId) ? tableText : {}),
         ...(group ? { groupId: group.groupId, groupRev: group.groupRev } : {})
       }
       const ok = await this.deps.messenger.sendReliable(
@@ -770,6 +782,8 @@ export class FilesService extends EventEmitter {
         purpose: offer.purpose,
         groupId: offer.groupId,
         groupRev: offer.groupRev,
+        tableText: offer.tableText,
+        tableTextTruncated: offer.tableTextTruncated,
         timer: setTimeout(() => this.assembling.delete(offer.transferId), OFFER_ASSEMBLE_TIMEOUT)
       }
       this.assembling.set(offer.transferId, asm)
@@ -777,6 +791,7 @@ export class FilesService extends EventEmitter {
     if (asm.peerId !== peerId) return
     if (asm.msgId !== offer.msgId) return
     if (asm.groupId !== offer.groupId || asm.groupRev !== offer.groupRev) return
+    if (asm.tableText !== offer.tableText || asm.tableTextTruncated !== offer.tableTextTruncated) return
     asm.parts.set(offer.seq, offer.files)
     if (asm.parts.size < asm.total) return
 
@@ -830,7 +845,13 @@ export class FilesService extends EventEmitter {
       name: asm.rootName,
       size: trustedTotalSize,
       count: asm.fileCount,
-      dir: plans.some((p) => p.relPath.includes('/'))
+      dir: plans.some((p) => p.relPath.includes('/')),
+      ...(inPurpose === 'image' && asm.tableText
+        ? {
+            tableText: asm.tableText,
+            ...(asm.tableTextTruncated ? { tableTextTruncated: true } : {})
+          }
+        : {})
     }
     const now = Date.now()
     this.deps.msgRepo.insert({
@@ -986,6 +1007,11 @@ export class FilesService extends EventEmitter {
     return Array.isArray(caps) && caps.includes(CAPS.mediaRecall)
   }
 
+  private peerSupportsTableText(peerId: string): boolean {
+    const caps = this.deps.registry.get(peerId)?.profile.caps
+    return Array.isArray(caps) && caps.includes(CAPS.tableText)
+  }
+
   private defaultReceiveDir(peerId: string): string {
     return join(this.deps.getSaveDir(), this.peerDirName(peerId))
   }
@@ -1017,6 +1043,31 @@ export class FilesService extends EventEmitter {
 
 function messageKindForPurpose(purpose: FileCtlOffer['purpose']): 'file' | 'image' | 'sticker' {
   return purpose === 'image' || purpose === 'sticker' ? purpose : 'file'
+}
+
+function normalizeTableTextMeta(
+  purpose: FileCtlOffer['purpose'],
+  meta?: TableTextMeta
+): TableTextMeta | undefined {
+  if (purpose !== 'image' || !meta?.tableText) return undefined
+  const truncated = truncateUtf8(meta.tableText, TABLE_TEXT_LIMIT_BYTES)
+  return {
+    tableText: truncated.text,
+    ...(meta.tableTextTruncated || truncated.truncated ? { tableTextTruncated: true } : {})
+  }
+}
+
+function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return { text, truncated: false }
+  let out = ''
+  let used = 0
+  for (const char of text) {
+    const size = Buffer.byteLength(char, 'utf8')
+    if (used + size > maxBytes) break
+    out += char
+    used += size
+  }
+  return { text: out, truncated: true }
 }
 
 function mediaTransferIds(row: MsgRow): string[] {

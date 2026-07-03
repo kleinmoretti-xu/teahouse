@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { decode, encode, makeEnvelope } from './codec'
+import { decode, decodeTcpEnvelopeObject, encode, makeEnvelope } from './codec'
 import {
   GROUP_IMG_AUTO_ACCEPT,
   MSG_TYPES,
+  TABLE_TEXT_LIMIT_BYTES,
   UDP_MAX_INBOUND,
   type FileCtlPayload,
   type GroupPayload,
@@ -330,6 +331,74 @@ describe('codec', () => {
       purpose: 'image'
     } as FileCtlPayload)
     expect(decode(encode(badMsgId))).toEqual({
+      ok: false,
+      reason: 'bad-payload:file-ctl'
+    })
+  })
+
+  it('file-ctl 表格图片 offer 只允许单图携带受限 tableText', () => {
+    const withTableText = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-aaaa', {
+      op: 'offer',
+      transferId: 'transfer-table-1',
+      msgId: 'msg-table-1',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'table.png', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: 'table.png',
+      purpose: 'image',
+      tableText: '姓名\t分数\n张三\t100',
+      tableTextTruncated: true
+    })
+    expect(decode(encode(withTableText))).toMatchObject({ ok: true, known: true })
+
+    const withoutTextHasFlag = makeEnvelope(MSG_TYPES.fileCtl, 'node-aaaa', {
+      op: 'offer',
+      transferId: 'transfer-table-2',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'table.png', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: 'table.png',
+      purpose: 'image',
+      tableTextTruncated: true
+    })
+    expect(decode(encode(withoutTextHasFlag))).toEqual({
+      ok: false,
+      reason: 'bad-payload:file-ctl'
+    })
+
+    const onFileOffer = makeEnvelope(MSG_TYPES.fileCtl, 'node-aaaa', {
+      op: 'offer',
+      transferId: 'transfer-table-3',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'table.txt', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: 'table.txt',
+      tableText: 'a\tb'
+    })
+    expect(decode(encode(onFileOffer))).toEqual({
+      ok: false,
+      reason: 'bad-payload:file-ctl'
+    })
+
+    const tooLong = makeEnvelope(MSG_TYPES.fileCtl, 'node-aaaa', {
+      op: 'offer',
+      transferId: 'transfer-table-4',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'table.png', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: 'table.png',
+      purpose: 'image',
+      tableText: '表'.repeat(TABLE_TEXT_LIMIT_BYTES + 1)
+    })
+    expect(decodeTcpEnvelopeObject(tooLong)).toEqual({
       ok: false,
       reason: 'bad-payload:file-ctl'
     })

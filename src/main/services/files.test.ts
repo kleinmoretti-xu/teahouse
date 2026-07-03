@@ -38,16 +38,17 @@ class FakeMessenger extends EventEmitter {
 class FakeRegistry {
   constructor(
     private readonly onlineIds: string[],
-    private readonly caps: string[] = []
+    private readonly caps: string[] | Record<string, string[]> = []
   ) {}
 
   get(nodeId: string): unknown {
     if (!this.onlineIds.includes(nodeId)) return undefined
+    const caps = Array.isArray(this.caps) ? this.caps : (this.caps[nodeId] ?? [])
     return {
       online: true,
       ip: '127.0.0.1',
       udpPort: 17878,
-      profile: { tcpPort: 17879, caps: this.caps, nick: nodeId }
+      profile: { tcpPort: 17879, caps, nick: nodeId }
     }
   }
 }
@@ -433,6 +434,55 @@ describe('FilesService 群聊媒体', () => {
     })
   })
 
+  it('群聊表格图片按成员 tbl1 能力分别携带文字视图', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-group-table-image-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, '群表格.png')
+    writeFileSync(filePath, 'small image')
+
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const group: GroupMeta = {
+      groupId: 'group-1',
+      name: '项目组',
+      members: ['node-self', 'node-bob', 'node-carol'],
+      rev: 3,
+      updatedBy: 'node-self',
+      updatedTs: 1000,
+      creatorIp: '127.0.0.1',
+      creatorId: 'node-self',
+      adminSecretHash: '',
+      adminHint: ''
+    }
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob', 'node-carol'], {
+        'node-bob': [CAPS.tableText],
+        'node-carol': []
+      }) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: new FakeGroupRepo(group) as unknown as GroupRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const view = await service.offerGroupPaths('group-1', [filePath], 'image', {
+      tableText: 'A\tB\n1\t2'
+    })
+    await waitTick()
+
+    expect(view?.fileRef?.tableText).toBe('A\tB\n1\t2')
+    const byPeer = new Map(messenger.sent.map((item) => [item.peerId, item.env.payload]))
+    expect(byPeer.get('node-bob')).toMatchObject({ tableText: 'A\tB\n1\t2' })
+    expect('tableText' in byPeer.get('node-carol')!).toBe(false)
+  })
+
   it('群聊图片超过 10MB 时退化为普通文件，等待成员手动接收', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pantry-files-service-'))
     tmpDirs.push(dir)
@@ -578,6 +628,121 @@ describe('FilesService 私聊直接发送', () => {
       op: 'offer',
       msgId: view!.id,
       purpose: 'image'
+    })
+  })
+
+  it('表格图片只向支持 tbl1 的单聊对端携带文字视图元数据', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-table-image-send-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, '表格.png')
+    writeFileSync(filePath, 'image')
+
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], [CAPS.tableText]) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const view = await service.offerPaths('node-bob', [filePath], 'image', {
+      tableText: '姓名\t分数\n张三\t100',
+      tableTextTruncated: true
+    })
+    await waitTick()
+
+    expect(view?.fileRef).toMatchObject({
+      tableText: '姓名\t分数\n张三\t100',
+      tableTextTruncated: true
+    })
+    expect(messenger.sent[0].env.payload).toMatchObject({
+      purpose: 'image',
+      tableText: '姓名\t分数\n张三\t100',
+      tableTextTruncated: true
+    })
+  })
+
+  it('表格图片发给未声明 tbl1 的单聊对端时只保留本端文字视图', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-table-image-legacy-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, '表格.png')
+    writeFileSync(filePath, 'image')
+
+    const messenger = new FakeMessenger()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: new FakeTransferRepo() as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const view = await service.offerPaths('node-bob', [filePath], 'image', {
+      tableText: '姓名\t分数\n张三\t100'
+    })
+    await waitTick()
+
+    expect(view?.fileRef?.tableText).toBe('姓名\t分数\n张三\t100')
+    expect('tableText' in messenger.sent[0].env.payload).toBe(false)
+    expect('tableTextTruncated' in messenger.sent[0].env.payload).toBe(false)
+  })
+
+  it('接收表格图片 offer 时把文字视图元数据写入图片 fileRef', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-table-image-recv-'))
+    tmpDirs.push(dir)
+
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: new FakeTransferRepo() as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-table-img',
+        msgId: 'msg-table-img',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-1', path: 'table.png', size: 5 }],
+        totalSize: 5,
+        fileCount: 1,
+        rootName: 'table.png',
+        purpose: 'image',
+        tableText: '姓名\t分数\n李四\t98',
+        tableTextTruncated: true
+      } as FileCtlPayload)
+    )
+    await waitTick()
+
+    const ref = JSON.parse(msgRepo.get('msg-table-img')!.file_ref ?? '{}')
+    expect(ref).toMatchObject({
+      transferId: 't-table-img',
+      tableText: '姓名\t分数\n李四\t98',
+      tableTextTruncated: true
     })
   })
 

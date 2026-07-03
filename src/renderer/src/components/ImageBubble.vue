@@ -36,6 +36,11 @@ const MENU_MARGIN = 8
 let addTipTimer: number | undefined
 
 const isSticker = computed(() => props.msg.kind === 'sticker')
+const tableViewMode = ref<'image' | 'text'>('image')
+const hasTableText = computed(
+  () => !isSticker.value && typeof props.msg.fileRef?.tableText === 'string' && props.msg.fileRef.tableText.length > 0
+)
+const showTableText = computed(() => hasTableText.value && tableViewMode.value === 'text')
 const menuHeight = computed(
   () => MENU_PADDING + MENU_ITEM_HEIGHT * (props.recallVisible ? 4 : 3)
 )
@@ -108,7 +113,7 @@ function recallImage(): void {
 }
 
 function openImageViewer(): void {
-  if (isSticker.value || !transferId.value) return
+  if (isSticker.value || showTableText.value || !transferId.value) return
   void window.pantry.openImageViewer(transferId.value)
 }
 
@@ -143,20 +148,51 @@ onUnmounted(clearAddTipTimer)
 
 <template>
   <div class="img-bubble" :class="{ mine: props.msg.isMine, peer: !props.msg.isMine }" @mouseleave="menuAt = null">
-    <img
-      v-if="ready && !failed"
-      :src="src"
-      class="thumb"
-      :class="{ sticker: isSticker }"
-      alt="[图片]"
-      @click="openImageViewer"
-      @error="broken = true"
-      @contextmenu.prevent.stop="onContextMenu"
-    />
-    <div v-else-if="failed" class="ph fail">{{ isSticker ? '表情' : '图片' }}传输失败</div>
-    <div v-else class="ph" :class="{ sticker: isSticker }">
-      {{ isSticker ? '表情' : '图片' }}接收中…
+    <div
+      v-if="hasTableText"
+      class="table-switch"
+      :class="{ text: showTableText }"
+      role="group"
+      aria-label="表格消息视图"
+      @contextmenu.stop
+    >
+      <button
+        type="button"
+        :class="{ selected: tableViewMode === 'image' }"
+        @click.stop="tableViewMode = 'image'"
+      >
+        图片
+      </button>
+      <button
+        type="button"
+        :class="{ selected: tableViewMode === 'text' }"
+        @click.stop="tableViewMode = 'text'"
+      >
+        文字
+      </button>
     </div>
+    <div v-if="showTableText" class="table-text-shell" @contextmenu.stop>
+      <div v-if="props.msg.fileRef?.tableTextTruncated" class="table-text-note">
+        文字视图已截断，图片完整
+      </div>
+      <pre class="table-text">{{ props.msg.fileRef?.tableText }}</pre>
+    </div>
+    <template v-else>
+      <img
+        v-if="ready && !failed"
+        :src="src"
+        class="thumb"
+        :class="{ sticker: isSticker }"
+        alt="[图片]"
+        @click="openImageViewer"
+        @error="broken = true"
+        @contextmenu.prevent.stop="onContextMenu"
+      />
+      <div v-else-if="failed" class="ph fail">{{ isSticker ? '表情' : '图片' }}传输失败</div>
+      <div v-else class="ph" :class="{ sticker: isSticker }">
+        {{ isSticker ? '表情' : '图片' }}接收中…
+      </div>
+    </template>
     <div
       v-if="menuAt"
       class="ctx"
@@ -193,7 +229,83 @@ onUnmounted(clearAddTipTimer)
 <style scoped>
 .img-bubble {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.img-bubble.mine {
+  align-items: flex-end;
+}
+.table-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 96px;
+  height: 24px;
+  margin-bottom: 4px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-list);
+  overflow: hidden;
+}
+.table-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 999px;
+  background: var(--primary);
+  transition:
+    transform 150ms ease,
+    opacity 150ms ease;
+}
+.table-switch.text::before {
+  transform: translateX(100%);
+}
+.table-switch button {
+  position: relative;
+  z-index: 1;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.table-switch button.selected {
+  color: #fff;
+}
+.table-text-shell {
+  width: 320px;
+  max-width: 70vw;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-window);
+}
+.table-text-note {
+  position: sticky;
+  top: 0;
+  padding: 6px 10px 0;
+  background: var(--bg-window);
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+.table-text {
+  margin: 0;
+  padding: 8px 10px 10px;
+  color: var(--text-1);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  user-select: text;
 }
 .thumb {
   max-width: 280px;
@@ -311,6 +423,11 @@ onUnmounted(clearAddTipTimer)
 @media (prefers-reduced-motion: no-preference) {
   .tip {
     animation: tip-pop 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-switch::before {
+    transition: none;
   }
 }
 @keyframes tip-pop {

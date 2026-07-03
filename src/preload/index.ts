@@ -28,6 +28,7 @@ import {
   type ScanProgressView,
   type SettingsView,
   type StickerView,
+  type TableTextMeta,
   type TransferView,
   type UpdateAvailability
 } from '../shared/ipc'
@@ -100,16 +101,22 @@ const api: PantryApi = {
   exportData: (format: ExportFormat, options?: DataExportOptions): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannels.dataExport, format, options),
   importData: (): Promise<DataImportResult | null> => ipcRenderer.invoke(IpcChannels.dataImport),
-  sendImageBytes: (peerNodeId: string, name: string, bytes: ArrayBuffer): Promise<MessageView | null> =>
-    ipcRenderer.invoke(IpcChannels.imgSendBytes, peerNodeId, name, bytes),
+  sendImageBytes: (
+    peerNodeId: string,
+    name: string,
+    bytes: ArrayBuffer,
+    tableText?: TableTextMeta
+  ): Promise<MessageView | null> =>
+    ipcRenderer.invoke(IpcChannels.imgSendBytes, peerNodeId, name, bytes, tableText),
   offerImagePath: (peerNodeId: string, path: string): Promise<MessageView | null> =>
     ipcRenderer.invoke(IpcChannels.imgOfferPath, peerNodeId, path),
   sendGroupImageBytes: (
     groupId: string,
     name: string,
-    bytes: ArrayBuffer
+    bytes: ArrayBuffer,
+    tableText?: TableTextMeta
   ): Promise<MessageView | null> =>
-    ipcRenderer.invoke(IpcChannels.groupImgSendBytes, groupId, name, bytes),
+    ipcRenderer.invoke(IpcChannels.groupImgSendBytes, groupId, name, bytes, tableText),
   offerGroupImagePath: (groupId: string, path: string): Promise<MessageView | null> =>
     ipcRenderer.invoke(IpcChannels.groupImgOfferPath, groupId, path),
   openImageViewer: (transferId: string): Promise<boolean> =>

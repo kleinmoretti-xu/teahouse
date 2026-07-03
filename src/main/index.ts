@@ -39,6 +39,7 @@ import {
   type ProfileSubmit,
   type ScanProgressView,
   type SettingsView,
+  type TableTextMeta,
   type TransferView,
   type UpdateAvailability
 } from '../shared/ipc'
@@ -48,6 +49,7 @@ import {
   CAPS,
   LIMITS,
   MSG_TYPES,
+  TABLE_TEXT_LIMIT_BYTES,
   TIMINGS,
   type Envelope,
   type Platform,
@@ -67,6 +69,7 @@ import { setupTray, stopTrayUnreadFlash, updateTrayUnread } from './windows/tray
 import { openSettingsWindow } from './windows/settings-window'
 import { closeCaptureWindow, openCaptureWindow } from './windows/capture-window'
 import { openImageViewerWindow } from './windows/image-viewer-window'
+import { fitImageViewerContent } from './windows/image-viewer-sizing'
 import { showWindowForeground } from './windows/foreground'
 import {
   incomingNotificationOptions,
@@ -208,6 +211,34 @@ if (!gotLock) {
   function parseImageDimension(value: unknown): number | null {
     const n = typeof value === 'number' ? value : NaN
     return Number.isFinite(n) && n > 0 && n <= 100000 ? Math.floor(n) : null
+  }
+
+  function parseTableTextMeta(value: unknown): TableTextMeta | undefined | null {
+    if (value === undefined || value === null) return undefined
+    if (typeof value !== 'object' || Array.isArray(value)) return null
+    const raw = value as { tableText?: unknown; tableTextTruncated?: unknown }
+    if (typeof raw.tableText !== 'string' || raw.tableText.length === 0) return null
+    if (raw.tableTextTruncated !== undefined && typeof raw.tableTextTruncated !== 'boolean') {
+      return null
+    }
+    const truncated = truncateUtf8Text(raw.tableText, TABLE_TEXT_LIMIT_BYTES)
+    return {
+      tableText: truncated.text,
+      ...(raw.tableTextTruncated || truncated.truncated ? { tableTextTruncated: true } : {})
+    }
+  }
+
+  function truncateUtf8Text(text: string, maxBytes: number): { text: string; truncated: boolean } {
+    if (Buffer.byteLength(text, 'utf8') <= maxBytes) return { text, truncated: false }
+    let out = ''
+    let used = 0
+    for (const char of text) {
+      const size = Buffer.byteLength(char, 'utf8')
+      if (used + size > maxBytes) break
+      out += char
+      used += size
+    }
+    return { text: out, truncated: true }
   }
 
   /** Linux 窗口图标（决议 #58）：显式设置 _NET_WM_ICON，任务栏不依赖桌面环境的 desktop 关联 */
@@ -1550,33 +1581,37 @@ if (!gotLock) {
 
   ipcMain.handle(
     IpcChannels.imgSendBytes,
-    async (_event, peerId: unknown, name: unknown, bytes: unknown) => {
+    async (_event, peerId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
       if (typeof peerId !== 'string' || peerId.length === 0 || peerId.length > 64) return null
       if (typeof name !== 'string' || name.length === 0 || name.length > 128) return null
       if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return null
       if (bytes.byteLength > 20 * 1024 * 1024) return null
+      const tableTextMeta = parseTableTextMeta(tableText)
+      if (tableTextMeta === null) return null
       const ext = IMG_EXTS.has(extname(name).toLowerCase()) ? extname(name).toLowerCase() : '.png'
       const dir = join(app.getPath('userData'), 'data', 'images', 'out')
       mkdirSync(dir, { recursive: true })
       const path = join(dir, `${randomUUID()}${ext}`)
       writeFileSync(path, Buffer.from(bytes))
-      return (await files?.offerPaths(peerId, [path], 'image')) ?? null
+      return (await files?.offerPaths(peerId, [path], 'image', tableTextMeta)) ?? null
     }
   )
 
   ipcMain.handle(
     IpcChannels.groupImgSendBytes,
-    async (_event, groupId: unknown, name: unknown, bytes: unknown) => {
+    async (_event, groupId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
       if (typeof groupId !== 'string' || groupId.length === 0 || groupId.length > 64) return null
       if (typeof name !== 'string' || name.length === 0 || name.length > 128) return null
       if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return null
       if (bytes.byteLength > 20 * 1024 * 1024) return null
+      const tableTextMeta = parseTableTextMeta(tableText)
+      if (tableTextMeta === null) return null
       const ext = IMG_EXTS.has(extname(name).toLowerCase()) ? extname(name).toLowerCase() : '.png'
       const dir = join(app.getPath('userData'), 'data', 'images', 'out')
       mkdirSync(dir, { recursive: true })
       const path = join(dir, `${randomUUID()}${ext}`)
       writeFileSync(path, Buffer.from(bytes))
-      return (await files?.offerGroupPaths(groupId, [path], 'image')) ?? null
+      return (await files?.offerGroupPaths(groupId, [path], 'image', tableTextMeta)) ?? null
     }
   )
 
@@ -1731,16 +1766,17 @@ if (!gotLock) {
     if (!imageWidth || !imageHeight) return 1
 
     const display = screen.getDisplayMatching(viewerWindow.getBounds())
-    const maxWidth = Math.max(1, Math.floor(display.workAreaSize.width * 0.7))
-    const maxHeight = Math.max(1, Math.floor(display.workAreaSize.height * 0.7))
-    const scale = Math.min(1, maxWidth / imageWidth, maxHeight / imageHeight)
-    const contentWidth = Math.max(1, Math.round(imageWidth * scale))
-    const contentHeight = Math.max(1, Math.round(imageHeight * scale))
+    const fit = fitImageViewerContent({
+      imageWidth,
+      imageHeight,
+      workAreaWidth: display.workAreaSize.width,
+      workAreaHeight: display.workAreaSize.height
+    })
 
     if (viewerWindow.isMaximized()) viewerWindow.unmaximize()
-    viewerWindow.setContentSize(contentWidth, contentHeight)
+    viewerWindow.setContentSize(fit.contentWidth, fit.contentHeight)
     viewerWindow.center()
-    return scale
+    return fit.scale
   })
 
   ipcMain.handle(IpcChannels.imgOcrSource, (event, transferId: unknown): ImageOcrSource | null => {
@@ -1979,6 +2015,7 @@ if (!gotLock) {
     appState = loadAppState(app.getPath('userData'), app.getVersion(), tcpPort, udpPort, [
       CAPS.mediaRecall,
       CAPS.fileDirect,
+      CAPS.tableText,
       ...updateCaps
     ])
     udpPort = envUdpPort ?? appState.config.udpPort
