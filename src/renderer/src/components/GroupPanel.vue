@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import type { GroupView } from '../../../shared/ipc'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
+import { useGroupsStore } from '../stores/groups'
+import { prepareGroupAdminPatch, type GroupAdminAction } from '../utils/group-admin'
 import PantryIcon from './PantryIcon.vue'
 import AvatarMark from './AvatarMark.vue'
 
@@ -14,10 +16,13 @@ const emit = defineEmits<{ close: [] }>()
 
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
+const groupsStore = useGroupsStore()
 const renaming = ref(false)
 const newName = ref('')
 const adding = ref(false)
 const adminPassword = ref('')
+const adminFeedback = ref('')
+const adminBusy = ref(false)
 
 const memberIds = computed(() => new Set(props.group.members))
 const addable = computed(() => peersStore.peers.filter((p) => !memberIds.value.has(p.nodeId)))
@@ -48,15 +53,21 @@ function avatarOf(id: string): number {
 
 async function rename(): Promise<void> {
   const name = newName.value.trim()
-  if (name) await updateAdmin({ name })
-  renaming.value = false
+  if (!name) {
+    renaming.value = false
+    return
+  }
+  const ok = await updateAdmin({ name })
+  if (ok) renaming.value = false
 }
 
 async function removeMember(id: string): Promise<void> {
+  if (adminBusy.value) return
   await updateAdmin({ remove: [id] })
 }
 
 async function addMember(id: string): Promise<void> {
+  if (adminBusy.value) return
   await updateAdmin({ add: [id] })
 }
 
@@ -65,25 +76,28 @@ async function leave(): Promise<void> {
   emit('close')
 }
 
-async function updateAdmin(patch: { name?: string; add?: string[]; remove?: string[] }): Promise<boolean> {
-  if (!props.group.canManage && !props.group.hasAdminPassword) return false
-  const payload = { ...patch }
-  if (props.group.hasAdminPassword) {
-    const promptText = props.group.adminHint
-      ? `请输入群管理密码\n提示：${props.group.adminHint}`
-      : '请输入群管理密码'
-    const password = adminPassword.value || window.prompt(promptText)?.trim() || ''
-    if (!password) return false
-    adminPassword.value = password
-    Object.assign(payload, { adminPassword: password })
-  }
-  const updated = await window.pantry.updateGroup(props.group.groupId, payload)
-  if (!updated) {
-    if (props.group.hasAdminPassword) adminPassword.value = ''
-    window.alert('群管理失败：密码不正确，或当前 IP 没有管理权限')
+async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
+  const prepared = prepareGroupAdminPatch(props.group, patch, adminPassword.value)
+  if (!prepared.ok) {
+    adminFeedback.value =
+      prepared.reason === 'missing-password' ? '请输入管理密码' : '当前节点没有管理权限'
     return false
   }
-  return true
+
+  adminFeedback.value = ''
+  adminBusy.value = true
+  try {
+    const updated = await window.pantry.updateGroup(props.group.groupId, prepared.patch)
+    if (!updated) {
+      if (props.group.hasAdminPassword) adminPassword.value = ''
+      adminFeedback.value = props.group.hasAdminPassword ? '密码不正确，请重新输入' : '当前 IP 没有管理权限'
+      return false
+    }
+    groupsStore.byId[updated.groupId] = updated
+    return true
+  } finally {
+    adminBusy.value = false
+  }
 }
 </script>
 
@@ -92,7 +106,7 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
     <div class="head">
       <template v-if="renaming">
         <input v-model="newName" class="rename" maxlength="32" @keydown.enter="rename" />
-        <button class="mini" title="保存" @click="rename">
+        <button class="mini" title="保存" :disabled="adminBusy" @click="rename">
           <PantryIcon name="check" :size="14" />
         </button>
       </template>
@@ -115,6 +129,17 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
 
     <div class="count">成员 {{ group.members.length }} / 50</div>
     <div v-if="adminTip" class="admin-tip">{{ adminTip }}</div>
+    <div v-if="group.amMember && group.hasAdminPassword" class="admin-password">
+      <input
+        v-model="adminPassword"
+        type="password"
+        maxlength="64"
+        placeholder="管理密码"
+        :disabled="adminBusy"
+        @keydown.enter="renaming ? rename() : undefined"
+      />
+    </div>
+    <div v-if="adminFeedback" class="admin-feedback">{{ adminFeedback }}</div>
     <ul class="members">
       <li v-for="id in group.members" :key="id">
         <AvatarMark
@@ -128,6 +153,7 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
           v-if="canShowAdmin && id !== selfId"
           class="mini danger"
           title="移出"
+          :disabled="adminBusy"
           @click="removeMember(id)"
         >
           <PantryIcon name="x" :size="13" />
@@ -136,7 +162,7 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
     </ul>
 
     <template v-if="group.amMember">
-      <button v-if="canShowAdmin" class="add" @click="adding = !adding">
+      <button v-if="canShowAdmin" class="add" :disabled="adminBusy" @click="adding = !adding">
         <PantryIcon name="plus" :size="14" />添加成员
       </button>
       <ul v-if="adding" class="members addlist">
@@ -207,6 +233,10 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
   display: grid;
   place-items: center;
 }
+.mini:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 .mini.danger:hover {
   color: var(--danger);
 }
@@ -221,6 +251,30 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
   padding: 6px 8px;
   border-radius: 4px;
   background: var(--bg-list);
+}
+.admin-password input {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-1);
+  background: var(--bg-window);
+  outline: none;
+  user-select: text;
+}
+.admin-password input:focus {
+  border-color: var(--primary);
+}
+.admin-password input:disabled {
+  opacity: 0.65;
+}
+.admin-feedback {
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--danger);
 }
 .members {
   list-style: none;
@@ -270,6 +324,10 @@ async function updateAdmin(patch: { name?: string; add?: string[]; remove?: stri
   align-items: center;
   justify-content: center;
   gap: 5px;
+}
+.add:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 .addlist {
   max-height: 140px;
