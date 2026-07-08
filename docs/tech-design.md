@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v1.02，会话打开默认定位最新消息修复已实现（决议 #192） |
-| 日期 | 2026-07-02 |
+| 状态 | v1.04，内网通兼容模式协议能力矩阵与 UI 降级已落档（决议 #194/#195） |
+| 日期 | 2026-07-08 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -71,7 +71,8 @@ src/
 │  │  ├─ range-sync.ts     # scan-ranges 低频同步扫描范围；不直接执行扫描
 │  │  ├─ peer-registry.ts  # 节点表（内存 + 落库）、profileRev 比对、节点缓存
 │  │  ├─ messenger.ts      # msg/ack、退避重传、补发队列、去重
-│  │  └─ transfer.ts       # TCP server/client、pull 流、SHA-256、限并发、断点位
+│  │  ├─ transfer.ts       # TCP server/client、pull 流、SHA-256、限并发、断点位
+│  │  └─ compat/           # 内网通 / IPMSG 兼容适配器；独立 UDP/TCP/codec/capabilities，不进入主协议 UdpChannel
 │  ├─ store/
 │  │  ├─ db.ts             # 打开/迁移（用户版本号 PRAGMA user_version 递增迁移）
 │  │  ├─ repo/*.ts         # peers / conversations / messages / groups / transfers / stickers / queue / dedup
@@ -82,7 +83,8 @@ src/
 │  │  ├─ capture.ts        # desktopCapturer 抓屏 → 截图窗 → 裁剪落剪贴板
 │  │  ├─ porter.ts         # 导出（HTML/TXT/备份包）与导入（身份映射+去重）
 │  │  ├─ settings.ts       # config.json、数据目录迁移、自启（linux 写 autostart desktop 文件）
-│  │  └─ updater.ts        # 局域网自更新编排（决议 #166/#170）：同平台版本比对择源、索包请求复核、本地包查找、后续 SHA-256+版本核对、触发安装重启
+│  │  ├─ updater.ts        # 局域网自更新编排（决议 #166/#170）：同平台版本比对择源、索包请求复核、本地包查找、后续 SHA-256+版本核对、触发安装重启
+│  │  └─ nwt-compat.ts     # 内网通兼容节点发现、普通文本收发、ACK、附件 offer 与能力投影
 │  ├─ ipc/                 # handle 注册（只做参数校验+转发 services）、事件推送
 │  └─ util/                # logger / paths / sanitize（文件名清洗）/ atomic-write / self-package（deb 自重打包·nsis 定位自留包）/ apply-update（替换重启）
 ├─ preload/index.ts        # contextBridge 暴露 window.pantry（按 shared/ipc.ts 类型）
@@ -115,6 +117,7 @@ src/
 | `sticker:addFromMessage` / `sticker:list` / `sticker:remove` / `sticker:reorder` | 表情包 |
 | `data:export` / `data:import` | 导出导入；导出可带会话与时间范围 |
 | `settings:get` / `settings:save-profile` / `settings:save-app` / `settings:pick-dir` | 设置读取、资料保存、应用设置、文件保存目录选择 |
+| `nwt:*`（后续实现时在 `shared/ipc.ts` 固化） | 内网通兼容模式：启停、独立网段扫描、兼容节点列表、普通文本发送、兼容能力投影、实验附件 offer；详见 [nwt-compat-design.md](nwt-compat-design.md) |
 | `shot:start` | 触发截图流程 |
 
 事件（main → renderer，`webContents.send`）：`peers:updated`、`msg:new`、`msg:status`（发送中/已送达/排队/失败）、`msg:nudge-received`、`transfer:progress`（节流 ≤4 次/s）、`transfer:done|failed`、`group:updated`、`net:state`（在线/端口冲突/网卡变化）、`net:scan-progress`（主界面全局网段刷新进度，节流推送）、`badge:update`。
@@ -150,6 +153,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 - PK 消息（决议 #139）不新增 SQLite 表或列：`messages.kind='pk'`，`content` 写入不透结果的安全摘要（如「[PK] 骰子」「[PK] 猜拳」），用于会话预览、搜索、FTS 与通知；`file_ref` 复用为 `PkRef` JSON（`{game,result}`），用于气泡最终结果、导出 HTML/TXT 与失败重试复用同一结果，由 `kind` 区分其 JSON 形状。
 - 媒体撤回（决议 #188）不新增 SQLite 表或列：图片 / 文件仍分别写 `messages.kind='image'|'file'`，`file_ref` 保留 transfer 引用；变化是发送端先生成 `msgId` 并写入 `file-ctl offer.msgId`，接收端用同一 `msgId` 入库。`messages.status='recalled'` 和既有 FTS 清理逻辑继续表达撤回；文件是否可撤回由关联 `transfers.status` 与 `file_ref.transferIds[]` 计算，不把“已接收完成”另存成新列。
 - 表格图片消息（决议 #190）同样不新增 SQLite 表或列：仍写 `messages.kind='image'`，`content='[图片]'`，在 `file_ref` JSON 中可选保存 `tableText`（原始 TSV，最多 4096B UTF-8）与 `tableTextTruncated`（发送端截断时为 true）。这些字段不写 FTS、不参与会话预览；导出 HTML/TXT 时可在图片后附“表格文本”。旧记录没有该字段时按普通图片处理。
+- 内网通兼容联系人（决议 #194/#195）不得直接混入主协议 `peers` 语义。首版可仅在内存维护 `CompatPeer`；若需要跨重启保留最近发现节点，新增独立 `compat_peers` 表，键为 `compat_id = ipmsg:<host>:<port>:<user>:<hostName>`，只保存昵称、主机名、IP、端口、编码、兼容能力、在线时间与来源，不参与主协议 `node_id`、profileRev、caps、gossip 或补发队列。实验附件 offer 使用独立 `compat_file_offers`，不得复用茶话间 `transfers` 的自动接收、直接发送、媒体撤回和自更新语义。
 - 中文搜索：FTS5 不会切中文词 → **入库时把 `text` 按字拆开以空格连接**写入 fts 表，查询同样按字拆 + `"…"` 短语匹配；文件名/联系人走 `LIKE %…%`（千级数据量足够）。会话内历史搜索固定带 `conv_id` 范围，直接在 `messages` 上按 `kind/content/file_ref/ts` 白名单条件查询：关键词匹配 `content` 与 `file_ref` 展示名，图片/文件/日期筛选只影响本地 SQLite 查询，不产生协议报文或数据库迁移；空关键词允许返回当前会话最近记录，仍受类型、日期与 limit 约束；图片/文件命中返回解析后的 `FileRefView`，渲染层仅用 `transferId` 走既有 `pantry-img://` 安全协议显示缩略图，不暴露本地保存路径。
 - 定时清理（启动 + 每小时）：`dedup` 超 24h、`send_queue` 超 7 天或单 peer 超 200 条（裁剪时回推 UI 标失败）；启动时将残留 `sending` 态消息复位为失败（可点重发），杜绝"永远转圈"。
 - 迁移：`PRAGMA user_version` 递增 + 顺序执行迁移脚本；导入/迁移目录前自动备份 db 文件。
@@ -163,7 +167,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 ├─ images/                   # 图片消息缓存（收+发）
 ├─ stickers/                 # 表情包（压缩后的 WebP/GIF）
 ├─ logs/                     # 按天滚动，留 7 天
-└─ config.json               # 设置（原子写）；含 manualPeers / scanRanges / scanRangeSources / ignoredScanRanges / allowDirectFileSend
+└─ config.json               # 设置（原子写）；含 manualPeers / scanRanges / scanRangeSources / ignoredScanRanges / allowDirectFileSend / nwtCompat
 ```
 
 整体数据目录迁移流程（v1.0 打磨项）：校验目标可写 → 关闭 db → 复制（带进度）→ 校验文件数/大小 → 写新路径入旧位置的 `redirect.json` 与全局配置 → 重开 db；失败自动回滚。
@@ -171,6 +175,8 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 扫描范围自动分享（决议 #114）属于设置同步，不入 SQLite：`config.scanRanges` 保留旧字符串数组；`scanRangeSources` 记录 `self/remote`、来源 nodeId/显示名、添加时间与上次自动扫描时间；`ignoredScanRanges` 记录用户主动移除过的 CIDR，远端再次分享时不自动加回。`RangeSync` 只收发 `scan-ranges` 配置候选；主进程收到新 CIDR 后按 30–90 分钟抖动、12 小时去重、在线规模 hash 抽样调度 `Discovery.scanHosts()`，手动扫描仍走即时路径。
 
 主界面全局网段刷新（决议 #115）仍属于显式手动扫描：`peers:scan-all-ranges` 在主进程读取当前 `config.scanRanges`，归一化合法 CIDR 后展开并按 IP 去重，再以 8ms 间隔逐个调用 `Discovery.probe()`；进度通过 `net:scan-progress` 推给主窗口，含 `done/total/rangeCount/status`。该扫描不改配置、不入 SQLite、不新增线上协议；运行中重复调用只返回当前进度，避免并发扫描。
+
+内网通兼容配置（决议 #194/#195）独立存放在 `config.nwtCompat`，默认关闭：`enabled`、`port`（默认 2425）、`ranges`、`manualPeers`、`scanOnStartup`、`experimentalFile`。兼容扫描只读取这些独立 IP 段，不自动复用茶话间 `scanRanges`，也不参与 `scan-ranges` 同步；服务启动时若 `2425/UDP` 被占用，兼容模式进入不可用状态并在设置页提示，不影响主协议 17878/17879 端口与普通聊天。`experimentalFile` 默认关闭，只有完成内网通 TCP `GETFILEDATA` 闭环后才允许暴露给 UI。
 
 媒体撤回（决议 #188）属于 ChatService 与 FilesService 的编排增强，不把规则塞进 IPC 或 `net/` / `store/`：发送图片、普通文件、群文件时，`FilesService` 在创建本地消息前先取得发送端 `msgId`，随后把该 ID 写入每条 `file-ctl offer.msgId`；接收侧收到带 `msgId` 的 offer 后用同一 ID 写 `messages`，并将 `transfer.msg_id` 指向该消息。`ChatService.recall()` 继续是唯一用户撤回入口，先按窗口、发送者、会话和消息类型判断；命中媒体时经 `mediaRecall` 适配器调用 `FilesService.canRecallMessage(msgId)`，由文件服务同时确认对端 `mrec1` 能力、文件 transfer 未完成，以及群文件所有相关 transfer 均未 `done`。真正发出 recall 后，本地先置 `recalled` 并插系统提示；远端收到 recall 后由 `ChatService.applyRecall()` 识别媒体消息，图片直接隐藏，文件则调用 `FilesService.applyRecallMessage(msgId)` 取消未完成 TCP 拉取、清理 `.part`，若 transfer 已 `done` 则忽略迟到撤回并保留已保存文件。群文件复用 `file_ref.transferIds[]` 聚合判断：任一 transfer `done` 即不可撤回；全部未完成才允许整条消息撤回。`msg(kind:"recall")` 早于 offer 到达时继续使用现有 pending recall 机制，offer 之后再按媒体规则应用。旧端没有 `mrec1` 或没有 `offer.msgId` 时仍按旧文件 / 图片流程入库，新端 UI 不展示媒体撤回入口。
 
@@ -225,6 +231,7 @@ media/stickers/...  # 自定义表情包媒体
 | Win7 终端为统一 VM（虚拟显卡弱/驱动旧）；UOS/Debian 多国产 GPU 或旧驱动 | **Win7 与 Linux 默认禁用硬件加速走软渲染**（决议 #55）——VM 虚拟显卡与国产 GPU 驱动是 Electron 花屏/GPU 进程报错的头号惯犯，2D 聊天界面软渲染完全流畅；macOS 默认开启，高级设置留开关 |
 | Wayland 无法全局截图 | 启动检测 `XDG_SESSION_TYPE`，Wayland 下截图按钮降级提示"用系统截图后 Ctrl+V" |
 | UDP 广播被交换机/AP 隔离 | 协议已有三板斧兜底（手动 IP/扫描/gossip）；FAQ 文档化引导 IT 放行 |
+| 内网通兼容模式与主协议混线、`2425/UDP` 被占、GBK 编解码差异、文件 / 图片能力误判 | 兼容模式放在 `net/compat/` 独立 socket、独立 codec、独立配置与联系人投影；默认关闭，用户显式填写 IP 段后才扫描；端口冲突只关闭兼容模式并给设置页状态；GBK 解码使用精确锁纯 JS 依赖，无法识别的字段保留原始安全摘要；文件 / 图片只按 IPMSG 附件实验处理，未完成 TCP 拉取闭环前 UI 不展示普通发送入口；PK、窗口震动、群聊、媒体撤回等主协议能力由 `ConversationCapabilities` 隐藏 |
 | 超大文件/超大图片打爆内存 | 文件收发全程流式：首次拉取时发送端边读边写 TCP 并同步计算 SHA-256，接收端 pull 流直写磁盘，内存中永不持有整文件；图片解码限制单图 ≤50MP |
 | 渲染层或备份 JSON 借本机绝对路径读取任意文件 | 主进程只接受 `filePick` 产生的按窗口隔离一次性路径授权；图片路径发送前复制进应用图片目录。`pantry-img` / `pantry-sticker` / OCR / 表情提取只读应用管理媒体目录下、状态完成且类型匹配的记录；备份导入无归档媒体时不保留外部 `savedPath` / 表情 `path`，备份导出也只打包应用管理目录下的媒体（决议 #132）。 |
 | asar 与 native 模块 | `asarUnpack: ['**/better_sqlite3.node']` |
@@ -263,6 +270,8 @@ media/stickers/...  # 自定义表情包媒体
 | v0.27 | 局域网 P2P 自更新（分三步）：①发现与提示（caps `upd1` / 运行形态自检 / `ver` 投影 / 同平台版本比对 / 「内网有新版」提示）②拉包（`update` 可靠请求 / 按请求架构匹配已有本地包并隐藏回传 / nsis 自留包·deb `dpkg-deb` 自重打包 / 拉临时目录 + SHA-256 + 版本核对）③应用更新（nsis 静默装·deb pkexec / 替换重启 / 保留包接力成源）；mac 暂缓 | services/updater、transfer 复用、discovery（caps/ver）、util/self-package·apply-update、提示 UI |
 | v0.28 | 私聊文件直接发送：发送端文件卡片「直接发送」入口、caps `fd1`、`file-ctl {op:"direct"}`、接收端自动 accept；默认文件接收统一到 `文件保存位置/联系人名称/`，另存为除外；群聊文件不支持直接发送 | shared/protocol、net/codec、services/files、settings、renderer FileCard |
 | v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回 | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
+| v0.32 | 内网通兼容模式：独立 IP 段扫描、IPMSG 子集发现、普通文本收发、ACK 状态、兼容联系人与兼容会话 UI、内网通徽标、能力降级隐藏 PK / 震动 / 图片 / 文件等入口 | net/compat、services/nwt-compat、settings、contacts、chat |
+| v0.33 | 内网通实验附件互通：解析 `FILEATTACHOPT` / `CLIPBOARDOPT`，完成 TCP `GETFILEDATA` 闭环后按实验开关开放兼容文件 / 剪贴板图片接收 | net/compat/ipmsg-file、services/nwt-compat、renderer file-card |
 | v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
 
 ## 13. 变更记录
@@ -370,3 +379,5 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-02 v1.00 决议 #190：表格粘贴图片消息技术方案实现。新增 caps `tbl1` 与 `file-ctl offer.tableText/tableTextTruncated`，不新增消息类型或 SQLite 迁移；renderer 在粘贴分流中识别 HTML table / TSV，默认生成表格图片，额外提取原始 TSV 作为受限元数据，超出 4096B UTF-8 时安全截断并标记；FilesService 按收件人能力附带或丢弃字段，接收端写入 `file_ref`；ImageBubble 以本地状态显示图片 / 文字滑块。旧端仍只显示普通图片，纯内网与日志脱敏约束不变。版本 0.30.1 → 0.31.0。
 - 2026-07-02 v1.01 决议 #191：图片查看器小图窗口最小尺寸修复。新增纯函数 `fitImageViewerContent()` 统一初始 fit 计算，内容区最小 560×360，BrowserWindow 最小外框同步抬高；小图仍按原始尺寸居中，底部工具条获得稳定空间。版本 0.31.0 → 0.31.1。
 - 2026-07-02 v1.02 决议 #192：会话打开默认定位最新消息修复。`chatStore.openConv()` 默认滚动意图改为 `latest`，显式进入会话时即使已有缓存也重载最新 50 条；`target` 继续服务历史搜索跳转，当前会话读历史时的新消息不强拉到底。纯渲染层状态策略调整，无协议、IPC、SQLite 变化。版本 0.31.1 → 0.31.2。
+- 2026-07-08 v1.03 决议 #194：内网通兼容模式技术设计立项。新增 `net/compat/`、`services/nwt-compat.ts`、`config.nwtCompat` 与独立兼容联系人/会话投影约束；兼容层绑定 `2425/UDP`、实现 IPMSG 子集发现与普通文本收发，主协议、主端口、gossip、补发队列和文件传输语义保持不变。详见 [nwt-compat-design.md](nwt-compat-design.md)。
+- 2026-07-08 v1.04 决议 #195：扩展内网通兼容技术设计。`net/compat/` 增加附件 parser、实验 TCP 文件通道和 `nwt-capabilities` 能力门控；`services/nwt-compat.ts` 负责兼容能力投影，IPC 预留 `nwt:file-offer` / `nwt:accept-file-offer` 等实验接口；UI 通过 `ConversationCapabilities` 隐藏 PK、震动、图片、文件、文件夹、直接发送和媒体撤回。标准 IPMSG 文件 / 剪贴板图片已列入实验阶段，内网通私有 `901x` 通道和远程协助继续排除。

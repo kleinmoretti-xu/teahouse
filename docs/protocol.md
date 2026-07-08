@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| 状态 | v0.36，表格图片消息 `tbl1` 能力与 `tableText` 元数据已实现 |
-| 日期 | 2026-07-02 |
-| 关系 | 本文是**线上协议的唯一事实来源**；功能取舍依据 [requirements.md](requirements.md)（决议 #5：借鉴 ipmsg/iptux 机制、报文自有、不互通、不加密） |
+| 状态 | v0.38，主协议保持自有 JSON；内网通兼容模式另见独立设计文档 |
+| 日期 | 2026-07-08 |
+| 关系 | 本文是**茶话间主协议**的唯一事实来源；功能取舍依据 [requirements.md](requirements.md)（决议 #5：借鉴 ipmsg/iptux 机制、主协议报文自有、不加密；决议 #194/#195：内网通兼容模式走独立适配器，并在适配器内评估文件 / 图片 / 震动能力） |
 
 ## 1. 设计原则
 
 1. **机制照搬成熟做法**：UDP 广播发现、UDP+ACK 可靠消息、TCP 拉取式文件传输——与 ipmsg/iptux 同构，实现时可对照 `references/ipmsg/protocol.txt` 与 `references/iptux/src`。
-2. **报文自有**：UTF-8 JSON，永不引入 GBK/SJIS；不与 IPMSG 线上互通。
+2. **主协议报文自有**：茶话间节点之间只使用 UTF-8 JSON，主协议不引入 GBK/SJIS，也不把 IPMSG 文本报文混入 `UdpChannel` / `codec`；内网通兼容模式由独立适配器处理，见 [nwt-compat-design.md](nwt-compat-design.md)。
 3. **对等无服务器**：任何节点崩溃/离线不影响其余节点；协议必须容忍丢包、乱序、重复、节点随时消失。
 4. **可演进**：信封带版本号；收到未知 `type` 或未知字段一律忽略不报错（向前兼容的基础）。
 5. **内网信任模型**：不加密、不签名（决议 #5），但**所有入站报文按不可信输入做校验**（长度、类型、字段白名单）。
@@ -281,6 +281,8 @@ sequenceDiagram
 
 ## 10. 与 IPMSG 机制对照（借鉴关系备忘）
 
+下表描述茶话间主协议对 IPMSG / iptux 思路的借鉴关系。决议 #194/#195 的内网通兼容模式使用独立 IPMSG 子集适配器，详细命令、编码、附件矩阵和 UI 能力降级见 [nwt-compat-design.md](nwt-compat-design.md)。IPMSG 的 `FILEATTACHOPT`、`CLIPBOARDOPT`、TCP `GETFILEDATA` 等兼容细节不进入茶话间主 `UdpChannel` / `codec`。
+
 | 环节 | IPMSG | 茶话间 |
 |---|---|---|
 | 上线/应答/下线 | BR_ENTRY / ANSENTRY / BR_EXIT | `entry` / `alive` / `exit`，同构 + 应答抖动 |
@@ -342,3 +344,5 @@ sequenceDiagram
 - 2026-06-28 v0.34 决议 #181：Linux 发布矩阵新增 Debian 10 / UOS 20 arm64 包后，`update{op:"req"}` 增加可选 `arch:"x64"|"arm64"`，源端按请求架构匹配本地安装包；旧端缺 `arch` 时保持同平台兼容，新端避免 x64 / arm64 deb 混用。
 - 2026-06-30 v0.35 决议 #188：媒体撤回协议方案。§3 caps 新增 `mrec1`；§8 `file-ctl offer` 新增可选 `msgId`，新端发送图片 / 普通文件 / 群文件等聊天媒体时用发送端消息 ID 填写，收发两端据此共享同一 `messages.id`；撤回仍复用 `msg(kind:"recall", targetId)`。图片可撤回并隐藏；文件仅未完成接收时接受撤回，已完成保存的文件忽略迟到撤回；群文件须所有关联 transfer 均未完成才可撤回。旧端忽略 `msgId`，新端仅对声明 `mrec1` 的对端展示媒体撤回入口。
 - 2026-07-02 v0.36 决议 #190：表格粘贴图片消息协议扩展。§3 caps 新增 `tbl1`；§8 `file-ctl offer` 新增可选 `tableText` 与 `tableTextTruncated`，仅允许 `purpose:"image"` 的单图媒体携带，文字长度上限 4096B UTF-8。发送端只向声明 `tbl1` 的在线收件人附带原始 TSV 文本；群聊按成员能力分别发送，超限时截断文字视图并标记 `tableTextTruncated:true`。收端把字段写入本地图片消息 `file_ref`，用于同一气泡内图片 / 文字视图切换；旧端忽略未知字段并按普通图片显示。
+- 2026-07-08 v0.37 决议 #194：文档澄清茶话间主协议仍保持 UTF-8 JSON 与自有信封，IPMSG / 内网通兼容能力不进入主 `UdpChannel` / `codec`，而是由独立兼容适配器实现；兼容子集的 `BR_ENTRY` / `ANSENTRY` / `SENDMSG` / `RECVMSG`、`2425/UDP` 与 GBK 解码策略见 [nwt-compat-design.md](nwt-compat-design.md)。
+- 2026-07-08 v0.38 决议 #195：补充说明内网通文件、图片、震动等能力仍属于独立兼容适配器范围。IPMSG `FILEATTACHOPT` / `CLIPBOARDOPT` / TCP `GETFILEDATA` 可在 `net/compat/` 内实验，主协议继续只保留茶话间自有文件、图片、PK、窗口震动和媒体撤回语义；兼容会话的能力隐藏规则见 [nwt-compat-design.md](nwt-compat-design.md)。
