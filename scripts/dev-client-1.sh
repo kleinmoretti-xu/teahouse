@@ -11,7 +11,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   echo "客户端 1：/tmp/pantry-dev1，UDP 17878，TCP 17879，手动指向客户端 2/3。"
   exit 0
 fi
-
+# 设置环境变量
 export PANTRY_USER_DATA="${PANTRY_USER_DATA:-/tmp/pantry-dev1}"
 export PANTRY_UDP_PORT="${PANTRY_UDP_PORT:-17878}"
 export PANTRY_TCP_PORT="${PANTRY_TCP_PORT:-17879}"
