@@ -53,7 +53,7 @@ npm run smoke     # 启动 1.5s 干净退出（PANTRY_SMOKE 钩子，CI 同款�
 ```
 
 - 本机三客户端联调：懒人入口用 `npm run dev:2` 一次拉起前两个、`npm run dev:3` 一次拉起三个；也可分别在三个终端跑 `npm run dev:client1`、`npm run dev:client2`、`npm run dev:client3`。三个实例使用 `/tmp/pantry-dev1..3` 和 `17878/27878/37878` UDP 端口、`17879/27879/37879` TCP 端口。
-- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #197，续 #198+）；协议改动必须 protocol.md 先行。
+- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #198，续 #199+）；协议改动必须 protocol.md 先行。
 - 与用户协作：**全程中文**；用户技术方向不在网络/协议——技术细节直接定但落档、**不要追问底层**；产品可感知取舍（功能形态/默认参数）用 2-4 个带推荐的选项问他。
 
 ## 3. 代码地图（src/，分层铁律见 AGENTS.md #7）

@@ -206,7 +206,7 @@ UI 概念，协议上不存在：对每个收件人各发一条独立 `msg`，�
 - 群图片/文件 = 向在线 members 逐个单播 `file-ctl{op:"offer", msgId, groupId, groupRev}`，每个收件人一条独立 transfer，但同一条群媒体消息复用同一 `msgId`；离线成员不入队（决议 #4/#32/#188）。发送端本地只插一条群消息，`fileRef.transferIds[]` 汇总各成员 transfer；收端按 `groupId` 插入群会话，若不认识该 groupId 或 rev 落后，复用 `group{op:"need"}` 向发送者索要元数据。群图片只有单图 ≤10MB 时允许携带 `purpose:"image"`，超限图片不带 purpose，按普通文件卡片展示与手动接收（决议 #33）。
 - 收端不认识该 groupId 或本地 rev 落后 → 向发送者发 `group{op:"need", groupId}`，对方回 `group{op:"info", …全量元数据}`。
 - 成员增删 = 修改元数据（rev+1）后向**新旧成员全集**发 `group{op:"info"}`（被移出者借此得知）。
-- 上限 50 人/组；群管理指改名、添加成员、移出他人。建群时记录 `creatorIp` 与 `creatorId`，并可选管理密码：有密码的组同步 `adminSecretHash`（密码明文不入库、不入协议）与 `adminHint`（可空提示文案，供成员输入密码时展示），成员输入密码后可发起管理变更；无密码的组允许创建者管理，校验优先使用创建者 nodeId，保留创建 IP 作为旧版本兼容。成员自行退组不需要管理权限。
+- 上限 **200 人/组**（决议 #198，原 50）；群管理指改名、添加成员、移出他人。建群时记录 `creatorIp` 与 `creatorId`，并可选管理密码：有密码的组同步 `adminSecretHash`（密码明文不入库、不入协议）与 `adminHint`（可空提示文案，供成员输入密码时展示），成员输入密码后可发起管理变更；无密码的组允许创建者管理，校验优先使用创建者 nodeId，保留创建 IP 作为旧版本兼容。成员自行退组不需要管理权限。
 - 收端合并远端 `group.info` 前先校验管理来源：本地已有该组且 `adminSecretHash` 非空时，远端元数据必须携带相同摘要；本地已有该组且无管理密码时，远端来源 IP 等于本地 `creatorIp` 可接受，或信封 `from` 等于本地 `creatorId` 且远端 `updatedBy` 也等于该创建者可接受。仅移除 `updatedBy` 自己的退组变更可例外接受。该 nodeId 回退用于宿主机多网卡/虚拟机网络下创建 IP 与实际源 IP 不一致的合法改名同步（决议 #113）。
 
 ## 8. 文件传输（TCP，拉取式）
@@ -274,7 +274,7 @@ sequenceDiagram
 | IMG_AUTO_ACCEPT | ≤ 20 MB | 决议 #2，用户指定 |
 | GROUP_IMG_AUTO_ACCEPT | ≤ 10 MB | 决议 #33；超限群图片按普通文件手动接收 |
 | TABLE_TEXT_LIMIT | ≤ 4096B UTF-8 | 决议 #190；表格图片消息的原始 TSV 文字视图上限 |
-| GROUP_MAX_MEMBERS | 50 | |
+| GROUP_MAX_MEMBERS | 200 | 决议 #198，原 50 |
 | GROUP_ADMIN_PASSWORD | ≤ 64 字符 | 可空；只生成摘要，不传明文 |
 | GROUP_ADMIN_HINT | ≤ 40 字符 | 可空；仅在有管理密码时展示，不作为鉴权依据 |
 | TRANSFER_CONCURRENCY | 3（可配） | |
@@ -346,3 +346,4 @@ sequenceDiagram
 - 2026-07-02 v0.36 决议 #190：表格粘贴图片消息协议扩展。§3 caps 新增 `tbl1`；§8 `file-ctl offer` 新增可选 `tableText` 与 `tableTextTruncated`，仅允许 `purpose:"image"` 的单图媒体携带，文字长度上限 4096B UTF-8。发送端只向声明 `tbl1` 的在线收件人附带原始 TSV 文本；群聊按成员能力分别发送，超限时截断文字视图并标记 `tableTextTruncated:true`。收端把字段写入本地图片消息 `file_ref`，用于同一气泡内图片 / 文字视图切换；旧端忽略未知字段并按普通图片显示。
 - 2026-07-08 v0.37 决议 #194：文档澄清茶话间主协议仍保持 UTF-8 JSON 与自有信封，IPMSG / 内网通兼容能力不进入主 `UdpChannel` / `codec`，而是由独立兼容适配器实现；兼容子集的 `BR_ENTRY` / `ANSENTRY` / `SENDMSG` / `RECVMSG`、`2425/UDP` 与 GBK 解码策略见 [nwt-compat-design.md](nwt-compat-design.md)。
 - 2026-07-08 v0.38 决议 #195：补充说明内网通文件、图片、震动等能力仍属于独立兼容适配器范围。IPMSG `FILEATTACHOPT` / `CLIPBOARDOPT` / TCP `GETFILEDATA` 可在 `net/compat/` 内实验，主协议继续只保留茶话间自有文件、图片、PK、窗口震动和媒体撤回语义；兼容会话的能力隐藏规则见 [nwt-compat-design.md](nwt-compat-design.md)。
+- 2026-07-09 v0.39 决议 #198：`GROUP_MAX_MEMBERS` 50 → **200**（§7.4 与常量表）；codec 对 `group.info.members` 与 `group-text.mentions` 上限同步。旧端仍按 50 拒绝超限元数据。
