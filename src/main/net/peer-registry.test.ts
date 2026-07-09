@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Profile } from '../../shared/protocol'
 import { PeerRegistry } from './peer-registry'
 
-function profile(nodeId: string, nick: string): Profile {
+function profile(nodeId: string, nick: string, profileRev = 1): Profile {
   return {
     nodeId,
     nick,
@@ -10,7 +10,7 @@ function profile(nodeId: string, nick: string): Profile {
     dept: '',
     team: '',
     avatar: -1,
-    profileRev: 1,
+    profileRev,
     host: `${nodeId}-host`,
     platform: 'linux',
     tcpPort: 18888,
@@ -19,7 +19,160 @@ function profile(nodeId: string, nick: string): Profile {
   }
 }
 
-describe('PeerRegistry 列表投影', () => {
+describe('PeerRegistry 节点状态', () => {
+  it('seed 跳过自己和已有节点，并以离线态导入历史联系人', () => {
+    const registry = new PeerRegistry('node-self')
+    const updated = vi.fn()
+    registry.on('updated', updated)
+
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob 在线'))
+    registry.seed([
+      {
+        profile: profile('node-self', '我'),
+        ip: '127.0.0.1',
+        udpPort: 10000,
+        lastSeen: 1,
+        online: true
+      },
+      {
+        profile: profile('node-bob', 'Bob 历史'),
+        ip: '127.0.0.2',
+        udpPort: 10002,
+        lastSeen: 2,
+        online: false
+      },
+      {
+        profile: profile('node-carol', 'Carol'),
+        ip: '127.0.0.3',
+        udpPort: 10003,
+        lastSeen: 3,
+        online: true
+      }
+    ])
+    registry.seed([
+      {
+        profile: profile('node-carol', 'Carol 二次导入'),
+        ip: '127.0.0.4',
+        udpPort: 10004,
+        lastSeen: 4,
+        online: true
+      }
+    ])
+
+    expect(registry.get('node-self')).toBeUndefined()
+    expect(registry.get('node-bob')).toMatchObject({
+      ip: '127.0.0.1',
+      udpPort: 10001,
+      online: true,
+      profile: { nick: 'Bob 在线' }
+    })
+    expect(registry.get('node-carol')).toMatchObject({
+      ip: '127.0.0.3',
+      udpPort: 10003,
+      online: false,
+      profile: { nick: 'Carol' }
+    })
+    expect(updated).toHaveBeenCalledTimes(2)
+  })
+
+  it('touch 拒绝未知空资料、自己和 nodeId 不一致的资料', () => {
+    const registry = new PeerRegistry('node-self')
+
+    expect(registry.touch('node-bob', '127.0.0.1', 10001)).toBeNull()
+    expect(registry.touch('node-self', '127.0.0.1', 10001, profile('node-self', '我'))).toBeNull()
+    expect(registry.touch('node-bob', '127.0.0.1', 10001, profile('node-other', '错配'))).toBeNull()
+    expect(registry.values()).toEqual([])
+  })
+
+  it('已在线节点不接受源地址漂移，即使携带更新资料', () => {
+    const registry = new PeerRegistry('node-self')
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob', 1))
+
+    expect(
+      registry.touch('node-bob', '127.0.0.2', 10002, profile('node-bob', '伪造 Bob', 2))
+    ).toBeNull()
+
+    expect(registry.get('node-bob')).toMatchObject({
+      ip: '127.0.0.1',
+      udpPort: 10001,
+      online: true,
+      profile: { nick: 'Bob', profileRev: 1 }
+    })
+  })
+
+  it('离线节点换地址必须带完整 profile，且 online 事件看到的是更新后的字段', () => {
+    const registry = new PeerRegistry('node-self')
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob', 1))
+    registry.markOffline('node-bob')
+
+    expect(registry.touch('node-bob', '127.0.0.2', 10002)).toBeNull()
+    expect(registry.get('node-bob')).toMatchObject({
+      ip: '127.0.0.1',
+      udpPort: 10001,
+      online: false,
+      profile: { nick: 'Bob', profileRev: 1 }
+    })
+
+    const onlineSnapshots: Array<ReturnType<PeerRegistry['get']>> = []
+    registry.on('online', (nodeId: string) => {
+      onlineSnapshots.push(registry.get(nodeId))
+    })
+    const updated = registry.touch(
+      'node-bob',
+      '127.0.0.2',
+      10002,
+      profile('node-bob', 'Bob 新地址', 2)
+    )
+
+    expect(updated).toMatchObject({
+      ip: '127.0.0.2',
+      udpPort: 10002,
+      online: true,
+      profile: { nick: 'Bob 新地址', profileRev: 2 }
+    })
+    expect(onlineSnapshots).toHaveLength(1)
+    expect(onlineSnapshots[0]).toMatchObject({
+      ip: '127.0.0.2',
+      udpPort: 10002,
+      online: true,
+      profile: { nick: 'Bob 新地址', profileRev: 2 }
+    })
+  })
+
+  it('profileRev 旧值不回退，较新资料才覆盖', () => {
+    const registry = new PeerRegistry('node-self')
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob v2', 2))
+
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob v1', 1))
+    expect(registry.get('node-bob')?.profile).toMatchObject({ nick: 'Bob v2', profileRev: 2 })
+
+    registry.touch('node-bob', '127.0.0.1', 10001, profile('node-bob', 'Bob v3', 3))
+    expect(registry.get('node-bob')?.profile).toMatchObject({ nick: 'Bob v3', profileRev: 3 })
+  })
+
+  it('sweep 只把超时在线节点标为离线', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    try {
+      const registry = new PeerRegistry('node-self')
+      const updated = vi.fn()
+      registry.on('updated', updated)
+      registry.touch('node-old', '127.0.0.1', 10001, profile('node-old', '旧节点'))
+      registry.touch('node-fresh', '127.0.0.1', 10002, profile('node-fresh', '新节点'))
+      registry.markOffline('node-offline')
+
+      vi.setSystemTime(12_000)
+      registry.touch('node-fresh', '127.0.0.1', 10002)
+      registry.sweep(1_000)
+
+      expect(registry.get('node-old')?.online).toBe(false)
+      expect(registry.get('node-fresh')?.online).toBe(true)
+      expect(updated).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('values 保留插入顺序，list 保留展示排序', () => {
     const registry = new PeerRegistry('node-self')
     registry.touch('node-zhang', '127.0.0.1', 10001, profile('node-zhang', '张三'))

@@ -299,7 +299,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-18 【P3·测试】测试补齐：range-sync 与 peer-registry 缺专项测试
 
-- 状态：待办
+- 状态：已完成（0.32.20 / 本提交）
 - 涉及：新增 `src/main/net/range-sync.test.ts`、`src/main/net/peer-registry.test.ts`；难度：中；commit 类型：`test:`
 - **问题**：网络层唯二没有专项测试的模块。`peer-registry.ts` 的**地址漂移防护规则**（在线节点不接受源地址漂移、离线换址必须带完整 profile，`peer-registry.ts:53-60`，防伪造关键闸门）无直接断言。
 - **方案**：

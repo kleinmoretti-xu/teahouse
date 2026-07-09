@@ -12,7 +12,7 @@
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #203）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #204）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
