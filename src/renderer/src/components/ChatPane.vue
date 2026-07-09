@@ -14,13 +14,11 @@ import {
 } from '../utils/clipboard'
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
-import { listTime, separatorTime } from '../utils/time'
+import { listTime } from '../utils/time'
 import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
 import AvatarMark from './AvatarMark.vue'
 import CompatEmoji from './CompatEmoji.vue'
-import FileCard from './FileCard.vue'
-import ImageBubble from './ImageBubble.vue'
-import PkBubble from './PkBubble.vue'
+import MessageRow from './MessageRow.vue'
 import EmojiPanel from './EmojiPanel.vue'
 import GroupPanel from './GroupPanel.vue'
 import ForwardDialog from './ForwardDialog.vue'
@@ -131,10 +129,6 @@ const MSG_MENU_WIDTH = 112
 const MSG_MENU_ITEM_HEIGHT = 32
 const MSG_MENU_PADDING = 10
 const MENU_MARGIN = 8
-interface TextPart {
-  text: string
-  url: string
-}
 interface HistoryCalendarDay {
   key: string
   label: number
@@ -399,23 +393,13 @@ function senderName(msg: MessageView): string {
   return peersStore.nameOf(msg.senderId)
 }
 
-function senderPeer(msg: MessageView): PeerView | undefined {
-  return peersStore.byId(msg.senderId)
-}
-
-function showGroupSender(msg: MessageView): boolean {
-  return isGroup.value && !msg.isMine && msg.kind !== 'system' && msg.status !== 'recalled'
+function senderAvatar(msg: MessageView): number {
+  return peersStore.byId(msg.senderId)?.avatar ?? -1
 }
 
 const draftBytes = computed(() => new TextEncoder().encode(draft.value.trim()).length)
 const overUdpLimit = computed(() => draftBytes.value > TEXT_UDP_LIMIT)
 const overLimit = computed(() => draftBytes.value > TEXT_TCP_LIMIT)
-
-/** 与上一条间隔 >5 分钟时插时间分隔（ui-design §5） */
-function needSeparator(msg: MessageView, index: number): boolean {
-  if (index === 0) return true
-  return msg.ts - chatStore.activeMessages[index - 1].ts > 5 * 60_000
-}
 
 function scrollToBottom(): void {
   void nextTick(() => {
@@ -990,41 +974,6 @@ function insertMention(nodeId: string): void {
     inputEl.value?.focus()
     if (inputEl.value) inputEl.value.selectionStart = inputEl.value.selectionEnd = pos
   })
-}
-
-function statusHint(msg: MessageView): string {
-  if (msg.kind === 'file') return '' // 文件卡片自带状态行
-  if (msg.status === 'recalled') return ''
-  if (msg.status === 'queued') return '对方上线后自动送达'
-  if (msg.status === 'failed') return '发送失败，点击重发'
-  return ''
-}
-
-const URL_RE = /\bhttps?:\/\/[^\s<>"']+/gi
-const URL_TRAILING = /[),.，。!！?？;；:：]+$/
-
-function textParts(text: string): TextPart[] {
-  const parts: TextPart[] = []
-  let last = 0
-  for (const match of text.matchAll(URL_RE)) {
-    const raw = match[0]
-    const index = match.index ?? 0
-    const trimmed = raw.replace(URL_TRAILING, '')
-    if (!trimmed) continue
-    if (index > last) parts.push({ text: text.slice(last, index), url: '' })
-    parts.push({ text: trimmed, url: trimmed })
-    const tailStart = index + trimmed.length
-    if (tailStart < index + raw.length) {
-      parts.push({ text: text.slice(tailStart, index + raw.length), url: '' })
-    }
-    last = index + raw.length
-  }
-  if (last < text.length) parts.push({ text: text.slice(last), url: '' })
-  return parts.length > 0 ? parts : [{ text, url: '' }]
-}
-
-function openTextLink(url: string): void {
-  void window.pantry.openUrl(url)
 }
 
 function canCopyMessage(msg: MessageView): boolean {
@@ -1675,95 +1624,25 @@ async function onDrop(event: DragEvent): Promise<void> {
       <div ref="scrollArea" class="msgs" @scroll="onScroll">
       <div ref="msgsContent" class="msgs-content">
       <div v-if="loadingEarlier" class="sep">加载更早的消息…</div>
-      <template v-for="(msg, i) in chatStore.activeMessages" :key="msg.id">
-        <div v-if="needSeparator(msg, i)" class="sep">{{ separatorTime(msg.ts) }}</div>
-        <div v-if="msg.kind === 'system'" class="system-line">{{ msg.text }}</div>
-        <div
-          v-else-if="msg.status !== 'recalled'"
-          :id="`msg-${msg.id}`"
-          class="row"
-          :class="[msg.isMine ? 'mine' : 'peer', { highlight: msg.id === chatStore.highlightId }]"
-        >
-          <AvatarMark
-            v-if="showGroupSender(msg)"
-            class="msg-avatar"
-            :avatar="senderPeer(msg)?.avatar ?? -1"
-            :name="senderName(msg)"
-          />
-          <span class="message-stack">
-            <span v-if="showGroupSender(msg)" class="sender">{{ senderName(msg) }}</span>
-            <FileCard
-              v-if="msg.kind === 'file'"
-              :msg="msg"
-              class="message-surface"
-              @contextmenu.prevent.stop="openMessageMenu($event, msg)"
-            />
-            <ImageBubble
-              v-else-if="msg.kind === 'image' || msg.kind === 'sticker'"
-              :msg="msg"
-              class="message-surface"
-              :recall-visible="isRecallableKind(msg)"
-              :recall-disabled-reason="mediaRecallDisabledReason(msg)"
-              @forward="forwardMsg = msg"
-              @recall="recallMessage(msg)"
-            />
-            <PkBubble
-              v-else-if="msg.kind === 'pk'"
-              :msg="msg"
-              :mine="msg.isMine"
-              :show-action="!msg.isMine"
-              :action-disabled="!canSendPk"
-              :disabled-reason="pkDisabledReason"
-              class="message-surface"
-              @participate="sendPk"
-              @contextmenu.prevent.stop="openMessageMenu($event, msg)"
-            />
-            <div
-              v-else
-              class="bubble message-surface"
-              @contextmenu.prevent.stop="openMessageMenu($event, msg)"
-            >
-              <template v-for="(part, partIndex) in textParts(msg.text)" :key="partIndex">
-                <button
-                  v-if="part.url"
-                  class="text-link"
-                  type="button"
-                  @click.stop="openTextLink(part.url)"
-                >
-                  {{ part.text }}
-                </button>
-                <span v-else>
-                  <template
-                    v-for="(emojiPart, emojiPartIndex) in splitEmojiText(part.text)"
-                    :key="emojiPartIndex"
-                  >
-                    <CompatEmoji v-if="emojiPart.emoji" :emoji="emojiPart.text" />
-                    <span v-else>{{ emojiPart.text }}</span>
-                  </template>
-                </span>
-              </template>
-            </div>
-          </span>
-          <span v-if="msg.isMine" class="status">
-            <PantryIcon v-if="msg.status === 'sending'" class="spin" name="loader" :size="13" />
-            <PantryIcon v-else-if="msg.status === 'sent'" class="ok" name="check" :size="13" />
-            <span
-              v-else-if="msg.status === 'queued'"
-              class="queued"
-              title="对方上线后自动送达"
-              @click="chatStore.resend(msg.id)"
-            >
-              <PantryIcon name="clock" :size="13" />
-            </span>
-            <span v-else class="fail" title="发送失败，点击重发" @click="chatStore.resend(msg.id)"
-              >!</span
-            >
-          </span>
-        </div>
-        <div v-if="msg.isMine && statusHint(msg)" class="hint" :class="msg.status">
-          {{ statusHint(msg) }}
-        </div>
-      </template>
+      <MessageRow
+        v-for="(msg, i) in chatStore.activeMessages"
+        :key="msg.id"
+        :msg="msg"
+        :prev-ts="i === 0 ? null : chatStore.activeMessages[i - 1].ts"
+        :is-group-conv="isGroup"
+        :sender-name="senderName(msg)"
+        :sender-avatar="senderAvatar(msg)"
+        :highlighted="msg.id === chatStore.highlightId"
+        :can-send-pk="canSendPk"
+        :pk-disabled-reason="pkDisabledReason"
+        :recall-visible="isRecallableKind(msg)"
+        :recall-disabled-reason="mediaRecallDisabledReason(msg)"
+        @contextmenu="openMessageMenu"
+        @forward="forwardMsg = $event"
+        @recall="recallMessage"
+        @participate-pk="sendPk"
+        @resend="chatStore.resend"
+      />
       </div>
       </div>
       <Transition name="jump-latest">
@@ -2135,19 +2014,6 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .mention-picker button:hover {
   background: var(--line);
-}
-.row.highlight {
-  animation: hl 2.4s ease;
-  border-radius: 8px;
-}
-@keyframes hl {
-  0%,
-  60% {
-    background: rgba(61, 139, 107, 0.16);
-  }
-  100% {
-    background: transparent;
-  }
 }
 /* "回到最新"悬浮圆按钮（决议 #134）：贴消息区右下角，白底 + 茶青箭头 + 柔和阴影 */
 .jump-latest {
@@ -2954,11 +2820,6 @@ async function onDrop(event: DragEvent): Promise<void> {
      flow-root 让高度精确包含内容，消息流间距与无包裹时一致 */
   display: flow-root;
 }
-.sender {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-left: 4px;
-}
 .head-spacer {
   flex: 1;
 }
@@ -2982,97 +2843,6 @@ async function onDrop(event: DragEvent): Promise<void> {
   font-size: 11px;
   color: var(--text-3);
   margin: 10px 0 6px;
-}
-.system-line {
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-3);
-  margin: 8px 0;
-}
-.row {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  margin: 4px 0;
-}
-.row.mine {
-  flex-direction: row-reverse;
-}
-.msg-avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  flex: 0 0 30px;
-  align-self: flex-start;
-  margin-top: 18px;
-}
-.message-stack {
-  max-width: 64%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  flex-shrink: 0;
-}
-.row.mine .message-stack {
-  align-items: flex-end;
-}
-.message-surface {
-  flex-shrink: 0;
-}
-.bubble {
-  max-width: 100%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.5;
-  word-break: break-word;
-  white-space: pre-wrap;
-  user-select: text;
-}
-.row.peer .bubble {
-  background: var(--bubble-peer);
-}
-.row.mine .bubble {
-  background: var(--bubble-mine);
-}
-.text-link {
-  border: none;
-  background: transparent;
-  color: var(--primary);
-  font: inherit;
-  line-height: inherit;
-  padding: 0;
-  text-decoration: underline;
-  cursor: pointer;
-  user-select: text;
-}
-.status {
-  font-size: 12px;
-  color: var(--text-3);
-  flex-shrink: 0;
-  margin-bottom: 4px;
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-}
-.status .ok {
-  color: var(--online);
-}
-.status .fail {
-  color: var(--danger);
-  cursor: pointer;
-  font-weight: 700;
-  padding: 0 4px;
-}
-.status .queued {
-  cursor: pointer;
-  display: grid;
-  place-items: center;
 }
 .msg-menu {
   position: fixed;
@@ -3108,24 +2878,6 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .msg-menu button:disabled:hover {
   background: transparent;
-}
-.spin {
-  display: inline-block;
-  animation: rotate 1s linear infinite;
-}
-@keyframes rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.hint {
-  font-size: 11px;
-  color: var(--text-3);
-  text-align: right;
-  margin: 0 28px 4px 0;
-}
-.hint.failed {
-  color: var(--danger);
 }
 .input-area {
   flex: 0 0 auto;

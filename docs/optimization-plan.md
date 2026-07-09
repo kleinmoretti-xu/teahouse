@@ -191,7 +191,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-9 【P1·性能/渲染】消息列表整体重渲染：抽 MessageRow 行组件
 
-- 状态：待办
+- 状态：已完成（v0.32.12 / 本提交）
 - 涉及：`src/renderer/src/components/ChatPane.vue`（模板 :1667-1756）、新增 `src/renderer/src/components/MessageRow.vue`；难度：大（谨慎执行）；commit 类型：`refactor:`
 - **问题**：消息列表是巨型内联 `v-for`（:1667），任何触发 ChatPane 重渲染的状态变化（新消息、任一条状态变化、输入区/浮层状态）都会**重跑所有行的渲染函数**：每行的 `textParts()`（正则 matchAll）、`splitEmojiText()`、`needSeparator()` 全部重算。50 条一页尚可，向上翻几页（几百条 DOM）后每次变化都是全量 vdom 重建。
 - **方案**：把 `v-for` 循环体抽成 `MessageRow.vue` 子组件（Vue 对子组件按 props 变化跳过重渲染）。要点：
