@@ -44,6 +44,8 @@ export interface GroupsDeps {
 type GroupPatch = { name?: string; add?: string[]; remove?: string[]; adminPassword?: string }
 
 export class GroupsService extends EventEmitter {
+  private convsScheduled = false
+
   constructor(private readonly deps: GroupsDeps) {
     super()
     deps.messenger.on('incoming', (env: Envelope, rinfo?: RemoteInfo) => {
@@ -365,7 +367,12 @@ export class GroupsService extends EventEmitter {
   }
 
   private emitConvs(): void {
-    this.emit('convs', this.deps.convRepo.list().map(convRowToView))
+    if (this.convsScheduled) return
+    this.convsScheduled = true
+    queueMicrotask(() => {
+      this.convsScheduled = false
+      this.emit('convs', this.deps.convRepo.list().map(convRowToView))
+    })
   }
 
   private insertGroupRenameTip(

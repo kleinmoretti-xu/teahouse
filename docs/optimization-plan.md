@@ -265,7 +265,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-15 【P2·性能/主进程】`emitConvs` 每事件全量查询 + 全量 IPC 推送：微任务合并
 
-- 状态：待办
+- 状态：已完成（v0.32.18 / 本提交）
 - 涉及：`src/main/services/chat.ts:505-507`、`groups.ts:367-369`、`files.ts:1039-1041`；难度：小；commit 类型：`fix:`
 - **问题**：三个服务的 `emitConvs()` 每次触发都全量查会话列表并整表推渲染层；单条消息处理链路可能触发多次，群消息扇入更密。OPT-5 后单次查询已便宜，但 IPC 序列化与渲染刷新仍按次付费。
 - **方案**：三处各自加微任务合并（`convsScheduled` 标志 + `queueMicrotask`），同一同步批次合并为一次查询 + 一次推送。渲染层 `onConvsUpdated` 是整表替换，语义无损。

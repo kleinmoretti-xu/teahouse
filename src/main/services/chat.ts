@@ -66,6 +66,7 @@ export class ChatService extends EventEmitter {
   >()
   private readonly outgoingNudges = new Map<string, number[]>()
   private readonly incomingNudges = new Map<string, number[]>()
+  private convsScheduled = false
 
   constructor(private readonly deps: ChatDeps) {
     super()
@@ -507,7 +508,12 @@ export class ChatService extends EventEmitter {
   }
 
   private emitConvs(): void {
-    this.emit('convs', this.listConversations())
+    if (this.convsScheduled) return
+    this.convsScheduled = true
+    queueMicrotask(() => {
+      this.convsScheduled = false
+      this.emit('convs', this.listConversations())
+    })
   }
 
   private isConversationMuted(convId: string): boolean {

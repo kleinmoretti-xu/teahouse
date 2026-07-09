@@ -125,6 +125,19 @@ function service(opts: {
 }
 
 describe('GroupsService 群管理权限', () => {
+  it('同一同步批次内合并会话列表事件', async () => {
+    const groups = service({ selfIp: '10.0.0.1' })
+    const events: ConversationView[][] = []
+    groups.on('convs', (convs: ConversationView[]) => events.push(convs))
+
+    groups.createGroup('一组', ['node-a'])
+    groups.createGroup('二组', ['node-b'])
+
+    expect(events).toHaveLength(0)
+    await Promise.resolve()
+    expect(events).toHaveLength(1)
+  })
+
   it('无密码组允许创建者直接管理，其他成员不能管理', () => {
     const repo = new FakeGroupRepo()
     const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })

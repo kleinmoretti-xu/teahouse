@@ -88,6 +88,10 @@ class FakeConvRepo {
     return `single:${peerId}`
   }
 
+  markRead(): void {
+    // no-op
+  }
+
   bump(convId: string, ts: number): void {
     this.bumped.push({ convId, ts })
   }
@@ -130,6 +134,24 @@ function makeRow(overrides: Partial<MsgRow> = {}): MsgRow {
 }
 
 describe('ChatService 会话设置', () => {
+  it('同一同步批次内合并会话列表事件', async () => {
+    const chat = new ChatService({
+      selfId: 'node-self',
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      messenger: new FakeMessenger() as unknown as Messenger
+    })
+    const events: ConversationView[][] = []
+    chat.on('convs', (convs: ConversationView[]) => events.push(convs))
+
+    chat.sendText('node-a', '第一条')
+    chat.sendText('node-b', '第二条')
+
+    expect(events).toHaveLength(0)
+    await Promise.resolve()
+    expect(events).toHaveLength(1)
+  })
+
   it('可直接查询单个会话的免打扰状态', () => {
     const convRepo = new FakeConvRepo()
     convRepo.muted.add('single:node-peer')

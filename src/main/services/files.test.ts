@@ -172,6 +172,39 @@ function waitTick(): Promise<void> {
 }
 
 describe('FilesService 群聊媒体', () => {
+  it('同一同步批次内合并会话列表事件', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-convs-batch-'))
+    tmpDirs.push(dir)
+    const firstPath = join(dir, '第一份.txt')
+    const secondPath = join(dir, '第二份.txt')
+    writeFileSync(firstPath, 'one')
+    writeFileSync(secondPath, 'two')
+
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: new FakeMessenger() as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: new FakeTransferRepo() as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    const events: ConversationView[][] = []
+    service.on('convs', (convs: ConversationView[]) => events.push(convs))
+
+    const first = service.offerPaths('node-bob', [firstPath])
+    const second = service.offerPaths('node-bob', [secondPath])
+
+    expect(events).toHaveLength(0)
+    await Promise.resolve()
+    expect(events).toHaveLength(1)
+    await Promise.all([first, second])
+  })
+
   it('发送更新包 offer 不进入聊天与普通传输视图', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pantry-update-send-'))
     tmpDirs.push(dir)

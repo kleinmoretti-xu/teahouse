@@ -124,6 +124,7 @@ export class FilesService extends EventEmitter {
   private readonly assembling = new Map<string, AssemblingOffer>()
   private readonly incoming = new Map<string, IncomingState>()
   private readonly lastEmit = new Map<string, number>()
+  private convsScheduled = false
 
   constructor(private readonly deps: FilesDeps) {
     super()
@@ -1038,7 +1039,12 @@ export class FilesService extends EventEmitter {
   }
 
   private emitConvs(): void {
-    this.emit('convs', this.deps.convRepo.list().map(convRowToView))
+    if (this.convsScheduled) return
+    this.convsScheduled = true
+    queueMicrotask(() => {
+      this.convsScheduled = false
+      this.emit('convs', this.deps.convRepo.list().map(convRowToView))
+    })
   }
 }
 
