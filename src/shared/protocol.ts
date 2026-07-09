@@ -174,8 +174,8 @@ export interface ScanRangesPayload {
   ranges: ScanRangeSummary[]
 }
 
-/** 群成员上限（requirements F-MSG-4） */
-export const GROUP_MAX_MEMBERS = 50
+/** 群成员上限（requirements F-MSG-4，决议 #198 由 50 调至 200） */
+export const GROUP_MAX_MEMBERS = 200
 
 export const RECALL_WINDOW_MS = TIMINGS.recallWindow
 export const NUDGE_MIN_INTERVAL_MS = TIMINGS.nudgeMinInterval

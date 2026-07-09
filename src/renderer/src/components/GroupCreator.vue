@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { PeerView } from '../../../shared/ipc'
+import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
 import PantryIcon from './PantryIcon.vue'
@@ -63,8 +64,11 @@ const passwordError = computed(() => {
   return ''
 })
 
+// 建群时本机会自动入组，可选他人最多 GROUP_MAX_MEMBERS - 1
+const maxPickOthers = GROUP_MAX_MEMBERS - 1
 const canNext = computed(() => picked.value.size >= 1)
 const canCreate = computed(() => canNext.value && !passwordError.value && !creating.value)
+const atPickCap = computed(() => picked.value.size >= maxPickOthers)
 
 function displayName(peer: PeerView): string {
   return peer.remark || peer.nick
@@ -73,6 +77,7 @@ function displayName(peer: PeerView): string {
 function toggle(nodeId: string): void {
   const next = new Set(picked.value)
   if (next.has(nodeId)) next.delete(nodeId)
+  else if (next.size >= maxPickOthers) return
   else next.add(nodeId)
   picked.value = next
 }
@@ -127,8 +132,18 @@ async function create(): Promise<void> {
           placeholder="搜索联系人、部门、团队或 IP"
         />
         <div class="pick-list">
-          <label v-for="p in filteredPeers" :key="p.nodeId" class="pick">
-            <input type="checkbox" :checked="picked.has(p.nodeId)" @change="toggle(p.nodeId)" />
+          <label
+            v-for="p in filteredPeers"
+            :key="p.nodeId"
+            class="pick"
+            :class="{ disabled: atPickCap && !picked.has(p.nodeId) }"
+          >
+            <input
+              type="checkbox"
+              :checked="picked.has(p.nodeId)"
+              :disabled="atPickCap && !picked.has(p.nodeId)"
+              @change="toggle(p.nodeId)"
+            />
             <span class="dot" :class="p.online ? 'on' : 'off'"></span>
             <span class="person">
               <span class="nm">{{ displayName(p) }}</span>
@@ -173,7 +188,9 @@ async function create(): Promise<void> {
       </section>
 
       <div v-if="selectedPeers.length > 0" class="picked-bar">
-        <span class="count">已选 {{ selectedPeers.length }} 人（+你）</span>
+        <span class="count">
+          已选 {{ selectedPeers.length }} 人（+你，最多 {{ GROUP_MAX_MEMBERS }}）
+        </span>
         <button
           v-for="peer in selectedPeers.slice(0, 5)"
           :key="peer.nodeId"
@@ -280,6 +297,13 @@ h3 {
 }
 .pick:hover {
   background: var(--line);
+}
+.pick.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pick.disabled:hover {
+  background: transparent;
 }
 .dot {
   width: 7px;

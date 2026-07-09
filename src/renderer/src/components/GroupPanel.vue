@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { GroupView } from '../../../shared/ipc'
+import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
 import { useGroupsStore } from '../stores/groups'
@@ -25,7 +26,10 @@ const adminFeedback = ref('')
 const adminBusy = ref(false)
 
 const memberIds = computed(() => new Set(props.group.members))
-const addable = computed(() => peersStore.peers.filter((p) => !memberIds.value.has(p.nodeId)))
+const atMemberCap = computed(() => props.group.members.length >= GROUP_MAX_MEMBERS)
+const addable = computed(() =>
+  atMemberCap.value ? [] : peersStore.peers.filter((p) => !memberIds.value.has(p.nodeId))
+)
 const canShowAdmin = computed(
   () => props.group.amMember && (props.group.canManage || props.group.hasAdminPassword)
 )
@@ -67,7 +71,7 @@ async function removeMember(id: string): Promise<void> {
 }
 
 async function addMember(id: string): Promise<void> {
-  if (adminBusy.value) return
+  if (adminBusy.value || atMemberCap.value) return
   await updateAdmin({ add: [id] })
 }
 
@@ -127,7 +131,7 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
       </button>
     </div>
 
-    <div class="count">成员 {{ group.members.length }} / 50</div>
+    <div class="count">成员 {{ group.members.length }} / {{ GROUP_MAX_MEMBERS }}</div>
     <div v-if="adminTip" class="admin-tip">{{ adminTip }}</div>
     <div v-if="group.amMember && group.hasAdminPassword" class="admin-password">
       <input
@@ -162,10 +166,16 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
     </ul>
 
     <template v-if="group.amMember">
-      <button v-if="canShowAdmin" class="add" :disabled="adminBusy" @click="adding = !adding">
-        <PantryIcon name="plus" :size="14" />添加成员
+      <button
+        v-if="canShowAdmin"
+        class="add"
+        :disabled="adminBusy || atMemberCap"
+        :title="atMemberCap ? `最多 ${GROUP_MAX_MEMBERS} 人` : '添加成员'"
+        @click="adding = !adding"
+      >
+        <PantryIcon name="plus" :size="14" />{{ atMemberCap ? '已满员' : '添加成员' }}
       </button>
-      <ul v-if="adding" class="members addlist">
+      <ul v-if="adding && !atMemberCap" class="members addlist">
         <li v-for="p in addable" :key="p.nodeId" class="addable" @click="addMember(p.nodeId)">
           <AvatarMark class="m-avatar" :avatar="p.avatar" :name="p.remark || p.nick" :presence="p.online ? 'online' : 'offline'" />
           <span class="nm">{{ p.remark || p.nick }}</span>

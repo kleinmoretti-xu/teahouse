@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { decode, decodeTcpEnvelopeObject, encode, makeEnvelope } from './codec'
 import {
   GROUP_IMG_AUTO_ACCEPT,
+  GROUP_MAX_MEMBERS,
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
   UDP_MAX_INBOUND,
@@ -122,7 +123,7 @@ describe('codec', () => {
       text: 'hi',
       groupId: 'group-1',
       groupRev: 1,
-      mentions: Array.from({ length: 51 }, (_, i) => `node-${i}`)
+      mentions: Array.from({ length: GROUP_MAX_MEMBERS + 1 }, (_, i) => `node-${i}`)
     })
     expect(decode(encode(tooMany))).toEqual({ ok: false, reason: 'bad-payload:msg' })
 
