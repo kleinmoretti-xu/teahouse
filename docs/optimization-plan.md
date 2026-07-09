@@ -276,13 +276,13 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-16 【P3·文档】文档漂移修正（纯文档，不递增版本）
 
-- 状态：待办
+- 状态：已完成（纯文档 / 本提交）
 - 涉及：`docs/handoff.md`、`docs/requirements.md`、`docs/tech-design.md`、`docs/ui-design.md`；难度：小；commit 类型：`docs:`
 - **问题**：
-  1. **OCR 引擎表述过期**：handoff §5 等四处文档仍写"Tesseract.js"，实际代码是**内置 PaddleOCR（PP-OCRv6 tiny，onnxruntime-web 本地 wasm）**——`src/renderer/src/utils/paddleocr/`、`build/ocr/*.onnx`、`scripts/prepare-ocr-assets.mjs`。grep `tesseract` 逐处核对改写（`electron.vite.config.ts` 注释里的类比可保留）；
+  1. **OCR 引擎表述过期**：handoff §5 等四处文档仍写旧 OCR 引擎名，实际代码是**内置 PaddleOCR（PP-OCRv6 tiny，onnxruntime-web 本地 wasm）**——`src/renderer/src/utils/paddleocr/`、`build/ocr/*.onnx`、`scripts/prepare-ocr-assets.mjs`。逐处核对改写（`electron.vite.config.ts` 注释里的类比可保留）；
   2. **迁移版本表述过期**：handoff §1"迁移 v8"与代码地图"migrations(v8·只追加)"——实际已 v9（OPT-5 后 v10），改为随实际版本或写"见 migrations.ts"；
   3. 各文档变更记录留痕。
-- **验收**：`grep -ri tesseract docs/` 仅剩历史决议记录中的合理引用；跑 `npm test` 确认无副作用。
+- **验收**：全文搜索旧 OCR 引擎名，仅剩历史决议记录中的合理引用；跑 `npm test` 确认无副作用。
 
 ---
 

@@ -6,12 +6,13 @@
 > 当前补充：2026-07-09（**v0.32.3 已发布**）：含全局刷新二次确认（#197）与群成员上限 200（#198）。
 > 当前补充：2026-07-09（**决议 #199，内网通兼容暂缓**）：内网通兼容仅有设计落档（#194/#195/#196 + [nwt-compat-design.md](nwt-compat-design.md)），**代码零实现**；用户明确列为**长期待办 / 暂不排期**——调研与 VM 复测周期长，日常开发不要把它当「下一步」。需要再开时先从设计文档与 §15 取舍恢复。
 > 当前补充：2026-07-09（**决议 #200，代码优化方案落档**）：全库审查产出 [optimization-plan.md](optimization-plan.md)（P0 群 200 上限三处漏改、传输层健壮性、messages 索引缺失等 18 项分级待办）；跟进优化的代理从该文档开工，逐项执行并回写状态。
+> 当前补充：2026-07-09（**决议 #202，文档漂移修正**）：当前图片 OCR 引擎为内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm；数据库迁移版本以 `src/main/store/migrations.ts` 与 `PRAGMA user_version` 为准，交接文档不再手写具体迁移号。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #199）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #202）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
@@ -40,7 +41,7 @@
 | 打包链条 | `electron-builder@24.13.3` 精确锁；`dist:win`/`dist:linux`/`dist:mac` 本地脚本；Windows/Debian 真实打包测试留给目标平台 |
 | GitHub 发布 | 公开仓库：[skyjt/teahouse](https://github.com/skyjt/teahouse)；`.github/workflows/release.yml` 已配置 Windows 7 x64、Debian 10 / UOS 20 x64、Debian 10 / UOS 20 arm64、macOS arm64 四条发布线；Linux CI 在 Debian 10 容器内强制源码重建 better-sqlite3，electron-builder 关闭二次 `npmRebuild`，并检查源码重建产物与最终包内 `.node` 最高 GLIBC 符号不超过 2.28；arm64 使用 GitHub 远程 `ubuntu-22.04-arm` runner 跑 Debian 10 arm64 容器，安装系统 fpm / `libffi-dev`，先锁定 `ffi 1.15.5` 再安装 `fpm 1.9.3`，不强制系统 mksquashfs，并显式构建 `deb:arm64` / `AppImage:arm64`，产出 deb/AppImage 与独立 SHA 清单；push `main` / 手动触发上传 artifact，推送 `v*` tag 自动创建/更新 GitHub Release；目标平台真实桌面冒烟仍按 packaging-test 执行 |
 | UI | **沉浸式无标题栏主窗/设置窗（决议 #49/#51/#52：mac 红绿灯置列表栏顶部 x=68、Win/Linux 右上自绘控制按钮、顶部 32px 隐形拖拽带——mac/Win 走 CSS 拖拽区，Linux 因 CSS 拖拽区吞点击改 Pointer Capture + 主进程光标跟随 JS 拖拽，`WindowDragStrip` 组件分流）**、三栏主窗、左侧 68px 浅灰导航（聊天/通讯录主图标 25px，刷新全局用户按钮位于设置上方并带细进度条，设置图标 21px；导航按钮在鼠标真实移动后延迟显示单体中文 tooltip，自己头像仅鼠标悬停显示分组个人信息卡）、三级通讯录树（公司▸部门▸团队，单击右侧资料页、双击直达单聊）、联系人完整资料页+本地备注、私聊头部资料弹窗+备注编辑、私聊顶部完整 IP 副标题、全局搜索（FTS 按字）、发起讨论组两步搜索选人+设置、自绘 SVG 系统图标、明确齿轮设置入口、20 个 Twemoji 本地 SVG 动物头像 + 背景色模板、设置页头像编辑器（决议 #50：大预览 + 图标/昵称首字分段切换 + 图标网格 + 色板）、内置 emoji 子集 Twemoji 本地 SVG 兼容渲染（面板 / 输入框编辑态 / 消息正文；输入框镜像按实际字体 DOM 探针逐字符测宽，与光标逐像素对齐）、系统通知 emoji 文本降级与真实应用图标（决议 #108）、茶杯气泡品牌 logo 三件套（菜单栏单色缩小留边、彩色小标、大图标/空状态）、输入区图标中文延迟提示、输入框 placeholder 独立浅 hint 色、输入区最右侧会话内历史搜索（设置页尺度弹窗，默认显示最近记录，关键词/图片/文件/连续日期筛选，图片结果显示缩略图）、独立图片查看窗口（标题栏文件名、初始 70% 屏幕阈值缩放、底部半透明菜单、缩放/适应窗口/原始大小/旋转/拖拽平移、双击以鼠标位置锚点放大、OCR 独立文本结果窗与缓存、另存为/快捷键，不遮挡主聊天窗）、消息内容级右键菜单与边缘避让、历史滚动加载、会话滚动位置按会话恢复且后台/通知直达默认最新（决议 #111）、设置独立小窗（桌面软件式分组面板）、首启向导、托盘+通知直达会话 |
-| 存储 | SQLite WAL，迁移 v8（user_version 机制，**只追加永不改旧迁移**）|
+| 存储 | SQLite WAL，迁移版本以 `src/main/store/migrations.ts` 与 `PRAGMA user_version` 为准（**只追加永不改旧迁移**）|
 
 ## 2. 开发工作流（沿用即可）
 
@@ -66,7 +67,7 @@ main/
   net/     codec(校验白名单) udp(限速/广播) discovery(发现/gossip/探活)
            messenger(可靠投递·等待表与队列按"消息×收件人"复合键) transfer(TCP数据面) frame cidr
            （compat 目录规划中：内网通适配器，决议 #199 暂缓，勿提前写代码）
-  store/   db(WAL) migrations(v8·只追加) peers/conv/msg/queue/dedup/group/transfer/sticker-repo
+  store/   db(WAL) migrations(只追加·当前版本见 migrations.ts) peers/conv/msg/queue/dedup/group/transfer/sticker-repo
            fts(中文按字) app-state(identity/config) db-selftest(test:db 入口)
   services/ chat groups files search —— 用例编排层；业务禁入 ipc 层（AI 接口预留，决议#21）
   windows/ tray settings-window capture-window tray-icon(base64内嵌)
@@ -95,7 +96,7 @@ renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进
 - Linux arm64 产物已进入 Release workflow；真实 UOS / Debian arm64 桌面冒烟仍需目标机器按 packaging-test 执行。
 - 局域网 P2P 自更新已完成发现提示、主动检测 / 索包请求、`update req` 可靠投递、已有本地安装包的隐藏 `purpose:"update"` 回传与隔离接收；仍缺 A 侧备包（nsis 自留 / deb 自重打包）、B 侧包格式与版本核对、安装重启、进度呈现与失败重试闭环。
 - **内网通兼容（长期待办 / #199 暂缓）**：设计已落档，**代码零实现**；调研与 VM 复测周期长，日常迭代不要启动。恢复时从 nwt-compat-design §15 与决议 #196 阻塞项接着做。
-- 图片 OCR 当前使用 Tesseract.js 识别，不落库、不做全文索引、不做“大爆炸”分词面板；图片上不再叠加 OCR 选择层，不做逐字拖选。识别结果按 `transferId:naturalSize` 缓存在主进程会话级内存中，图片窗口加载后先查缓存，命中后底部按钮可直接打开文本结果窗，用户在原生 textarea 中选择 / 复制文字；小图自动 OCR 不自动弹窗，大图仍手动触发。后续扩展语言包必须继续走本地静态资源复制并评估包体与启动后首次识别耗时。
+- 图片 OCR 当前使用内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm，不落库、不做全文索引、不做“大爆炸”分词面板；图片上不再叠加 OCR 选择层，不做逐字拖选。识别结果按 `transferId:naturalSize` 缓存在主进程会话级内存中，图片窗口加载后先查缓存，命中后底部按钮可直接打开文本结果窗，用户在原生 textarea 中选择 / 复制文字；小图自动 OCR 不自动弹窗，大图仍手动触发。后续扩展模型或字典必须继续走本地静态资源复制并评估包体与启动后首次识别耗时。
 
 ## 6. 环境与坑（新机器上手）
 

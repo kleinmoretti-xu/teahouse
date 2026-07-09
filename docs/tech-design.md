@@ -385,3 +385,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-09 v1.05 决议 #197：全局网段刷新二次确认落渲染层。`App.vue` 在调用 `scanAllRanges` 前插入居中确认态；列表数据复用已加载的 `SettingsView.scanRangeItems` / `scanRanges`，不新增 IPC、协议、SQLite 或主进程扫描逻辑。版本 0.31.3 → 0.32.0。
 - 2026-07-09 v1.06 决议 #199：内网通兼容从里程碑「下一步」挪到**暂缓待办**；§12 表与 handoff 同步，代码仍为零实现。
 - 2026-07-09 v1.07 决议 #200 / OPT-5：SQLite 追加 v10 迁移，新增 `idx_messages_seq` 与 `idx_messages_conv_seq`，让消息插入取号、会话内按 seq 分页 / 上下文窗口和会话预览走索引。版本 0.32.7 → 0.32.8。
+- 2026-07-09 v1.08 决议 #202：同步文档漂移修正记录。当前 OCR 架构以 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm 为准；迁移当前版本以 `src/main/store/migrations.ts` 和 `PRAGMA user_version` 为准，旧 OCR 引擎描述仅保留在历史决议记录中。
