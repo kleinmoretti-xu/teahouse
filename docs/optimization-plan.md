@@ -153,7 +153,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-6 【P1·性能/存储】备份导入 O(n²)：每行重新 prepare + 每条消息全表 MAX(seq)
 
-- 状态：待办
+- 状态：已完成（v0.32.9 / 本提交）
 - 涉及：`src/main/services/porter.ts`（`importBackup` 及各 `importXxx`，:298-484）；难度：中；commit 类型：`fix:`
 - **问题**：导入事务里**每一行都重新 `db.prepare()`**（`importMessage` 一条消息 prepare 4 次：exists 查询 :457、insert :463、FTS :479、conv bump :481；peers/groups/convs/transfers/stickers 同病）。且 insert 的 seq 用子查询 `(SELECT COALESCE(MAX(seq),0)+1 FROM messages)`（:465）——配合无索引即 O(n²)：往已有 5 万条的库导入 5 万条备份是数十亿行扫描级的工作量，用户面对的是导入卡死几分钟到几十分钟（期间主进程同步阻塞，整个应用无响应）。
 - **方案**：

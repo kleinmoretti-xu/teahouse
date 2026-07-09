@@ -454,9 +454,24 @@ try {
   )
   const db2 = openDatabase(join(dir, 'imported.db'))
   try {
-    const result = new PorterService(db2, 'node-new', '新我', join(dir, 'restored')).importBackup(
+    const originalPrepare = db2.prepare.bind(db2)
+    let maxSeqPrepareCount = 0
+    const instrumentedDb = new Proxy(db2 as object, {
+      get(target, prop) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            if (sql.includes('COALESCE(MAX(seq)')) maxSeqPrepareCount += 1
+            return originalPrepare(sql)
+          }
+        }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    }) as typeof db2
+    const result = new PorterService(instrumentedDb, 'node-new', '新我', join(dir, 'restored')).importBackup(
       backupPath
     )
+    assert.equal(maxSeqPrepareCount, 1, '备份导入应只 prepare 一次 MAX(seq) 取号语句')
     assert.ok(result.imported >= 1, '备份导入应至少带入新增图片消息')
     const importedMsg = db2.prepare('SELECT * FROM messages WHERE id = ?').get('m-img') as {
       sender_id: string
@@ -560,6 +575,68 @@ try {
     assert.equal(badSticker, undefined, '无归档媒体时不得导入外部表情路径')
   } finally {
     db3.close()
+  }
+
+  const bulkBackupPath = join(dir, 'bulk-import.pantry-bak')
+  const bulkMessageCount = 20_000
+  writeStoreZip(bulkBackupPath, [
+    {
+      name: 'manifest.json',
+      data: Buffer.from(
+        JSON.stringify({
+          formatVer: 1,
+          exportedAt: Date.now(),
+          exportedBy: 'node-old',
+          nick: '旧我',
+          counts: {
+            conversations: 1,
+            messages: bulkMessageCount,
+            peers: 0,
+            groups: 0,
+            stickers: 0,
+            transfers: 0,
+            media: 0
+          }
+        }),
+        'utf8'
+      )
+    },
+    {
+      name: 'conversations.jsonl',
+      data: badJsonl([{ id: 'single:node-peer', type: 'single', peerId: 'node-peer', lastTs: 7000 }])
+    },
+    {
+      name: 'messages.jsonl',
+      data: badJsonl(
+        Array.from({ length: bulkMessageCount }, (_item, i) => ({
+          id: `bulk-${i}`,
+          convId: 'single:node-peer',
+          senderId: 'node-peer',
+          isMine: false,
+          kind: 'text',
+          content: `批量导入消息 ${i}`,
+          fileRef: null,
+          ts: 7000 + i,
+          status: 'sent'
+        }))
+      )
+    },
+    { name: 'peers.jsonl', data: badJsonl([]) },
+    { name: 'groups.jsonl', data: badJsonl([]) },
+    { name: 'stickers.jsonl', data: badJsonl([]) },
+    { name: 'transfers.jsonl', data: badJsonl([]) }
+  ])
+  const db4 = openDatabase(join(dir, 'bulk-imported.db'))
+  try {
+    const start = Date.now()
+    const bulkResult = new PorterService(db4, 'node-new', '新我', join(dir, 'bulk-restored')).importBackup(
+      bulkBackupPath
+    )
+    const elapsed = Date.now() - start
+    console.log(`[db-selftest] porter bulk import ${bulkMessageCount} messages: ${elapsed}ms`)
+    assert.equal(bulkResult.imported, bulkMessageCount, '批量备份导入应完整带入 2 万条消息')
+  } finally {
+    db4.close()
   }
 
   console.log('[db-selftest] PASS —— 迁移/联系人/会话消息/队列去重/传输/搜索/porter/中文FTS 全部通过')

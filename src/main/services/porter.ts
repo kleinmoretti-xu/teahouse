@@ -110,6 +110,19 @@ interface FilesBlob {
   savedPath?: string
 }
 
+interface ImportStatements {
+  peerUpsert: DatabaseT.Statement
+  groupUpsert: DatabaseT.Statement
+  convUpsert: DatabaseT.Statement
+  transferInsert: DatabaseT.Statement
+  stickerInsert: DatabaseT.Statement
+  messageExists: DatabaseT.Statement
+  messageInsert: DatabaseT.Statement
+  messageFtsInsert: DatabaseT.Statement
+  convBump: DatabaseT.Statement
+  maxMessageSeq: DatabaseT.Statement
+}
+
 export class PorterService {
   constructor(
     private readonly db: DatabaseT.Database,
@@ -144,18 +157,25 @@ export class PorterService {
     const groups = this.parseJsonl<GroupDump>(entries.get('groups.jsonl'))
     const stickers = this.parseJsonl<StickerDump>(entries.get('stickers.jsonl'))
     const transfers = this.parseJsonl<TransferDump>(entries.get('transfers.jsonl'))
+    const statements = this.prepareImportStatements()
+    let nextSeq =
+      ((statements.maxMessageSeq.get() as { seq?: number } | undefined)?.seq ?? 0) + 1
 
     const tx = this.db.transaction(() => {
-      for (const peer of peers) this.importPeer(peer)
-      for (const group of groups) this.importGroup(group, manifest.exportedBy)
-      for (const conv of convs) this.importConv(conv, manifest.exportedBy)
-      for (const transfer of transfers) this.importTransfer(transfer, entries, manifest.exportedBy)
-      for (const sticker of stickers) this.importSticker(sticker, entries)
+      for (const peer of peers) this.importPeer(peer, statements)
+      for (const group of groups) this.importGroup(group, manifest.exportedBy, statements)
+      for (const conv of convs) this.importConv(conv, manifest.exportedBy, statements)
+      for (const transfer of transfers) this.importTransfer(transfer, entries, manifest.exportedBy, statements)
+      for (const sticker of stickers) this.importSticker(sticker, entries, statements)
       let imported = 0
       let skipped = 0
       for (const msg of messages) {
-        if (this.importMessage(msg, manifest.exportedBy)) imported += 1
-        else skipped += 1
+        if (this.importMessage(msg, manifest.exportedBy, statements, nextSeq)) {
+          imported += 1
+          nextSeq += 1
+        } else {
+          skipped += 1
+        }
       }
       return { imported, skipped }
     })
@@ -296,10 +316,9 @@ export class PorterService {
     })
   }
 
-  private importPeer(peer: PeerDump): void {
-    if (!peer.nodeId || peer.nodeId === this.selfId) return
-    this.db
-      .prepare(
+  private prepareImportStatements(): ImportStatements {
+    return {
+      peerUpsert: this.db.prepare(
         `INSERT INTO peers
          (node_id, nick, remark, company, dept, team, avatar, host, platform, ip,
           udp_port, tcp_port, profile_rev, caps, ver, first_seen, last_seen)
@@ -321,21 +340,8 @@ export class PorterService {
            ver = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.ver ELSE peers.ver END,
            first_seen = MIN(peers.first_seen, excluded.first_seen),
            last_seen = MAX(peers.last_seen, excluded.last_seen)`
-      )
-      .run(peer)
-  }
-
-  private importGroup(group: GroupDump, exportedBy: string): void {
-    if (!group.groupId || !group.name) return
-    const members = group.members.map((id) => (id === exportedBy ? this.selfId : id))
-    const updatedBy = group.updatedBy === exportedBy ? this.selfId : group.updatedBy
-    const creatorId = group.creatorId === exportedBy ? this.selfId : group.creatorId
-    const adminSecretHash =
-      typeof group.adminSecretHash === 'string' ? group.adminSecretHash.slice(0, 64) : ''
-    const adminHint =
-      adminSecretHash && typeof group.adminHint === 'string' ? group.adminHint.slice(0, 40) : ''
-    this.db
-      .prepare(
+      ),
+      groupUpsert: this.db.prepare(
         `INSERT INTO groups (
            group_id, name, members, rev, updated_by, updated_ts,
            creator_ip, creator_id, admin_secret_hash, admin_hint
@@ -365,26 +371,8 @@ export class PorterService {
            admin_hint = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
              THEN excluded.admin_hint ELSE groups.admin_hint END`
-      )
-      .run(
-        group.groupId,
-        group.name.slice(0, 64),
-        JSON.stringify([...new Set(members)].filter((id) => id.length > 0).slice(0, GROUP_MAX_MEMBERS)),
-        Number.isInteger(group.rev) ? group.rev : 1,
-        updatedBy,
-        Number.isInteger(group.updatedTs) ? group.updatedTs : Date.now(),
-        typeof group.creatorIp === 'string' ? group.creatorIp.slice(0, 45) : '',
-        typeof creatorId === 'string' ? creatorId.slice(0, 64) : updatedBy,
-        adminSecretHash,
-        adminHint
-      )
-  }
-
-  private importConv(conv: ConvDump, exportedBy: string): void {
-    const peerId = conv.peerId === exportedBy ? this.selfId : conv.peerId
-    const id = conv.id === `single:${exportedBy}` ? `single:${this.selfId}` : conv.id
-    this.db
-      .prepare(
+      ),
+      convUpsert: this.db.prepare(
         `INSERT INTO conversations (id, type, peer_or_group_id, last_ts, pinned, muted, mentioned)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
@@ -392,95 +380,140 @@ export class PorterService {
            pinned = MAX(conversations.pinned, excluded.pinned),
            muted = MAX(conversations.muted, excluded.muted),
            mentioned = MAX(conversations.mentioned, excluded.mentioned)`
-      )
-      .run(
-        id,
-        conv.type === 'group' ? 'group' : 'single',
-        peerId,
-        conv.lastTs,
-        conv.pinned ? 1 : 0,
-        conv.muted ? 1 : 0,
-        conv.mentioned ? 1 : 0
-      )
+      ),
+      transferInsert: this.db.prepare(
+        `INSERT OR IGNORE INTO transfers
+         (transfer_id, msg_id, peer_id, direction, files, status, bytes_done, total, ts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ),
+      stickerInsert: this.db.prepare(
+        `INSERT OR IGNORE INTO stickers (id, path, w, h, animated, sort, added)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ),
+      messageExists: this.db.prepare('SELECT 1 FROM messages WHERE id = ?'),
+      messageInsert: this.db.prepare(
+        `INSERT INTO messages (id, conv_id, sender_id, is_mine, kind, content, file_ref, ts, seq, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ),
+      messageFtsInsert: this.db.prepare('INSERT INTO messages_fts (msg_id, text) VALUES (?, ?)'),
+      convBump: this.db.prepare('UPDATE conversations SET last_ts = MAX(last_ts, ?) WHERE id = ?'),
+      maxMessageSeq: this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM messages')
+    }
   }
 
-  private importTransfer(transfer: TransferDump, entries: Map<string, Buffer>, exportedBy: string): void {
+  private importPeer(peer: PeerDump, statements: ImportStatements): void {
+    if (!peer.nodeId || peer.nodeId === this.selfId) return
+    statements.peerUpsert.run(peer)
+  }
+
+  private importGroup(group: GroupDump, exportedBy: string, statements: ImportStatements): void {
+    if (!group.groupId || !group.name) return
+    const members = group.members.map((id) => (id === exportedBy ? this.selfId : id))
+    const updatedBy = group.updatedBy === exportedBy ? this.selfId : group.updatedBy
+    const creatorId = group.creatorId === exportedBy ? this.selfId : group.creatorId
+    const adminSecretHash =
+      typeof group.adminSecretHash === 'string' ? group.adminSecretHash.slice(0, 64) : ''
+    const adminHint =
+      adminSecretHash && typeof group.adminHint === 'string' ? group.adminHint.slice(0, 40) : ''
+    statements.groupUpsert.run(
+      group.groupId,
+      group.name.slice(0, 64),
+      JSON.stringify([...new Set(members)].filter((id) => id.length > 0).slice(0, GROUP_MAX_MEMBERS)),
+      Number.isInteger(group.rev) ? group.rev : 1,
+      updatedBy,
+      Number.isInteger(group.updatedTs) ? group.updatedTs : Date.now(),
+      typeof group.creatorIp === 'string' ? group.creatorIp.slice(0, 45) : '',
+      typeof creatorId === 'string' ? creatorId.slice(0, 64) : updatedBy,
+      adminSecretHash,
+      adminHint
+    )
+  }
+
+  private importConv(conv: ConvDump, exportedBy: string, statements: ImportStatements): void {
+    const peerId = conv.peerId === exportedBy ? this.selfId : conv.peerId
+    const id = conv.id === `single:${exportedBy}` ? `single:${this.selfId}` : conv.id
+    statements.convUpsert.run(
+      id,
+      conv.type === 'group' ? 'group' : 'single',
+      peerId,
+      conv.lastTs,
+      conv.pinned ? 1 : 0,
+      conv.muted ? 1 : 0,
+      conv.mentioned ? 1 : 0
+    )
+  }
+
+  private importTransfer(
+    transfer: TransferDump,
+    entries: Map<string, Buffer>,
+    exportedBy: string,
+    statements: ImportStatements
+  ): void {
     if (!transfer.transferId || !transfer.msgId) return
     const restored = transfer.archivePath
       ? this.restoreMedia(entries, transfer.archivePath, `transfer-${transfer.transferId}`)
       : null
     const files = rewriteFilesBlob(transfer.files, restored)
     const peerId = transfer.peerId === exportedBy ? this.selfId : transfer.peerId
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO transfers
-         (transfer_id, msg_id, peer_id, direction, files, status, bytes_done, total, ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        transfer.transferId,
-        transfer.msgId,
-        peerId,
-        transfer.direction === 'in' ? 'in' : 'out',
-        files,
-        normalizeTransferStatus(transfer.status),
-        clampInt(transfer.bytesDone, 0),
-        clampInt(transfer.total, 0),
-        clampInt(transfer.ts, Date.now())
-      )
+    statements.transferInsert.run(
+      transfer.transferId,
+      transfer.msgId,
+      peerId,
+      transfer.direction === 'in' ? 'in' : 'out',
+      files,
+      normalizeTransferStatus(transfer.status),
+      clampInt(transfer.bytesDone, 0),
+      clampInt(transfer.total, 0),
+      clampInt(transfer.ts, Date.now())
+    )
   }
 
-  private importSticker(sticker: StickerDump, entries: Map<string, Buffer>): void {
+  private importSticker(sticker: StickerDump, entries: Map<string, Buffer>, statements: ImportStatements): void {
     if (!sticker.id) return
     const restored = sticker.archivePath
       ? this.restoreMedia(entries, sticker.archivePath, `sticker-${sticker.id}`)
       : null
     const path = restored ?? ''
     if (!path) return
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO stickers (id, path, w, h, animated, sort, added)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        sticker.id,
-        path,
-        clampInt(sticker.w, 0),
-        clampInt(sticker.h, 0),
-        sticker.animated ? 1 : 0,
-        clampInt(sticker.sort, 0),
-        clampInt(sticker.added, Date.now())
-      )
+    statements.stickerInsert.run(
+      sticker.id,
+      path,
+      clampInt(sticker.w, 0),
+      clampInt(sticker.h, 0),
+      sticker.animated ? 1 : 0,
+      clampInt(sticker.sort, 0),
+      clampInt(sticker.added, Date.now())
+    )
   }
 
-  private importMessage(msg: MessageDump, exportedBy: string): boolean {
+  private importMessage(
+    msg: MessageDump,
+    exportedBy: string,
+    statements: ImportStatements,
+    seq: number
+  ): boolean {
     if (!msg.id || !msg.convId) return false
-    const exists = this.db.prepare('SELECT 1 FROM messages WHERE id = ?').get(msg.id)
+    const exists = statements.messageExists.get(msg.id)
     if (exists) return false
     const senderId = msg.senderId === exportedBy ? this.selfId : msg.senderId
     const convId = msg.convId === `single:${exportedBy}` ? `single:${this.selfId}` : msg.convId
     const isMine = senderId === this.selfId || msg.isMine
-    this.db
-      .prepare(
-        `INSERT INTO messages (id, conv_id, sender_id, is_mine, kind, content, file_ref, ts, seq, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages), ?)`
-      )
-      .run(
-        msg.id,
-        convId,
-        senderId,
-        isMine ? 1 : 0,
-        normalizeKind(msg.kind),
-        msg.content ?? '',
-        msg.fileRef ?? null,
-        msg.ts,
-        msg.status === 'recalled' ? 'recalled' : 'sent'
-      )
-    const tokens = normalizeKind(msg.kind) === 'system' ? '' : toFtsTokens(msg.content ?? '')
-    if (tokens) this.db.prepare('INSERT INTO messages_fts (msg_id, text) VALUES (?, ?)').run(msg.id, tokens)
-    this.db
-      .prepare('UPDATE conversations SET last_ts = MAX(last_ts, ?) WHERE id = ?')
-      .run(msg.ts, convId)
+    const kind = normalizeKind(msg.kind)
+    statements.messageInsert.run(
+      msg.id,
+      convId,
+      senderId,
+      isMine ? 1 : 0,
+      kind,
+      msg.content ?? '',
+      msg.fileRef ?? null,
+      msg.ts,
+      seq,
+      msg.status === 'recalled' ? 'recalled' : 'sent'
+    )
+    const tokens = kind === 'system' ? '' : toFtsTokens(msg.content ?? '')
+    if (tokens) statements.messageFtsInsert.run(msg.id, tokens)
+    statements.convBump.run(msg.ts, convId)
     return true
   }
 
