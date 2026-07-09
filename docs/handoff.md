@@ -3,20 +3,20 @@
 > 给接手本项目的任何 AI 代理或开发者。读完本文 + [AGENTS.md](../AGENTS.md) 即可无缝继续开发。
 > 最后更新：2026-06-28（**v0.29.6，Debian 10 / UOS 20 arm64 撤掉老版系统 mksquashfs**）：公开仓库统一为 `skyjt/teahouse`，v0.11.4 为发布整理版；v0.12.0 补齐群改名系统提示（#87）与私聊顶部 IP 完整展示（#88）；v0.12.1 修复发送端先整文件预读 SHA-256 再发数据导致 10GB 级文件接受后长时间 0B 的问题；v0.13.x–v0.16.x 打磨文件卡片、关于页、独立图片查看窗口、本地 OCR、品牌 SVG、通知兼容、私聊震动和会话滚动；v0.17.0 新增 `scan-ranges` 网段记录低频同步（#114）；v0.18.0 新增左侧刷新全局用户（#115）；v0.19.x 打磨左侧导航 tooltip / 自己信息卡 / 焦点框（#116–#121）；v0.20.0 完成英文品牌名 Teahouse 更名（#124）；v0.21.x 完成移除会话删除聊天内容、置顶底色、顶栏等高与输入框拖拽、右键菜单关闭、文件卡片对齐、消息缓存索引、高频渲染路径优化和安全扫描报告修复（#125–#138）；v0.22.x 完成 PK 分歧解决与 UI 打磨（#139–#148）；v0.23.x–v0.26.x 完成设置页重组、网段表格、默认目录与图片传输修复；v0.27.x 推进局域网 P2P 自更新，当前已完成发现提示、更新请求协议地基、关于页主动检测 / 索包入口、`purpose:"update"` 更新包隔离接收、`update:request` 向最佳源请求已有本地安装包回传，以及设置-关于检测更新区按方案 A 并入键值行、机制说明收进圆形问号 tooltip、tooltip 上浮防裁切（#166–#173）；v0.28.x 完成私聊文件「直接发送」、拖拽 / 粘贴授权、文件卡 UI 收紧、默认接收目录统一与第三方截图粘贴去重；v0.29.0 新增 Linux arm64 deb/AppImage 发布 job，并让自更新安装包查找按架构匹配；v0.29.1 将 arm64 容器内发布脚本独立为 `scripts/ci-linux-arm64.sh`；v0.29.2 取消 QEMU，Linux arm64 发布 job 改用 GitHub 远程 `ubuntu-22.04-arm` runner + Debian 10 arm64 容器；v0.29.3 安装系统 fpm/mksquashfs 并将 Linux dist 脚本显式限定 `deb/AppImage` 架构；v0.29.4 尝试预装 `ffi 1.17.4`；v0.29.5 改为 `libffi-dev` + Ruby 2.5 兼容的 `ffi 1.15.5`；v0.29.6 撤掉 `USE_SYSTEM_MKSQUASHFS`，避免 Debian 10 老版 mksquashfs 不支持 AppImage `-offset`。仍遵守 Electron 22.3.27 / Node16 / Chrome108 / 纯内网红线。本文会过期——以 `git log` 与各文档变更记录为准。
 > 当前补充：2026-07-03（**v0.31.3，密码组群管理入口已修复**）：v0.31.1 修复图片查看器小图窗口最小尺寸；v0.31.2 实现决议 #192，会话列表 / 联系人 / 通知 / 托盘 / 震动等入口默认重载最新 50 条并滚到底部；v0.31.3 实现决议 #193，群成员面板对有管理密码的讨论组改为内嵌密码输入框，改名、添加成员、移出成员均复用该输入并使用行内失败提示。
-> 当前补充：2026-07-08（**内网通兼容模式设计已扩展，决议 #194/#195/#196**）：新增并扩展 [nwt-compat-design.md](nwt-compat-design.md)，基于 Parallels Windows VM 内网通 `3.4.3055` 实测，设计独立 `2425/UDP` IPMSG / 飞鸽适配器、独立兼容 IP 段、兼容联系人 / 会话、普通文本收发与 `RECVMSG` ACK；进一步补充文件 / 剪贴板图片 / TCP 拉取 / 信息查询 / 震动能力矩阵、内网通 UI 徽标和 `ConversationCapabilities` 能力降级。**决议 #196 第二轮复测**发现 `SENDMSG` / 文件 offer / 剪贴板图片 offer 链路在当前 VM 不复现，稳定首版范围降级为仅发现 + 兼容联系人展示 + 能力降级 UI，文本 / 文件 / 图片全部降级为"已映射未闭环"；阻塞项为"内网通将茶话间节点加入联系人"前置条件未打通；实现尚未开始。
-> 当前补充：2026-07-09（**v0.32.0，决议 #197 全量刷新二次确认已实现**）：主界面左侧「刷新全局用户」点击后先弹居中确认（网段列表摘要、茶青「开始扫描」），确认后才扫全部已保存网段；纯 `App.vue` 渲染层，不改 IPC/协议。
+> 当前补充：2026-07-09（**v0.32.3 已发布**）：含全局刷新二次确认（#197）与群成员上限 200（#198）。
+> 当前补充：2026-07-09（**决议 #199，内网通兼容暂缓**）：内网通兼容仅有设计落档（#194/#195/#196 + [nwt-compat-design.md](nwt-compat-design.md)），**代码零实现**；用户明确列为**长期待办 / 暂不排期**——调研与 VM 复测周期长，日常开发不要把它当「下一步」。需要再开时先从设计文档与 §15 取舍恢复。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #197）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #199）→ [protocol.md](protocol.md)（主协议 v0.38）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1、v0.2、v0.3、v0.4/P1 主链路已完成，本地迭代至 v0.31.3；密码组群管理入口已修复；内网通兼容模式已完成协议 / UI 设计落档，尚未实现**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，公开迭代至 v0.32.3**（含刷新确认、群 200 人上限）。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
@@ -28,7 +28,8 @@
 | v0.31 已交付 | 表格粘贴图片消息（决议 #190）：从 Excel / WPS / LibreOffice / 网页表格粘贴时默认发送表格图片；新端通过 `tbl1` + `file-ctl offer.tableText/tableTextTruncated` 附带原始 TSV，同一图片气泡上沿显示「图片 / 文字」小滑块；切换只影响本机显示，旧端仍只显示普通图片 |
 | v0.31.2 已交付 | 会话打开定位最新消息（决议 #192）：会话列表、联系人、通知、托盘、震动等入口默认重载最新 50 条并滚到底部；历史搜索跳转仍定位目标消息；当前会话读历史时收到新消息不强制抢滚 |
 | v0.31.3 已交付 | 密码组群管理入口（决议 #193）：移除群成员面板里的原生 prompt / alert 依赖，改为面板内密码输入框 + 行内失败提示；`group:update` 成功返回后立即刷新本地组视图 |
-| v0.32 设计中 | 内网通兼容模式（决议 #194/#195/#196）：默认关闭；独立配置兼容 IP / CIDR；绑定 `2425/UDP` 走 IPMSG / 飞鸽子集；**第二轮复测后稳定首版范围降级为仅发现 + 兼容联系人展示 + 能力降级 UI**；UI 显示 `内网通` 徽标并通过 `ConversationCapabilities` 隐藏 PK、震动、图片、文件、文件夹、直接发送、媒体撤回等入口；文本收发 / 文件 offer / 剪贴板图片 offer / TCP 拉取全部降级为"已映射未闭环"，待 VM 打通"内网通将茶话间节点加入联系人"前置条件后再恢复；不参与主协议身份、gossip、群聊、自更新或离线补发 |
+| v0.32.x 已交付 | 全局刷新二次确认（#197）、群成员上限 200（#198）；发布 v0.32.3 |
+| 内网通兼容 · **暂缓** | 决议 #194/#195/#196 设计已落档，**#199 明确暂不实现**（调研周期长）；代码零落地；详见 [nwt-compat-design.md](nwt-compat-design.md)，需要时再启动 |
 | 内置截图 | 全局快捷键 Ctrl/Cmd+Alt+A、框选窗、剪贴板+直发会话、截图隐藏主窗（可配）|
 | 撤回 | 自己文本/群文本/PK 消息 5 分钟内可撤（决议 #63/#139，右键菜单实时倒计时 mm:ss、超时变灰）；`msg.kind:"recall"` 可靠投递 + 离线补发；本地/对端隐藏原消息并插系统提示，撤回 PK 不级联影响别人之后另发的 PK |
 | PK 分歧解决 | 输入区 `PK` 入口（表情后、窗口震动前），线性拳头相碰图标 + 并排「猜拳 / 骰子」浮层；结果由主进程随机，气泡本地播放约 1.5s 动画后定格。他人的 PK 旁显示「我也来 / 掷一下」按钮，每次参与发一条新消息；单聊仅对方在线可发，群聊只发给当时在线成员；通知 / 预览 / 搜索不透结果，PK 可撤回但不可复制 / 转发 |
@@ -53,7 +54,7 @@ npm run smoke     # 启动 1.5s 干净退出（PANTRY_SMOKE 钩子，CI 同款�
 ```
 
 - 本机三客户端联调：懒人入口用 `npm run dev:2` 一次拉起前两个、`npm run dev:3` 一次拉起三个；也可分别在三个终端跑 `npm run dev:client1`、`npm run dev:client2`、`npm run dev:client3`。三个实例使用 `/tmp/pantry-dev1..3` 和 `17878/27878/37878` UDP 端口、`17879/27879/37879` TCP 端口。
-- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #198，续 #199+）；协议改动必须 protocol.md 先行。
+- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #199，续 #200+）；协议改动必须 protocol.md 先行。
 - 与用户协作：**全程中文**；用户技术方向不在网络/协议——技术细节直接定但落档、**不要追问底层**；产品可感知取舍（功能形态/默认参数）用 2-4 个带推荐的选项问他。
 
 ## 3. 代码地图（src/，分层铁律见 AGENTS.md #7）
@@ -63,7 +64,7 @@ shared/    protocol.ts(协议TS化·唯一来源) ipc.ts(IPC契约·唯一来源
 main/
   net/     codec(校验白名单) udp(限速/广播) discovery(发现/gossip/探活)
            messenger(可靠投递·等待表与队列按"消息×收件人"复合键) transfer(TCP数据面) frame cidr
-           compat(待实现：内网通 / IPMSG 独立适配器，含附件 parser 与能力门控，详见 nwt-compat-design.md)
+           （compat 目录规划中：内网通适配器，决议 #199 暂缓，勿提前写代码）
   store/   db(WAL) migrations(v8·只追加) peers/conv/msg/queue/dedup/group/transfer/sticker-repo
            fts(中文按字) app-state(identity/config) db-selftest(test:db 入口)
   services/ chat groups files search —— 用例编排层；业务禁入 ipc 层（AI 接口预留，决议#21）
@@ -75,12 +76,12 @@ renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进
 
 关键不变量：net/ 与 services/ **零 Electron 依赖**（vitest 可直接实例化）；renderer 一切经 `window.pantry`；消息 id=信封 id=去重锚点；群消息同一信封 id 发全员。
 
-## 4. 下一步：P1 交付收尾
+## 4. 下一步
 
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
-2. **内网通兼容实现准备**：先确认 [nwt-compat-design.md](nwt-compat-design.md) §15 的六个产品取舍（**第二轮复测新增第 6 项：`SENDMSG` 链路阻塞项如何推进**）；实现时按阶段 A/B/C 推进，新增 `net/compat/`、`services/nwt-compat.ts`、设置页网络组、通讯录兼容分组、兼容会话和 `ConversationCapabilities`。**注意第二轮复测后稳定首版范围降级为仅发现 + 兼容联系人展示 + 能力降级 UI**，文本收发需先在 VM 打通"内网通将茶话间节点加入联系人"前置条件；文件 / 剪贴板图片进入阶段 D，必须先完成 TCP `GETFILEDATA` VM 闭环；震动和 `901x` 私有协议等到用户单独拍板。
-3. **目标平台打包测试**：GitHub Actions 可先产出 Windows 7 x64、Debian 10 / UOS 20 x64、Debian 10 / UOS 20 arm64、macOS arm64 发布候选；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
-4. **v1.0 打磨项**：macOS universal 包专项、Win7 / UOS 真实平台复测（本地 SVG emoji/头像、软渲染、SHA-2 KB 提示文案）。
+2. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
+3. **v1.0 打磨项**：macOS universal 包专项、Win7 / UOS 真实平台复测（本地 SVG emoji/头像、软渲染、SHA-2 KB 提示文案）；自更新闭环（备包 / 校验 / 安装重启）。
+4. **内网通兼容（决议 #199 · 暂缓，勿当下一步）**：设计见 [nwt-compat-design.md](nwt-compat-design.md)；未完成 VM 链路与产品取舍前**不写代码、不排期**。
 
 ## 5. 已知遗留 / TODO（非阻塞）
 
@@ -91,7 +92,7 @@ renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进
 - npm 11 对 `.npmrc` 自定义键（electron_mirror/runtime 等）打 deprecation 警告——npm 12 需改用环境变量，暂可忽略。
 - Linux arm64 产物已进入 Release workflow；真实 UOS / Debian arm64 桌面冒烟仍需目标机器按 packaging-test 执行。
 - 局域网 P2P 自更新已完成发现提示、主动检测 / 索包请求、`update req` 可靠投递、已有本地安装包的隐藏 `purpose:"update"` 回传与隔离接收；仍缺 A 侧备包（nsis 自留 / deb 自重打包）、B 侧包格式与版本核对、安装重启、进度呈现与失败重试闭环。
-- 内网通兼容模式已完成需求 / 协议 / 技术 / UI 设计落档，代码尚未实现；**第二轮复测（决议 #196）发现 `SENDMSG` / 文件 offer / 剪贴板图片 offer 链路在当前 VM 不复现**，稳定首版范围降级为仅发现 + 兼容联系人展示 + 能力降级 UI。首轮实现前需用户确认兼容联系人是否进入主会话列表、是否接受陌生兼容节点主动消息、文件 / 图片是否排入实验开关、是否投入 `901x` 私有协议逆向、**以及如何在 VM 打通"内网通将茶话间节点加入联系人"前置条件**等取舍。
+- **内网通兼容（长期待办 / #199 暂缓）**：设计已落档，**代码零实现**；调研与 VM 复测周期长，日常迭代不要启动。恢复时从 nwt-compat-design §15 与决议 #196 阻塞项接着做。
 - 图片 OCR 当前使用 Tesseract.js 识别，不落库、不做全文索引、不做“大爆炸”分词面板；图片上不再叠加 OCR 选择层，不做逐字拖选。识别结果按 `transferId:naturalSize` 缓存在主进程会话级内存中，图片窗口加载后先查缓存，命中后底部按钮可直接打开文本结果窗，用户在原生 textarea 中选择 / 复制文字；小图自动 OCR 不自动弹窗，大图仍手动触发。后续扩展语言包必须继续走本地静态资源复制并评估包体与启动后首次识别耗时。
 
 ## 6. 环境与坑（新机器上手）

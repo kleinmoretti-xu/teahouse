@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.04，内网通兼容模式协议能力矩阵与 UI 降级已落档（决议 #194/#195） |
+| 状态 | v1.06；内网通兼容设计已落档但 **#199 暂缓实现**；v0.32.3 已发布 |
 | 日期 | 2026-07-08 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -270,8 +270,9 @@ media/stickers/...  # 自定义表情包媒体
 | v0.27 | 局域网 P2P 自更新（分三步）：①发现与提示（caps `upd1` / 运行形态自检 / `ver` 投影 / 同平台版本比对 / 「内网有新版」提示）②拉包（`update` 可靠请求 / 按请求架构匹配已有本地包并隐藏回传 / nsis 自留包·deb `dpkg-deb` 自重打包 / 拉临时目录 + SHA-256 + 版本核对）③应用更新（nsis 静默装·deb pkexec / 替换重启 / 保留包接力成源）；mac 暂缓 | services/updater、transfer 复用、discovery（caps/ver）、util/self-package·apply-update、提示 UI |
 | v0.28 | 私聊文件直接发送：发送端文件卡片「直接发送」入口、caps `fd1`、`file-ctl {op:"direct"}`、接收端自动 accept；默认文件接收统一到 `文件保存位置/联系人名称/`，另存为除外；群聊文件不支持直接发送 | shared/protocol、net/codec、services/files、settings、renderer FileCard |
 | v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回 | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
-| v0.32 | 内网通兼容模式：独立 IP 段扫描、IPMSG 子集发现、普通文本收发、ACK 状态、兼容联系人与兼容会话 UI、内网通徽标、能力降级隐藏 PK / 震动 / 图片 / 文件等入口 | net/compat、services/nwt-compat、settings、contacts、chat |
-| v0.33 | 内网通实验附件互通：解析 `FILEATTACHOPT` / `CLIPBOARDOPT`，完成 TCP `GETFILEDATA` 闭环后按实验开关开放兼容文件 / 剪贴板图片接收 | net/compat/ipmsg-file、services/nwt-compat、renderer file-card |
+| v0.32.x | 全局刷新二次确认、群成员上限 200 等（已发布 v0.32.3） | App.vue、protocol GROUP_MAX_MEMBERS |
+| 待办 · 暂缓 | 内网通兼容模式（#194–#196 设计；**#199 不排期**） | 见 nwt-compat-design.md；勿提前写 net/compat |
+| 待办 · 暂缓 | 内网通实验附件互通（依赖上项 + TCP GETFILEDATA 闭环） | 同上 |
 | v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
 
 ## 13. 变更记录
@@ -382,3 +383,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-08 v1.03 决议 #194：内网通兼容模式技术设计立项。新增 `net/compat/`、`services/nwt-compat.ts`、`config.nwtCompat` 与独立兼容联系人/会话投影约束；兼容层绑定 `2425/UDP`、实现 IPMSG 子集发现与普通文本收发，主协议、主端口、gossip、补发队列和文件传输语义保持不变。详见 [nwt-compat-design.md](nwt-compat-design.md)。
 - 2026-07-08 v1.04 决议 #195：扩展内网通兼容技术设计。`net/compat/` 增加附件 parser、实验 TCP 文件通道和 `nwt-capabilities` 能力门控；`services/nwt-compat.ts` 负责兼容能力投影，IPC 预留 `nwt:file-offer` / `nwt:accept-file-offer` 等实验接口；UI 通过 `ConversationCapabilities` 隐藏 PK、震动、图片、文件、文件夹、直接发送和媒体撤回。标准 IPMSG 文件 / 剪贴板图片已列入实验阶段，内网通私有 `901x` 通道和远程协助继续排除。
 - 2026-07-09 v1.05 决议 #197：全局网段刷新二次确认落渲染层。`App.vue` 在调用 `scanAllRanges` 前插入居中确认态；列表数据复用已加载的 `SettingsView.scanRangeItems` / `scanRanges`，不新增 IPC、协议、SQLite 或主进程扫描逻辑。版本 0.31.3 → 0.32.0。
+- 2026-07-09 v1.06 决议 #199：内网通兼容从里程碑「下一步」挪到**暂缓待办**；§12 表与 handoff 同步，代码仍为零实现。
