@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { MessageView } from '../../../shared/ipc'
+import { RECALL_WINDOW_MS } from '../../../shared/protocol'
 import { imageMimeFromExt } from '../utils/clipboard'
+import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
 import { useTransfersStore } from '../stores/transfers'
 import { useStickersStore } from '../stores/stickers'
 import PantryIcon from './PantryIcon.vue'
@@ -14,13 +16,11 @@ const props = withDefaults(
   defineProps<{
     msg: MessageView
     recallVisible?: boolean
-    recallDisabled?: boolean
-    recallLabel?: string
+    recallDisabledReason?: string
   }>(),
   {
     recallVisible: false,
-    recallDisabled: false,
-    recallLabel: '撤回'
+    recallDisabledReason: ''
   }
 )
 const transfers = useTransfersStore()
@@ -34,6 +34,7 @@ const MENU_ITEM_HEIGHT = 32
 const MENU_PADDING = 10
 const MENU_MARGIN = 8
 let addTipTimer: number | undefined
+let recallCountdownTimer: number | undefined
 
 const isSticker = computed(() => props.msg.kind === 'sticker')
 const tableViewMode = ref<'image' | 'text'>('image')
@@ -44,6 +45,28 @@ const showTableText = computed(() => hasTableText.value && tableViewMode.value =
 const menuHeight = computed(
   () => MENU_PADDING + MENU_ITEM_HEIGHT * (props.recallVisible ? 4 : 3)
 )
+const recallNowTs = ref(Date.now())
+const recallLabel = computed(() =>
+  formatRecallButtonLabel(
+    recallRemainingMs(recallNowTs.value, props.msg.ts, RECALL_WINDOW_MS),
+    props.recallDisabledReason
+  )
+)
+const recallDisabled = computed(() =>
+  !canRecallAt(recallNowTs.value, props.msg.ts, RECALL_WINDOW_MS, props.recallDisabledReason)
+)
+
+function startRecallCountdownTimer(): void {
+  if (recallCountdownTimer !== undefined) return
+  recallNowTs.value = Date.now()
+  recallCountdownTimer = window.setInterval(() => (recallNowTs.value = Date.now()), 500)
+}
+
+function stopRecallCountdownTimer(): void {
+  if (recallCountdownTimer === undefined) return
+  window.clearInterval(recallCountdownTimer)
+  recallCountdownTimer = undefined
+}
 
 function onContextMenu(event: MouseEvent): void {
   event.stopPropagation()
@@ -54,6 +77,11 @@ function onContextMenu(event: MouseEvent): void {
     y: Math.max(MENU_MARGIN, Math.min(event.clientY, maxY))
   }
 }
+
+watch(menuAt, (next) => {
+  if (next) startRecallCountdownTimer()
+  else stopRecallCountdownTimer()
+})
 
 async function addToStickers(): Promise<void> {
   menuAt.value = null
@@ -143,7 +171,10 @@ onMounted(() => {
   if (transferId.value) void transfers.ensure(transferId.value)
 })
 
-onUnmounted(clearAddTipTimer)
+onUnmounted(() => {
+  clearAddTipTimer()
+  stopRecallCountdownTimer()
+})
 </script>
 
 <template>
@@ -206,10 +237,10 @@ onUnmounted(clearAddTipTimer)
         v-if="props.recallVisible"
         type="button"
         class="danger"
-        :disabled="props.recallDisabled"
+        :disabled="recallDisabled"
         @click="recallImage"
       >
-        {{ props.recallLabel }}
+        {{ recallLabel }}
       </button>
     </div>
     <span

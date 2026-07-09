@@ -15,6 +15,7 @@ import {
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
 import { listTime, separatorTime } from '../utils/time'
+import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
 import AvatarMark from './AvatarMark.vue'
 import CompatEmoji from './CompatEmoji.vue'
 import FileCard from './FileCard.vue'
@@ -316,8 +317,6 @@ function onDocumentPointerDown(event: MouseEvent): void {
 
 onMounted(async () => {
   document.addEventListener('mousedown', onDocumentPointerDown)
-  nowTs.value = Date.now()
-  recallCountdownTimer = setInterval(() => (nowTs.value = Date.now()), 500)
   refreshInputFont()
   // 空白字形字体就绪前测得的是系统字符宽——就绪后清缓存重测，镜像槽宽收敛到 1.3em
   void document.fonts
@@ -359,10 +358,7 @@ onUnmounted(() => {
   if (peerProfileSavedTimer) clearTimeout(peerProfileSavedTimer)
   if (nudgeFeedbackTimer) clearTimeout(nudgeFeedbackTimer)
   if (nudgeRetryTimer) clearInterval(nudgeRetryTimer)
-  if (recallCountdownTimer) {
-    clearInterval(recallCountdownTimer)
-    recallCountdownTimer = null
-  }
+  stopRecallCountdownTimer()
   if (clipboardImageFallbackTimer) clearTimeout(clipboardImageFallbackTimer)
   historySearchRun += 1
   stopSettings?.()
@@ -1076,10 +1072,13 @@ function mediaRecallDisabledReason(msg: MessageView): string {
   return ''
 }
 
-function canRecallMessage(msg: MessageView): boolean {
+function canRecallMessageAt(msg: MessageView, nowTs: number): boolean {
   if (!isRecallableKind(msg)) return false
-  if (nowTs.value - msg.ts > RECALL_WINDOW_MS) return false
-  return mediaRecallDisabledReason(msg) === ''
+  return canRecallAt(nowTs, msg.ts, RECALL_WINDOW_MS, mediaRecallDisabledReason(msg))
+}
+
+function canRecallMessage(msg: MessageView): boolean {
+  return canRecallMessageAt(msg, Date.now())
 }
 
 /** 撤回项是否出现在右键菜单（不含时间判断）：超时也显示，变灰提示"超时"（决议 #63） */
@@ -1091,21 +1090,28 @@ function isRecallableKind(msg: MessageView): boolean {
   )
 }
 
-// 撤回倒计时时间源（决议 #63/#188）：驱动通用菜单与图片菜单的"撤回（mm:ss）"实时递减
-const nowTs = ref(Date.now())
+// 撤回倒计时时间源（决议 #63/#188）：仅在通用菜单打开期间驱动"撤回（mm:ss）"实时递减
+const recallMenuNowTs = ref(Date.now())
 let recallCountdownTimer: ReturnType<typeof setInterval> | null = null
-function recallRemainingFor(msg: MessageView): number {
-  return Math.max(0, RECALL_WINDOW_MS - (nowTs.value - msg.ts))
+
+function startRecallCountdownTimer(): void {
+  if (recallCountdownTimer) return
+  recallMenuNowTs.value = Date.now()
+  recallCountdownTimer = setInterval(() => (recallMenuNowTs.value = Date.now()), 500)
 }
-function recallButtonLabelFor(msg: MessageView): string {
-  const reason = mediaRecallDisabledReason(msg)
-  if (reason) return `撤回（${reason}）`
-  const remaining = recallRemainingFor(msg)
-  if (remaining <= 0) return '撤回（超时）'
-  const totalSec = Math.ceil(remaining / 1000)
-  const mm = String(Math.floor(totalSec / 60)).padStart(2, '0')
-  const ss = String(totalSec % 60).padStart(2, '0')
-  return `撤回（${mm}:${ss}）`
+
+function stopRecallCountdownTimer(): void {
+  if (!recallCountdownTimer) return
+  clearInterval(recallCountdownTimer)
+  recallCountdownTimer = null
+}
+
+function recallRemainingFor(msg: MessageView, nowTs = recallMenuNowTs.value): number {
+  return recallRemainingMs(nowTs, msg.ts, RECALL_WINDOW_MS)
+}
+
+function recallButtonLabelFor(msg: MessageView, nowTs = recallMenuNowTs.value): string {
+  return formatRecallButtonLabel(recallRemainingFor(msg, nowTs), mediaRecallDisabledReason(msg))
 }
 const recallButtonLabel = computed(() => {
   const msg = msgMenu.value?.msg
@@ -1113,7 +1119,12 @@ const recallButtonLabel = computed(() => {
 })
 const recallButtonDisabled = computed(() => {
   const msg = msgMenu.value?.msg
-  return !msg || !canRecallMessage(msg)
+  return !msg || !canRecallMessageAt(msg, recallMenuNowTs.value)
+})
+
+watch(msgMenu, (menu) => {
+  if (menu) startRecallCountdownTimer()
+  else stopRecallCountdownTimer()
 })
 
 function canForwardMessage(msg: MessageView): boolean {
@@ -1692,8 +1703,7 @@ async function onDrop(event: DragEvent): Promise<void> {
               :msg="msg"
               class="message-surface"
               :recall-visible="isRecallableKind(msg)"
-              :recall-disabled="!canRecallMessage(msg)"
-              :recall-label="recallButtonLabelFor(msg)"
+              :recall-disabled-reason="mediaRecallDisabledReason(msg)"
               @forward="forwardMsg = msg"
               @recall="recallMessage(msg)"
             />

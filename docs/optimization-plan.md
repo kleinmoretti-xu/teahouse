@@ -177,7 +177,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-8 【P1·性能/渲染】ChatPane 撤回倒计时 500ms 定时器驱动整列表常态重渲染
 
-- 状态：待办
+- 状态：已完成（v0.32.11 / 本提交）
 - 涉及：`src/renderer/src/components/ChatPane.vue`（:319-320 定时器、:1095-1117 倒计时函数、:1694-1696 模板绑定）、`src/renderer/src/components/ImageBubble.vue`；难度：中；commit 类型：`fix:`
 - **问题**：`nowTs` 是响应式 ref，`setInterval` 每 500ms 更新（无条件常驻）。模板对每条图片/表情消息绑定 `:recall-disabled="!canRecallMessage(msg)"`、`:recall-label="recallButtonLabelFor(msg)"`，两者都读 `nowTs` → **只要当前会话有任意一条图片消息，整个消息列表 render 每 500ms 重跑一次**（所有消息的 `textParts`/`splitEmojiText` 全部重算 + 全列表 vdom diff）。Win7 软渲染机器上是常态 CPU 开销，会话越长越贵。
 - **方案**（外观与交互完全不变）：
