@@ -47,6 +47,7 @@ import {
   DEFAULT_TCP_PORT,
   DEFAULT_UDP_PORT,
   CAPS,
+  GROUP_MAX_MEMBERS,
   LIMITS,
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
@@ -1823,7 +1824,7 @@ if (!gotLock) {
       adminHint: unknown
     ) => {
       if (typeof name !== 'string' || name.length > 32) return null
-      if (!Array.isArray(memberIds) || memberIds.length === 0 || memberIds.length > 64) {
+      if (!Array.isArray(memberIds) || memberIds.length === 0 || memberIds.length > GROUP_MAX_MEMBERS) {
         return null
       }
       if (!memberIds.every((m) => typeof m === 'string' && m.length > 0 && m.length <= 64)) {
@@ -1846,7 +1847,7 @@ if (!gotLock) {
     }
     const ids = (v: unknown): string[] | undefined =>
       Array.isArray(v) && v.every((m) => typeof m === 'string' && m.length <= 64)
-        ? (v as string[]).slice(0, 64)
+        ? (v as string[]).slice(0, GROUP_MAX_MEMBERS)
         : undefined
     clean.add = ids(p.add)
     clean.remove = ids(p.remove)
@@ -1869,7 +1870,7 @@ if (!gotLock) {
     if (typeof text !== 'string' || text.length === 0 || text.length > 4096) return null
     const cleanMentions =
       Array.isArray(mentions) && mentions.every((m) => typeof m === 'string' && m.length <= 64)
-        ? (mentions as string[]).slice(0, 50)
+        ? (mentions as string[]).slice(0, GROUP_MAX_MEMBERS)
         : []
     return groups?.sendText(groupId, text, cleanMentions) ?? null
   })

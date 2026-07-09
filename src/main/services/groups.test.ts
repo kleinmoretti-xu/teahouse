@@ -165,6 +165,18 @@ describe('GroupsService 群管理权限', () => {
     )
   })
 
+  it('建群支持 150 个成员并保留创建者', () => {
+    const repo = new FakeGroupRepo()
+    const groups = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const members = Array.from({ length: 150 }, (_item, i) => `node-member-${i}`)
+
+    const group = groups.createGroup('大讨论组', members)
+
+    expect(group?.members).toHaveLength(151)
+    expect(group?.members).toContain('node-self')
+    expect(group?.members).toEqual(['node-self', ...members])
+  })
+
   it('远端 group.info 按创建 IP 校验；退组变更例外放行', () => {
     const repo = new FakeGroupRepo()
     const messenger = new FakeMessenger()

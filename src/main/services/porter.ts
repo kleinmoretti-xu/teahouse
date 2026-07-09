@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { DataExportOptions, DataImportResult, ExportFormat } from '../../shared/ipc'
+import { GROUP_MAX_MEMBERS } from '../../shared/protocol'
 import { parsePkRef, pkResultText, pkTitle } from '../../shared/pk'
 import { toFtsTokens } from '../store/fts'
 import { isPathInsideAny } from '../util/path-policy'
@@ -368,7 +369,7 @@ export class PorterService {
       .run(
         group.groupId,
         group.name.slice(0, 64),
-        JSON.stringify([...new Set(members)].filter((id) => id.length > 0).slice(0, 50)),
+        JSON.stringify([...new Set(members)].filter((id) => id.length > 0).slice(0, GROUP_MAX_MEMBERS)),
         Number.isInteger(group.rev) ? group.rev : 1,
         updatedBy,
         Number.isInteger(group.updatedTs) ? group.updatedTs : Date.now(),

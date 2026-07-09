@@ -373,6 +373,20 @@ try {
     adminHint: '项目代号'
   }
   groupRepo.save(meta)
+  const largeGroupMembers = Array.from({ length: 120 }, (_item, i) => `node-large-${i}`)
+  const largeGroupMeta = {
+    groupId: 'g-large',
+    name: '大讨论组',
+    members: ['node-self', ...largeGroupMembers],
+    rev: 1,
+    updatedBy: 'node-self',
+    updatedTs: 1002,
+    creatorIp: '10.0.0.8',
+    creatorId: 'node-self',
+    adminSecretHash: '',
+    adminHint: ''
+  }
+  groupRepo.save(largeGroupMeta)
   assert.equal(
     groupRepo.applyRemote({ ...meta, name: '过期改名', updatedTs: 999 }),
     false,
@@ -457,6 +471,9 @@ try {
     assert.equal(importedGroup?.creatorId, 'node-new')
     assert.equal(importedGroup?.adminSecretHash, 'a'.repeat(64))
     assert.equal(importedGroup?.adminHint, '项目代号')
+    const importedLargeGroup = new GroupRepo(db2).get('g-large')
+    assert.equal(importedLargeGroup?.members.length, 121, '备份导入不得截断 120 人大群成员表')
+    assert.ok(importedLargeGroup?.members.includes('node-new'), '旧机器的我应映射进大群成员表')
   } finally {
     db2.close()
   }

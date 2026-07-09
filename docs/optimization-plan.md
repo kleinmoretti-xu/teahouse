@@ -66,7 +66,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-1 【P0·bug】决议 #198 群上限 200 落地不完整：IPC 与备份导入仍卡旧上限
 
-- 状态：待办
+- 状态：已完成（v0.32.4 / 本提交）
 - 涉及：`src/main/index.ts`、`src/main/services/porter.ts`；难度：小；commit 类型：`fix:`
 - **问题**：#198 把 `GROUP_MAX_MEMBERS` 提到 200，但四处硬编码旧上限没跟上：
   1. `src/main/index.ts:1826` `groupCreate` handler：`memberIds.length > 64` 直接返回 null——UI（GroupCreator 已按 200 放开选人）选择 65 人以上建群时**静默失败**；
