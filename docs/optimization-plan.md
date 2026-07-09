@@ -106,23 +106,12 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-4 【P0·内存】接收端写盘无背压：快网络 + 慢磁盘时内存无界增长
 
-- 状态：已完成（v0.32.7 / 44ded19）
-- 涉及：`src/main/net/transfer.ts`（`pullTransfer` raw 回调，:333-339）；难度：中；commit 类型：`fix:`
-- **问题**：接收裸流回调里 `current.stream.write(chunk)` 忽略返回值，socket 不暂停。千兆内网收 10GB 文件写入慢盘（USB 盘/网络盘/老机械盘）时，写缓冲在内存里无界堆积，最坏可达 GB 级 → OOM 或系统卡死。发送端有对称的背压处理（:116-118），接收端漏了。
-- **方案**：raw 回调中：
-
-```ts
-current.hash.update(chunk)
-current.left -= chunk.length
-if (!current.stream.write(chunk)) {
-  socket.pause()
-  current.stream.once('drain', () => socket.resume())
-}
-opts.onProgress(chunk.length)
-```
-
-  注意：`fail()`/`succeed()` 路径 socket 会被 destroy，无需额外恢复；文件切换（`done` → `next()`）发生在 `stream.end()` 回调后，此时不会有未触发的 `drain` 监听残留。
-- **验收**（必须回环测试）：给 `PullOptions` 加**可选**注入点 `openWriteStream?`（默认 `createWriteStream`，与发送端 `ReadStreamFactory` 对称，不影响现有调用方）。新增用例：注入一个人为放慢的写流（包装 `Writable`，每 write 延迟几毫秒且 highWaterMark 调小）跑 5MB 随机数据，断言：传输完成、SHA-256 校验一致、无超时死锁。既有用例全过，五连验证全过。
+- 状态：已完成（v0.32.7 / 44ded19；**决议 #205 补丁 v0.32.21** 修多文件死锁）
+- 涉及：`src/main/net/transfer.ts`（`pullTransfer` raw 回调）；难度：中；commit 类型：`fix:`
+- **问题**：接收裸流回调里 `current.stream.write(chunk)` 忽略返回值，socket 不暂停。千兆内网收 10GB 文件写入慢盘（USB 盘/网络盘/老机械盘）时，写缓冲在内存里无界堆积，最坏可达 GB 级 → OOM 或系统卡死。发送端有对称的背压处理，接收端漏了。
+- **方案**：raw 回调中 `write` 返回 false 时 `socket.pause()`，`drain` 后 resume；并用 `socketPaused` 去重监听。
+- **#205 补丁**（CI 发现）：Node Writable 在 `end()`/`finish` 路径上**可能不再 emit `drain`**。若上一文件因写盘背压 pause 了 socket、done 处理时调用 `stream.end()` 吞掉 drain，socket 永久 pause → 下一文件 `pull-ok` 读不到死锁。修复：在 `done` / `fail` / `succeed` 路径显式 `resumeSocket()`；`TransferServer.stop` 强制销毁连接。
+- **验收**（必须回环测试）：可选 `openWriteStream?` 注入慢写流；单文件 5MB 背压用例 + **多文件 + 慢写盘**回归用例（#205）全过，五连验证全过。
 - **注意**：`files.ts` 调用处不需要变（注入点可选）。不要给 socket.pause 加超时逻辑——写流出错已有 `write-error` 路径兜底。
 
 ---

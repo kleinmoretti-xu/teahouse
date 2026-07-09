@@ -38,6 +38,8 @@ export type WriteStreamFactory = (
 /** 发送侧 TCP 服务。事件：'progress'(transferId, bytesDelta)、'served'(transferId) */
 export class TransferServer extends EventEmitter {
   private server: Server | null = null
+  /** 活跃连接：stop 时强制销毁，避免 server.close 因残留 socket 挂起 */
+  private readonly sockets = new Set<Socket>()
 
   constructor(
     private readonly port: number,
@@ -64,15 +66,31 @@ export class TransferServer extends EventEmitter {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.server) return resolve()
-      this.server.close(() => resolve())
+      const server = this.server
       this.server = null
+      for (const socket of this.sockets) {
+        socket.destroy()
+      }
+      this.sockets.clear()
+      let settled = false
+      const done = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      server.close(() => done())
+      // 残留半开连接时 close 可能迟迟不回调；强制收口避免测试 afterEach 挂死
+      setTimeout(done, 1_000)
     })
   }
 
   private serve(socket: Socket): void {
+    this.sockets.add(socket)
     socket.setNoDelay(true)
     let busy = false // 同一连接内文件串行（协议约定），防交叉 pull
     let activeStreams: Array<ReturnType<ReadStreamFactory>> = []
+    /** 发送端写缓冲满时只挂一个 drain，避免重复 resume 与泄漏 listener */
+    let waitingDrain = false
 
     const send = (frame: TcpFrame): void => {
       socket.write(encodeFrame(frame))
@@ -127,9 +145,13 @@ export class TransferServer extends EventEmitter {
         ): void => {
           const data = asBuffer(chunk)
           this.emit('progress', pull.transferId, data.length)
-          if (!socket.write(data)) {
+          if (!socket.write(data) && !waitingDrain) {
+            waitingDrain = true
             stream.pause()
-            socket.once('drain', () => stream.resume())
+            socket.once('drain', () => {
+              waitingDrain = false
+              if (!socket.destroyed) stream.resume()
+            })
           }
         }
         const finish = (sha256: string): void => {
@@ -184,6 +206,7 @@ export class TransferServer extends EventEmitter {
     socket.on('data', (chunk) => reader.feed(chunk))
     socket.on('error', () => undefined)
     socket.on('close', () => {
+      this.sockets.delete(socket)
       for (const stream of activeStreams.splice(0)) stream.destroy()
       busy = false
     })
@@ -230,6 +253,8 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       left: number
     } | null = null
     let settled = false
+    /** 写盘背压 pause 后，文件切换时 end() 可能吞掉 drain，须显式 resume */
+    let socketPaused = false
     const removePart = (path: string): void => {
       try {
         rmSync(path, { force: true })
@@ -237,10 +262,16 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
         // 清理失败不覆盖原始传输失败原因。
       }
     }
+    const resumeSocket = (): void => {
+      if (!socketPaused) return
+      socketPaused = false
+      if (!settled && !socket.destroyed) socket.resume()
+    }
 
     const fail = (reason: string): void => {
       if (settled) return
       settled = true
+      resumeSocket()
       if (current) {
         current.stream.destroy()
         if (
@@ -260,6 +291,7 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
     const succeed = (): void => {
       if (settled) return
       settled = true
+      resumeSocket()
       socket.end()
       resolvePromise()
     }
@@ -355,6 +387,9 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
         if (frame.type === 'done' && current) {
           const item = current
           current = null
+          // Node Writable 在 end/finish 路径上可能不再 emit drain；
+          // 若上一文件写盘背压 pause 了 socket，不 resume 则下一文件 pull-ok 永远读不到（死锁）。
+          resumeSocket()
           item.stream.end(() => {
             const got = item.hash.digest('hex')
             if (got !== frame.sha256) {
@@ -378,11 +413,10 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
         if (!current) return
         current.hash.update(chunk)
         current.left -= chunk.length
-        if (!current.stream.write(chunk)) {
+        if (!current.stream.write(chunk) && !socketPaused) {
+          socketPaused = true
           socket.pause()
-          current.stream.once('drain', () => {
-            if (!settled && !socket.destroyed) socket.resume()
-          })
+          current.stream.once('drain', () => resumeSocket())
         }
         opts.onProgress(chunk.length)
       },

@@ -208,7 +208,7 @@ describe('transfer 数据面回环', () => {
     expect(readFileSync(join(dst, '工程', 'docs', '说明.txt'), 'utf8')).toBe('你好，茶话间')
     expect(readFileSync(join(dst, '工程', 'empty.dat')).length).toBe(0)
     expect(bytes).toBe(big.length + Buffer.byteLength('你好，茶话间'))
-  })
+  }, 15_000)
 
   it('首次拉取时同一读流边发送边计算哈希，避免大文件接受后长时间 0B', async () => {
     const dst = makeTmp()
@@ -392,7 +392,52 @@ describe('transfer 数据面回环', () => {
     expect(readFileSync(join(dst, 'slow.bin')).equals(body)).toBe(true)
     expect(slowWriters).toHaveLength(1)
     expect(slowWriters[0].maxBuffered).toBeLessThan(1024 * 1024)
-  })
+  }, 15_000)
+
+  it('多文件 + 写盘背压：文件切换时不得永久 pause socket', async () => {
+    // 回归：上一文件 end() 吞掉 drain 后 socket 仍 paused，下一文件 pull-ok 读不到 → 死锁
+    const src = makeTmp()
+    const dst = makeTmp()
+    const a = randomBytes(256 * 1024)
+    const b = randomBytes(128 * 1024)
+    writeFileSync(join(src, 'a.bin'), a)
+    writeFileSync(join(src, 'b.bin'), b)
+    writeFileSync(join(src, 'c.empty'), '')
+    const openWriteStream: WriteStreamFactory = (path, options) => {
+      return new SlowFileWritable(path, options?.flags ?? 'w', 1) as unknown as ReturnType<WriteStreamFactory>
+    }
+    const outgoing = new Map<string, OutgoingFile>([
+      ['f1', { fileId: 'f1', absPath: join(src, 'a.bin'), size: a.length }],
+      ['f2', { fileId: 'f2', absPath: join(src, 'b.bin'), size: b.length }],
+      ['f3', { fileId: 'f3', absPath: join(src, 'c.empty'), size: 0 }]
+    ])
+    const port = await startServer(new Map([['t-multi-bp', outgoing]]))
+
+    await expect(
+      Promise.race([
+        pullTransfer({
+          host: '127.0.0.1',
+          port,
+          selfId: 'node-receiver',
+          transferId: 't-multi-bp',
+          files: [
+            { fileId: 'f1', relPath: 'pack/a.bin', size: a.length },
+            { fileId: 'f2', relPath: 'pack/b.bin', size: b.length },
+            { fileId: 'f3', relPath: 'pack/c.empty', size: 0 }
+          ],
+          saveDir: dst,
+          cancelRef: { canceled: false, socket: null },
+          onProgress: () => undefined,
+          openWriteStream
+        }),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('timeout')), 10_000))
+      ])
+    ).resolves.toBeUndefined()
+
+    expect(readFileSync(join(dst, 'pack', 'a.bin')).equals(a)).toBe(true)
+    expect(readFileSync(join(dst, 'pack', 'b.bin')).equals(b)).toBe(true)
+    expect(readFileSync(join(dst, 'pack', 'c.empty')).length).toBe(0)
+  }, 15_000)
 
   it('重名避让：name.ext → name(1).ext', () => {
     const dir = makeTmp()
