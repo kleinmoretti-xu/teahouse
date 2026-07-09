@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
 import {
   TransferServer,
   dedupeTargetPath,
   pullTransfer,
   type IncomingFilePlan,
   type OutgoingFile,
-  type ReadStreamFactory
+  type ReadStreamFactory,
+  type WriteStreamFactory
 } from './transfer'
 import { encodeFrame, FrameReader } from './frame'
 
@@ -81,6 +82,63 @@ class SlowReadable extends Readable {
   _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    callback(error)
+  }
+}
+
+class SlowFileWritable extends Writable {
+  readonly inner: ReturnType<typeof createWriteStream>
+  maxBuffered = 0
+
+  constructor(
+    path: string,
+    flags: string,
+    private readonly delayMs: number
+  ) {
+    super({ highWaterMark: 16 * 1024 })
+    this.inner = createWriteStream(path, { flags, highWaterMark: 16 * 1024 })
+    this.inner.on('error', (err) => this.destroy(err))
+  }
+
+  write(
+    chunk: Uint8Array | string,
+    encoding?: BufferEncoding | ((error?: Error | null) => void),
+    cb?: (error?: Error | null) => void
+  ): boolean {
+    const ok =
+      typeof encoding === 'function'
+        ? super.write(chunk, encoding)
+        : encoding
+          ? super.write(chunk, encoding, cb)
+          : super.write(chunk, cb)
+    this.maxBuffered = Math.max(this.maxBuffered, this.writableLength)
+    return ok
+  }
+
+  _write(
+    chunk: Buffer,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void
+  ): void {
+    setTimeout(() => {
+      if (this.destroyed) {
+        callback()
+        return
+      }
+      if (this.inner.write(chunk, encoding)) {
+        callback()
+        return
+      }
+      this.inner.once('drain', callback)
+    }, this.delayMs)
+  }
+
+  _final(callback: (error?: Error | null) => void): void {
+    this.inner.end(callback)
+  }
+
+  _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    this.inner.destroy()
     callback(error)
   }
 }
@@ -296,6 +354,44 @@ describe('transfer 数据面回环', () => {
 
     expect(readFileSync(join(dst, 'resume.bin')).equals(body)).toBe(true)
     expect(bytes).toBe(body.length)
+  })
+
+  it('接收端写盘慢时暂停 socket，避免写流缓冲无界增长', async () => {
+    const src = makeTmp()
+    const dst = makeTmp()
+    const body = randomBytes(5 * 1024 * 1024)
+    writeFileSync(join(src, 'slow.bin'), body)
+    const slowWriters: SlowFileWritable[] = []
+    const openWriteStream: WriteStreamFactory = (path, options) => {
+      const writer = new SlowFileWritable(path, options?.flags ?? 'w', 2)
+      slowWriters.push(writer)
+      return writer as unknown as ReturnType<WriteStreamFactory>
+    }
+    const outgoing = new Map<string, OutgoingFile>([
+      ['f1', { fileId: 'f1', absPath: join(src, 'slow.bin'), size: body.length }]
+    ])
+    const port = await startServer(new Map([['t-slow-write', outgoing]]))
+
+    await expect(
+      Promise.race([
+        pullTransfer({
+          host: '127.0.0.1',
+          port,
+          selfId: 'node-receiver',
+          transferId: 't-slow-write',
+          files: [{ fileId: 'f1', relPath: 'slow.bin', size: body.length }],
+          saveDir: dst,
+          cancelRef: { canceled: false, socket: null },
+          onProgress: () => undefined,
+          openWriteStream
+        }),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('timeout')), 8_000))
+      ])
+    ).resolves.toBeUndefined()
+
+    expect(readFileSync(join(dst, 'slow.bin')).equals(body)).toBe(true)
+    expect(slowWriters).toHaveLength(1)
+    expect(slowWriters[0].maxBuffered).toBeLessThan(1024 * 1024)
   })
 
   it('重名避让：name.ext → name(1).ext', () => {

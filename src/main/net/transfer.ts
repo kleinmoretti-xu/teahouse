@@ -30,6 +30,11 @@ export type ReadStreamFactory = (
   options?: { start?: number }
 ) => ReturnType<typeof createReadStream>
 
+export type WriteStreamFactory = (
+  path: string,
+  options?: { flags?: string }
+) => ReturnType<typeof createWriteStream>
+
 /** 发送侧 TCP 服务。事件：'progress'(transferId, bytesDelta)、'served'(transferId) */
 export class TransferServer extends EventEmitter {
   private server: Server | null = null
@@ -203,6 +208,8 @@ export interface PullOptions {
   onProgress: (bytesDelta: number) => void
   /** 由服务侧设置以支持取消：destroy 当前 socket */
   cancelRef: { canceled: boolean; socket: Socket | null }
+  /** 测试注入：默认写入真实文件系统 */
+  openWriteStream?: WriteStreamFactory
 }
 
 /** 接收侧：连接发送方逐文件拉取；保留 .part 时可从 offset 断点续传。 */
@@ -218,7 +225,7 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       plan: IncomingFilePlan
       partPath: string
       finalPath: string
-      stream: ReturnType<typeof createWriteStream>
+      stream: ReturnType<WriteStreamFactory>
       hash: ReturnType<typeof createHash>
       left: number
     } | null = null
@@ -303,7 +310,7 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
           plan,
           partPath,
           finalPath,
-          stream: createWriteStream(partPath, { flags: offset > 0 ? 'a' : 'w' }),
+          stream: (opts.openWriteStream ?? createWriteStream)(partPath, { flags: offset > 0 ? 'a' : 'w' }),
           hash,
           left: plan.size - offset
         }
@@ -371,7 +378,12 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
         if (!current) return
         current.hash.update(chunk)
         current.left -= chunk.length
-        current.stream.write(chunk)
+        if (!current.stream.write(chunk)) {
+          socket.pause()
+          current.stream.once('drain', () => {
+            if (!settled && !socket.destroyed) socket.resume()
+          })
+        }
         opts.onProgress(chunk.length)
       },
       (reason) => fail(reason)

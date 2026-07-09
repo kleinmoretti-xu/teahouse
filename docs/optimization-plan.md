@@ -106,7 +106,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-4 【P0·内存】接收端写盘无背压：快网络 + 慢磁盘时内存无界增长
 
-- 状态：待办
+- 状态：已完成（v0.32.7 / 本提交）
 - 涉及：`src/main/net/transfer.ts`（`pullTransfer` raw 回调，:333-339）；难度：中；commit 类型：`fix:`
 - **问题**：接收裸流回调里 `current.stream.write(chunk)` 忽略返回值，socket 不暂停。千兆内网收 10GB 文件写入慢盘（USB 盘/网络盘/老机械盘）时，写缓冲在内存里无界堆积，最坏可达 GB 级 → OOM 或系统卡死。发送端有对称的背压处理（:116-118），接收端漏了。
 - **方案**：raw 回调中：
