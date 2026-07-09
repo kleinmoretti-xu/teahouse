@@ -174,7 +174,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 
 扫描范围自动分享（决议 #114）属于设置同步，不入 SQLite：`config.scanRanges` 保留旧字符串数组；`scanRangeSources` 记录 `self/remote`、来源 nodeId/显示名、添加时间与上次自动扫描时间；`ignoredScanRanges` 记录用户主动移除过的 CIDR，远端再次分享时不自动加回。`RangeSync` 只收发 `scan-ranges` 配置候选；主进程收到新 CIDR 后按 30–90 分钟抖动、12 小时去重、在线规模 hash 抽样调度 `Discovery.scanHosts()`，手动扫描仍走即时路径。
 
-主界面全局网段刷新（决议 #115）仍属于显式手动扫描：`peers:scan-all-ranges` 在主进程读取当前 `config.scanRanges`，归一化合法 CIDR 后展开并按 IP 去重，再以 8ms 间隔逐个调用 `Discovery.probe()`；进度通过 `net:scan-progress` 推给主窗口，含 `done/total/rangeCount/status`。该扫描不改配置、不入 SQLite、不新增线上协议；运行中重复调用只返回当前进度，避免并发扫描。
+主界面全局网段刷新（决议 #115 / #197）仍属于显式手动扫描：`peers:scan-all-ranges` 在主进程读取当前 `config.scanRanges`，归一化合法 CIDR 后展开并按 IP 去重，再以 8ms 间隔逐个调用 `Discovery.probe()`；进度通过 `net:scan-progress` 推给主窗口，含 `done/total/rangeCount/status`。该扫描不改配置、不入 SQLite、不新增线上协议；运行中重复调用只返回当前进度，避免并发扫描。**二次确认（决议 #197）纯在主窗口渲染层（`App.vue`）完成**：点击刷新按钮 → 弹出确认对话框并展示当前 `SettingsView.scanRangeItems`（或回退 `scanRanges`）列表摘要 → 用户点「开始扫描」后才调用既有 `window.pantry.scanAllRanges()`；取消 / 遮罩 / Esc 不发 IPC。不新增 IPC 通道、不改主进程扫描状态机；设置页单网段 `peers:scan` 仍直调、无确认。
 
 内网通兼容配置（决议 #194/#195）独立存放在 `config.nwtCompat`，默认关闭：`enabled`、`port`（默认 2425）、`ranges`、`manualPeers`、`scanOnStartup`、`experimentalFile`。兼容扫描只读取这些独立 IP 段，不自动复用茶话间 `scanRanges`，也不参与 `scan-ranges` 同步；服务启动时若 `2425/UDP` 被占用，兼容模式进入不可用状态并在设置页提示，不影响主协议 17878/17879 端口与普通聊天。`experimentalFile` 默认关闭，只有完成内网通 TCP `GETFILEDATA` 闭环后才允许暴露给 UI。
 
@@ -381,3 +381,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-02 v1.02 决议 #192：会话打开默认定位最新消息修复。`chatStore.openConv()` 默认滚动意图改为 `latest`，显式进入会话时即使已有缓存也重载最新 50 条；`target` 继续服务历史搜索跳转，当前会话读历史时的新消息不强拉到底。纯渲染层状态策略调整，无协议、IPC、SQLite 变化。版本 0.31.1 → 0.31.2。
 - 2026-07-08 v1.03 决议 #194：内网通兼容模式技术设计立项。新增 `net/compat/`、`services/nwt-compat.ts`、`config.nwtCompat` 与独立兼容联系人/会话投影约束；兼容层绑定 `2425/UDP`、实现 IPMSG 子集发现与普通文本收发，主协议、主端口、gossip、补发队列和文件传输语义保持不变。详见 [nwt-compat-design.md](nwt-compat-design.md)。
 - 2026-07-08 v1.04 决议 #195：扩展内网通兼容技术设计。`net/compat/` 增加附件 parser、实验 TCP 文件通道和 `nwt-capabilities` 能力门控；`services/nwt-compat.ts` 负责兼容能力投影，IPC 预留 `nwt:file-offer` / `nwt:accept-file-offer` 等实验接口；UI 通过 `ConversationCapabilities` 隐藏 PK、震动、图片、文件、文件夹、直接发送和媒体撤回。标准 IPMSG 文件 / 剪贴板图片已列入实验阶段，内网通私有 `901x` 通道和远程协助继续排除。
+- 2026-07-09 v1.05 决议 #197：全局网段刷新二次确认落渲染层。`App.vue` 在调用 `scanAllRanges` 前插入居中确认态；列表数据复用已加载的 `SettingsView.scanRangeItems` / `scanRanges`，不新增 IPC、协议、SQLite 或主进程扫描逻辑。版本 0.31.3 → 0.32.0。

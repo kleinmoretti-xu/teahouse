@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import type { AppInfo, ScanProgressView, SettingsView } from '../../shared/ipc'
+import type { AppInfo, ScanProgressView, ScanRangeItemView, SettingsView } from '../../shared/ipc'
 import { usePeersStore } from './stores/peers'
 import { useChatStore } from './stores/chat'
 import { useUpdateStore } from './stores/update'
@@ -121,6 +121,41 @@ const scanButtonTitle = computed(() => {
   return '刷新全局用户'
 })
 const scanProgressTitle = computed(() => `扫描进度 ${scanPercent.value}%`)
+
+// 全量刷新二次确认（决议 #197）：列表摘要最多 6 条，超出折叠
+const SCAN_CONFIRM_PREVIEW_LIMIT = 6
+const showScanConfirm = ref(false)
+type ScanConfirmRow = { cidr: string; sourceLabel: string | null }
+
+const scanConfirmRows = computed<ScanConfirmRow[]>(() => {
+  const items = settings.value?.scanRangeItems
+  if (items && items.length > 0) {
+    return items.map((item: ScanRangeItemView) => ({
+      cidr: item.cidr,
+      sourceLabel:
+        item.source === 'remote'
+          ? item.sourceName?.trim()
+            ? `来自 ${item.sourceName.trim()}`
+            : '来自同事'
+          : '本机'
+    }))
+  }
+  return (settings.value?.scanRanges ?? []).map((cidr) => ({
+    cidr,
+    sourceLabel: null as string | null
+  }))
+})
+const scanConfirmTotal = computed(() => scanConfirmRows.value.length)
+const scanConfirmPreview = computed(() =>
+  scanConfirmRows.value.slice(0, SCAN_CONFIRM_PREVIEW_LIMIT)
+)
+const scanConfirmExtra = computed(() =>
+  Math.max(0, scanConfirmTotal.value - SCAN_CONFIRM_PREVIEW_LIMIT)
+)
+const scanConfirmCountLabel = computed(() => {
+  const n = scanConfirmTotal.value
+  return n > 0 ? `${n} 个网段` : ''
+})
 const selfName = computed(() => settings.value?.nick.trim() || '未设置昵称')
 const selfOrgPath = computed(() => {
   const parts = [settings.value?.company, settings.value?.dept, settings.value?.team]
@@ -222,11 +257,34 @@ function activateTab(next: Tab, event: Event): void {
   releaseRailFocus(event)
 }
 
-async function refreshAllUsers(event?: Event): Promise<void> {
+/** 点击刷新：先弹二次确认（决议 #197），确认后才扫 */
+function askRefreshAllUsers(event?: Event): void {
   releaseRailFocus(event)
+  hideRailHint()
   if (!canScanAllRanges.value) return
+  showScanConfirm.value = true
+}
+
+function cancelScanConfirm(): void {
+  showScanConfirm.value = false
+}
+
+async function confirmRefreshAllUsers(): Promise<void> {
+  if (!canScanAllRanges.value) {
+    showScanConfirm.value = false
+    return
+  }
+  showScanConfirm.value = false
   scanRingPct.value = 0 // 新扫描前归零（此刻环隐藏、无过渡），避免从上次满环倒退
   applyScanProgress(await window.pantry.scanAllRanges())
+}
+
+function onScanConfirmKeydown(event: KeyboardEvent): void {
+  if (!showScanConfirm.value) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    cancelScanConfirm()
+  }
 }
 
 onMounted(async () => {
@@ -246,11 +304,13 @@ onMounted(async () => {
     applyWindowTitle(next)
   })
   stopScanProgress = window.pantry.onScanProgress(applyScanProgress)
+  document.addEventListener('keydown', onScanConfirmKeydown)
   releaseInitialRailFocus()
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  document.removeEventListener('keydown', onScanConfirmKeydown)
   stopSettings?.()
   stopScanProgress?.()
   clearScanProgressHideTimer()
@@ -367,7 +427,7 @@ onUnmounted(() => {
         :aria-label="scanProgress.running ? scanProgressTitle : scanButtonTitle"
         @pointermove="scheduleRailHint('scan')"
         @pointerleave="hideRailHint('scan')"
-        @click="refreshAllUsers($event)"
+        @click="askRefreshAllUsers($event)"
       >
         <span
           class="scan-ring"
@@ -462,6 +522,50 @@ onUnmounted(() => {
         <p class="hint">在「通讯录」里选个人，开始第一句话</p>
       </div>
     </main>
+  </div>
+
+  <!-- 全量刷新二次确认（决议 #197）：居中模态 + 网段列表摘要，确认后才 scanAllRanges -->
+  <div
+    v-if="showScanConfirm"
+    class="scan-confirm-mask"
+    @click.self="cancelScanConfirm"
+  >
+    <div
+      class="scan-confirm-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="scan-confirm-title"
+      aria-describedby="scan-confirm-desc"
+    >
+      <div class="scan-confirm-head">
+        <span class="scan-confirm-icon" aria-hidden="true">
+          <PantryIcon name="refresh" :size="18" />
+        </span>
+        <div class="scan-confirm-head-text">
+          <h3 id="scan-confirm-title">刷新全局用户</h3>
+          <p v-if="scanConfirmCountLabel" class="scan-confirm-meta">{{ scanConfirmCountLabel }}</p>
+        </div>
+      </div>
+      <p id="scan-confirm-desc" class="scan-confirm-lead">
+        将扫描以下已保存网段并探测在线用户：
+      </p>
+      <ul class="scan-confirm-list" aria-label="将扫描的网段">
+        <li v-for="row in scanConfirmPreview" :key="row.cidr" class="scan-confirm-row">
+          <code class="scan-confirm-cidr">{{ row.cidr }}</code>
+          <span v-if="row.sourceLabel" class="scan-confirm-source">（{{ row.sourceLabel }}）</span>
+        </li>
+        <li v-if="scanConfirmExtra > 0" class="scan-confirm-more">
+          …另有 {{ scanConfirmExtra }} 个网段
+        </li>
+      </ul>
+      <p class="scan-confirm-hint">可能持续数十秒，会向局域网发送探测。</p>
+      <div class="scan-confirm-actions">
+        <button type="button" class="scan-confirm-cancel" @click="cancelScanConfirm">取消</button>
+        <button type="button" class="scan-confirm-go" @click="confirmRefreshAllUsers">
+          开始扫描
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- 移除聊天后的 10 秒撤回提示（决议 #125）：倒计时结束才真正删除聊天记录 -->
@@ -990,6 +1094,192 @@ onUnmounted(() => {
 }
 .hint {
   font-size: 12px;
+}
+
+/* 全量刷新二次确认（决议 #197）：居中模态、网段摘要、茶青「开始扫描」；taste 克制打磨 */
+.scan-confirm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 28, 24, 0.38);
+  animation: scan-confirm-fade 0.16s ease;
+}
+.scan-confirm-card {
+  width: min(360px, 100%);
+  max-height: min(72vh, 520px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-window);
+  box-shadow: 0 18px 48px rgba(20, 28, 24, 0.18);
+  animation: scan-confirm-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scan-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+.scan-confirm-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--primary-weak);
+  color: var(--primary);
+}
+.scan-confirm-head-text {
+  min-width: 0;
+  flex: 1;
+}
+.scan-confirm-head-text h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.3;
+}
+.scan-confirm-meta {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--primary);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.scan-confirm-lead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.scan-confirm-list {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  list-style: none;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-list);
+  max-height: 168px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.scan-confirm-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  padding: 5px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  border-bottom: 1px solid var(--line);
+}
+.scan-confirm-row:last-child {
+  border-bottom: none;
+}
+.scan-confirm-cidr {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+  background: transparent;
+  padding: 0;
+}
+.scan-confirm-source {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.scan-confirm-more {
+  padding: 6px 0 2px;
+  font-size: 12px;
+  color: var(--text-3);
+  border-bottom: none;
+}
+.scan-confirm-hint {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.scan-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.scan-confirm-actions button {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    filter 0.12s ease,
+    transform 0.1s ease;
+}
+.scan-confirm-cancel {
+  border: 1px solid var(--line);
+  background: var(--bg-window);
+  color: var(--text-2);
+}
+.scan-confirm-cancel:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.scan-confirm-cancel:active,
+.scan-confirm-go:active {
+  transform: scale(0.98);
+}
+.scan-confirm-go {
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.scan-confirm-go:hover {
+  filter: brightness(0.96);
+}
+@keyframes scan-confirm-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes scan-confirm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan-confirm-mask,
+  .scan-confirm-card {
+    animation: none;
+  }
+  .scan-confirm-actions button {
+    transition: none;
+  }
+  .scan-confirm-cancel:active,
+  .scan-confirm-go:active {
+    transform: none;
+  }
 }
 
 /* 移除聊天撤回提示（决议 #125）：底部居中浮条，茶青撤回按钮，尊重 reduced-motion */
