@@ -58,6 +58,7 @@ import {
   type ScanRangeSummary,
   type UpdateReqPayload
 } from '../shared/protocol'
+import { DEFAULT_IMAGE_EXTENSION, IMAGE_FILE_EXTENSIONS } from '../shared/media'
 import {
   addSharedScanRanges,
   loadAppState,
@@ -157,7 +158,8 @@ if (!gotLock) {
   const OCR_SOURCE_MAX_BYTES = 25 * 1024 * 1024
   const GLOBAL_SCAN_HOST_DELAY = 8
   const GLOBAL_SCAN_PROGRESS_PUSH_INTERVAL = 200
-  const IMG_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
+  const IMAGE_EXTS = new Set<string>(IMAGE_FILE_EXTENSIONS)
+  const IMAGE_SEND_MAX_BYTES = 20 * 1024 * 1024
   const imageOcrCache = new ImageOcrResultCache()
   const rendererPathGrants = new PathGrantStore()
   let discovery: Discovery | null = null
@@ -290,9 +292,9 @@ if (!gotLock) {
 
   function stageOutgoingImagePath(sourcePath: string): string | null {
     try {
-      const ext = IMG_EXTS.has(extname(sourcePath).toLowerCase())
+      const ext = IMAGE_EXTS.has(extname(sourcePath).toLowerCase())
         ? extname(sourcePath).toLowerCase()
-        : '.png'
+        : DEFAULT_IMAGE_EXTENSION
       const dir = join(imagesDir(), 'out')
       mkdirSync(dir, { recursive: true })
       const staged = join(dir, `${randomUUID()}${ext}`)
@@ -301,6 +303,75 @@ if (!gotLock) {
     } catch {
       return null
     }
+  }
+
+  function parseImageSendTarget(value: unknown): string | null {
+    return typeof value === 'string' && value.length > 0 && value.length <= 64 ? value : null
+  }
+
+  function parseImageSendName(value: unknown): string | null {
+    return typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : null
+  }
+
+  function parseImageSendBytes(value: unknown): ArrayBuffer | null {
+    if (!(value instanceof ArrayBuffer) || value.byteLength === 0) return null
+    return value.byteLength <= IMAGE_SEND_MAX_BYTES ? value : null
+  }
+
+  function parseImageOfferPath(value: unknown): string | null {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null
+    return IMAGE_EXTS.has(extname(value).toLowerCase()) ? value : null
+  }
+
+  function outgoingImageExt(name: string): string {
+    const ext = extname(name).toLowerCase()
+    return IMAGE_EXTS.has(ext) ? ext : DEFAULT_IMAGE_EXTENSION
+  }
+
+  function stageImageBytes(name: string, bytes: ArrayBuffer): string {
+    const dir = join(imagesDir(), 'out')
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, `${randomUUID()}${outgoingImageExt(name)}`)
+    writeFileSync(path, Buffer.from(bytes))
+    return path
+  }
+
+  type OfferImagePaths = (
+    targetId: string,
+    paths: string[],
+    tableTextMeta?: TableTextMeta
+  ) => Promise<MessageView | null> | undefined
+
+  async function handleImageBytes(
+    target: unknown,
+    nameValue: unknown,
+    bytesValue: unknown,
+    tableText: unknown,
+    offer: OfferImagePaths
+  ): Promise<MessageView | null> {
+    const targetId = parseImageSendTarget(target)
+    const name = parseImageSendName(nameValue)
+    const bytes = parseImageSendBytes(bytesValue)
+    if (!targetId || !name || !bytes) return null
+    const tableTextMeta = parseTableTextMeta(tableText)
+    if (tableTextMeta === null) return null
+    const path = stageImageBytes(name, bytes)
+    return (await offer(targetId, [path], tableTextMeta)) ?? null
+  }
+
+  async function handleImagePath(
+    senderId: number,
+    target: unknown,
+    pathValue: unknown,
+    offer: OfferImagePaths
+  ): Promise<MessageView | null> {
+    const targetId = parseImageSendTarget(target)
+    const path = parseImageOfferPath(pathValue)
+    if (!targetId || !path) return null
+    if (!rendererPathGrants.consume(senderId, [path])) return null
+    const staged = stageOutgoingImagePath(path)
+    if (!staged) return null
+    return (await offer(targetId, [staged])) ?? null
   }
 
   function managedTransferMediaView(transferId: string): TransferView | null {
@@ -1583,57 +1654,31 @@ if (!gotLock) {
   ipcMain.handle(
     IpcChannels.imgSendBytes,
     async (_event, peerId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
-      if (typeof peerId !== 'string' || peerId.length === 0 || peerId.length > 64) return null
-      if (typeof name !== 'string' || name.length === 0 || name.length > 128) return null
-      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return null
-      if (bytes.byteLength > 20 * 1024 * 1024) return null
-      const tableTextMeta = parseTableTextMeta(tableText)
-      if (tableTextMeta === null) return null
-      const ext = IMG_EXTS.has(extname(name).toLowerCase()) ? extname(name).toLowerCase() : '.png'
-      const dir = join(app.getPath('userData'), 'data', 'images', 'out')
-      mkdirSync(dir, { recursive: true })
-      const path = join(dir, `${randomUUID()}${ext}`)
-      writeFileSync(path, Buffer.from(bytes))
-      return (await files?.offerPaths(peerId, [path], 'image', tableTextMeta)) ?? null
+      return handleImageBytes(peerId, name, bytes, tableText, (targetId, paths, tableTextMeta) =>
+        files?.offerPaths(targetId, paths, 'image', tableTextMeta)
+      )
     }
   )
 
   ipcMain.handle(
     IpcChannels.groupImgSendBytes,
     async (_event, groupId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
-      if (typeof groupId !== 'string' || groupId.length === 0 || groupId.length > 64) return null
-      if (typeof name !== 'string' || name.length === 0 || name.length > 128) return null
-      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return null
-      if (bytes.byteLength > 20 * 1024 * 1024) return null
-      const tableTextMeta = parseTableTextMeta(tableText)
-      if (tableTextMeta === null) return null
-      const ext = IMG_EXTS.has(extname(name).toLowerCase()) ? extname(name).toLowerCase() : '.png'
-      const dir = join(app.getPath('userData'), 'data', 'images', 'out')
-      mkdirSync(dir, { recursive: true })
-      const path = join(dir, `${randomUUID()}${ext}`)
-      writeFileSync(path, Buffer.from(bytes))
-      return (await files?.offerGroupPaths(groupId, [path], 'image', tableTextMeta)) ?? null
+      return handleImageBytes(groupId, name, bytes, tableText, (targetId, paths, tableTextMeta) =>
+        files?.offerGroupPaths(targetId, paths, 'image', tableTextMeta)
+      )
     }
   )
 
   ipcMain.handle(IpcChannels.imgOfferPath, async (event, peerId: unknown, path: unknown) => {
-    if (typeof peerId !== 'string' || peerId.length === 0 || peerId.length > 64) return null
-    if (typeof path !== 'string' || path.length === 0 || path.length > 2048) return null
-    if (!IMG_EXTS.has(extname(path).toLowerCase())) return null
-    if (!rendererPathGrants.consume(event.sender.id, [path])) return null
-    const staged = stageOutgoingImagePath(path)
-    if (!staged) return null
-    return (await files?.offerPaths(peerId, [staged], 'image')) ?? null
+    return handleImagePath(event.sender.id, peerId, path, (targetId, paths) =>
+      files?.offerPaths(targetId, paths, 'image')
+    )
   })
 
   ipcMain.handle(IpcChannels.groupImgOfferPath, async (event, groupId: unknown, path: unknown) => {
-    if (typeof groupId !== 'string' || groupId.length === 0 || groupId.length > 64) return null
-    if (typeof path !== 'string' || path.length === 0 || path.length > 2048) return null
-    if (!IMG_EXTS.has(extname(path).toLowerCase())) return null
-    if (!rendererPathGrants.consume(event.sender.id, [path])) return null
-    const staged = stageOutgoingImagePath(path)
-    if (!staged) return null
-    return (await files?.offerGroupPaths(groupId, [staged], 'image')) ?? null
+    return handleImagePath(event.sender.id, groupId, path, (targetId, paths) =>
+      files?.offerGroupPaths(targetId, paths, 'image')
+    )
   })
 
   ipcMain.handle(IpcChannels.settingsSaveApp, (_event, patch: unknown): SettingsView => {

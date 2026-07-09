@@ -567,6 +567,7 @@ P0 = 没有就不可用；P1 = 正式版应有；P2 = 增强。版本列为当�
 | 200 | 用户要求对 main 分支全库代码审查，产出可交给低成本模型执行的优化方案 | 建立 [optimization-plan.md](optimization-plan.md) 作为唯一优化待办清单（18 项分级：P0=#198 群上限三处漏改、传输层崩溃/fd 泄漏/背压缺失 → P1=messages 缺 seq 索引、导入 O(n²)、渲染层 500ms 全列表重渲染 → P2/P3 收敛与测试补齐）。执行约定：一项一 commit、按 #73 递增版本、网络层改动必须回环测试、完成后回写该文档状态行。纯文档，不改代码。 |
 | 201 | 用户决定不再使用 dev-claude 开发分支 | 日常开发**直接提交 `main`**：本地与远端 `dev-claude` 已删除（内容确认全部并入 main 后清理），不再新起开发分支；打包触发改为 `gh workflow run release.yml --ref main`。CLAUDE.md 分支约定与 optimization-plan §0.3 同步更新。纯流程决策，不改代码。 |
 | 202 | OPT-16 发现 OCR 引擎和数据库迁移版本的当前文档描述过期 | 纯文档修正：当前图片 OCR 引擎统一表述为内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm；数据库迁移版本不在交接文档写死，统一指向 `src/main/store/migrations.ts` 与 `PRAGMA user_version`。历史决议记录中关于早期 OCR 方案的 Tesseract 引用保留，作为演进脉络。纯文档，不改代码、不递增版本。 |
+| 203 | OPT-17 发现主进程图片发送 IPC handler 与渲染层图片扩展名白名单重复 | 收敛图片发送重复逻辑：新增 `shared/media.ts` 作为图片扩展名白名单与默认 `.png` 回退的唯一常量来源；主进程 `img:send-bytes` / `group-img:send-bytes` / `img:offer-path` / `group-img:offer-path` 抽为薄壳，共用目标、文件名、字节、路径校验与 staging helper；ChatPane 使用 shared 常量判断图片路径。校验边界与发送语义保持不变。版本 0.32.18 → **0.32.19**（代码质量优化，patch +1）。 |
 
 ## 10. 待定问题清单
 
@@ -755,5 +756,6 @@ P0 = 没有就不可用；P1 = 正式版应有；P2 = 增强。版本列为当�
 - 2026-07-09 v1.78 决议 #201：弃用 dev-claude 开发分支，日常开发直接提交 main（本地与远端分支已删除、内容已全部并入）；CLAUDE.md 与 optimization-plan.md 工作流程同步更新。纯文档。
 - 2026-07-09 v1.79 决议 #198 补齐：IPC 建群 / 改群 / 群内 @ 与备份导入统一使用 `GROUP_MAX_MEMBERS=200`，修复 65 人以上建群静默失败、批量成员变更或 @ 被旧上限截断、大群备份导入被截断到 50 人的问题。版本 0.32.3 → **0.32.4**。
 - 2026-07-09 v1.80 决议 #202：修正文档漂移。当前图片 OCR 引擎统一写为内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm；数据库迁移版本改为引用 `migrations.ts` / `PRAGMA user_version`，避免交接文档继续手写旧迁移号。纯文档，不递增版本。
+- 2026-07-09 v1.81 决议 #203：完成 OPT-17 图片发送 IPC 重复逻辑收敛。图片扩展名白名单提到 `shared/media.ts`，主进程四个图片发送 handler 共用校验与 staging helper，渲染层 ChatPane 共用同一后缀常量。版本 0.32.18 → **0.32.19**（代码质量优化，patch +1）。
 
 > 注：原 v1.42 / 决议 #166 曾登记一条「issue #3 残留·发送方图片卡『接收中…』」修复（v0.26.6），经核查其描述的 `chat.ts` 代码（`messages.find(fileRef)` ensure）在真实代码中不存在、根因（`transfers.byId` 登记不全）亦不成立——`transfers.byId` 由 `onTransferUpdated` 事件实时填充、`ImageBubble` 组件自身 `ensure` 懒加载，登记不会漏。该条无对应代码、未发布，#166 号已改记本功能（issue #3 实际由 #165 / v0.26.5 修复，用户已实测通过）。

@@ -288,7 +288,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-17 【P3·质量】index.ts 图片发送四个 IPC handler 重复逻辑收敛
 
-- 状态：待办
+- 状态：已完成（0.32.19 / 本提交）
 - 涉及：`src/main/index.ts:1582-1636`；难度：小；commit 类型：`refactor:`
 - **问题**：`imgSendBytes`/`groupImgSendBytes` 与 `imgOfferPath`/`groupImgOfferPath` 两两只差目标参数与调用的 files 方法，~40 行重复；`IMG_EXTS` 在 `index.ts:159` 与 `ChatPane.vue:1184` 各一份。
 - **方案**：主进程内抽私有函数（`stageImageBytes` + 参数校验小函数），四个 handler 收敛为薄壳；`IMG_EXTS` 提为 `src/shared/` 常量（shared 只放类型与常量，符合分层），主进程与 ChatPane 共用。

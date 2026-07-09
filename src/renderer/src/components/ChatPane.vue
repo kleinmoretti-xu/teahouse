@@ -31,6 +31,7 @@ import type {
   SettingsView,
   TransferView
 } from '../../../shared/ipc'
+import { IMAGE_FILE_EXTENSIONS } from '../../../shared/media'
 import type { PkGame } from '../../../shared/pk'
 import {
   CAPS,
@@ -1152,10 +1153,9 @@ function forwardSelectedMessage(): void {
   forwardMsg.value = msg
 }
 
-const IMG_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 function isImagePath(path: string): boolean {
   const lower = path.toLowerCase()
-  return IMG_EXTS.some((ext) => lower.endsWith(ext))
+  return IMAGE_FILE_EXTENSIONS.some((ext) => lower.endsWith(ext))
 }
 
 async function grantLocalFilePaths(paths: string[]): Promise<string[]> {
