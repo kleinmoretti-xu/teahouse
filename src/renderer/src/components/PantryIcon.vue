@@ -209,6 +209,12 @@ withDefaults(
       <path d="M12 11.2v4.6" />
       <path d="M12 8.4h.01" />
     </g>
+    <!-- 注意 / 需确认：三角形 + 叹号，用于非删除但代价较高的操作提示 -->
+    <g v-else-if="name === 'warning'">
+      <path d="M12 4.8 20.2 18.6H3.8L12 4.8Z" />
+      <path d="M12 10.2v4" />
+      <path d="M12 16.4h.01" />
+    </g>
     <g v-else-if="name === 'external'">
       <path d="M13.5 5.5h5v5" />
       <path d="M18.5 5.5 11 13" />

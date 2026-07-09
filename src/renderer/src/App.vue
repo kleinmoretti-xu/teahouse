@@ -524,6 +524,9 @@ onUnmounted(() => {
       aria-labelledby="scan-confirm-title"
       aria-describedby="scan-confirm-sub"
     >
+      <div class="scan-confirm-mark" aria-hidden="true">
+        <PantryIcon name="warning" :size="22" />
+      </div>
       <h3 id="scan-confirm-title">刷新全局用户</h3>
       <p id="scan-confirm-sub" class="scan-confirm-sub">{{ scanConfirmSub }}</p>
       <ul class="scan-confirm-list" aria-label="将扫描的网段">
@@ -1069,7 +1072,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-/* 全量刷新二次确认（决议 #197）：去冗余——标题 + 一句摘要 + CIDR，无图标/长说明/来源 */
+/* 全量刷新二次确认（决议 #197）：暖色警示标 + 精简文案（非删除红，提醒「留意代价」） */
 .scan-confirm-mask {
   position: fixed;
   inset: 0;
@@ -1082,11 +1085,25 @@ onUnmounted(() => {
 }
 .scan-confirm-card {
   width: min(300px, 100%);
-  padding: 18px 18px 14px;
+  padding: 20px 18px 14px;
   border-radius: 8px;
   background: var(--bg-window);
   box-shadow: 0 12px 40px rgba(20, 28, 24, 0.16);
+  text-align: center;
   animation: scan-confirm-rise 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scan-confirm-mark {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #c48a12;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 214, 120, 0.35), transparent 62%),
+    rgba(196, 138, 18, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(196, 138, 18, 0.18);
 }
 .scan-confirm-card h3 {
   margin: 0;
@@ -1110,6 +1127,7 @@ onUnmounted(() => {
   gap: 6px;
   max-height: 132px;
   overflow-y: auto;
+  text-align: left;
 }
 .scan-confirm-list li {
   display: flex;
