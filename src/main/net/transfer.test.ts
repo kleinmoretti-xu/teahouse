@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
-import { createConnection } from 'node:net'
+import { createHash, randomBytes } from 'node:crypto'
+import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -93,9 +93,10 @@ class SlowFileWritable extends Writable {
   constructor(
     path: string,
     flags: string,
-    private readonly delayMs: number
+    private readonly delayMs: number,
+    highWaterMark = 16 * 1024
   ) {
-    super({ highWaterMark: 16 * 1024 })
+    super({ highWaterMark })
     this.inner = createWriteStream(path, { flags, highWaterMark: 16 * 1024 })
     this.inner.on('error', (err) => this.destroy(err))
   }
@@ -437,6 +438,78 @@ describe('transfer 数据面回环', () => {
     expect(readFileSync(join(dst, 'pack', 'a.bin')).equals(a)).toBe(true)
     expect(readFileSync(join(dst, 'pack', 'b.bin')).equals(b)).toBe(true)
     expect(readFileSync(join(dst, 'pack', 'c.empty')).length).toBe(0)
+  }, 15_000)
+
+  it('done 帧与尾部数据同批到达且写缓冲已满时不得死锁（决议 #205 确定性回归）', async () => {
+    // 死锁精确条件：最后一块裸流 write 返回 false → socket.pause()，且 done 帧已随同批
+    // 数据进入 FrameReader 被同步处理 → stream.end() 后 Node Writable 不再 emit drain。
+    // 真实 TransferServer 下 done 是否与数据同批取决于回环时序（快盘机器跑不出来），
+    // 这里用手工帧服务端把 pull-ok + 全部裸流 + done 一次性写出，配合 1 字节水位慢写流，
+    // 使该条件在任何机器上都成立：修复前必死锁，修复后必通过。
+    const dst = makeTmp()
+    const a = randomBytes(32 * 1024)
+    const b = randomBytes(4 * 1024)
+    const bodies = new Map<string, Buffer>([
+      ['f1', a],
+      ['f2', b]
+    ])
+    const digest = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
+    const server = createServer((socket) => {
+      const reader = new FrameReader(
+        (frame) => {
+          if (frame.type !== 'pull') return
+          const body = bodies.get(frame.fileId)
+          if (!body) {
+            socket.destroy()
+            return
+          }
+          socket.write(
+            Buffer.concat([
+              encodeFrame({ type: 'pull-ok', fileId: frame.fileId, len: body.length }),
+              body,
+              encodeFrame({ type: 'done', fileId: frame.fileId, sha256: digest(body) })
+            ])
+          )
+        },
+        () => undefined,
+        () => socket.destroy()
+      )
+      socket.on('data', (chunk) => reader.feed(chunk))
+      socket.on('error', () => undefined)
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    const port = (server.address() as { port: number }).port
+
+    try {
+      await expect(
+        Promise.race([
+          pullTransfer({
+            host: '127.0.0.1',
+            port,
+            selfId: 'node-receiver',
+            transferId: 't-batched-done',
+            files: [
+              { fileId: 'f1', relPath: 'pack/a.bin', size: a.length },
+              { fileId: 'f2', relPath: 'pack/b.bin', size: b.length }
+            ],
+            saveDir: dst,
+            cancelRef: { canceled: false, socket: null },
+            onProgress: () => undefined,
+            // 1 字节水位：每个入站 chunk 的 write 都返回 false，逼出末尾 pause
+            openWriteStream: (path, options) =>
+              new SlowFileWritable(path, options?.flags ?? 'w', 1, 1) as unknown as ReturnType<WriteStreamFactory>
+          }),
+          new Promise((_resolve, reject) =>
+            setTimeout(() => reject(new Error('deadlock-timeout')), 5_000)
+          )
+        ])
+      ).resolves.toBeUndefined()
+
+      expect(readFileSync(join(dst, 'pack', 'a.bin')).equals(a)).toBe(true)
+      expect(readFileSync(join(dst, 'pack', 'b.bin')).equals(b)).toBe(true)
+    } finally {
+      server.close()
+    }
   }, 15_000)
 
   it('重名避让：name.ext → name(1).ext', () => {

@@ -113,6 +113,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 - **#205 补丁**（CI 发现）：Node Writable 在 `end()`/`finish` 路径上**可能不再 emit `drain`**。若上一文件因写盘背压 pause 了 socket、done 处理时调用 `stream.end()` 吞掉 drain，socket 永久 pause → 下一文件 `pull-ok` 读不到死锁。修复：在 `done` / `fail` / `succeed` 路径显式 `resumeSocket()`；`TransferServer.stop` 强制销毁连接。
 - **验收**（必须回环测试）：可选 `openWriteStream?` 注入慢写流；单文件 5MB 背压用例 + **多文件 + 慢写盘**回归用例（#205）全过，五连验证全过。
 - **注意**：`files.ts` 调用处不需要变（注入点可选）。不要给 socket.pause 加超时逻辑——写流出错已有 `write-error` 路径兜底。
+- **验收备注（2026-07-09，v0.32.22）**：#205 的「多文件 + 慢写盘」用例依赖回环时序，快盘机器上锁不住死锁（修复前代码也能通过）；已补**确定性**回归用例（手工帧服务端单包写出 `pull-ok+裸流+done` + 1 字节水位写流），验证过修复前必死锁超时、修复后必通过。首轮验收（v1.3）放行 OPT-4 时未推演出 end() 吞 drain 的路径，属验收失误，引以为戒。
 
 ---
 
