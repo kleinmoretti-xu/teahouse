@@ -66,7 +66,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-1 【P0·bug】决议 #198 群上限 200 落地不完整：IPC 与备份导入仍卡旧上限
 
-- 状态：已完成（v0.32.4 / 本提交）
+- 状态：已完成（v0.32.4 / 13758e9）
 - 涉及：`src/main/index.ts`、`src/main/services/porter.ts`；难度：小；commit 类型：`fix:`
 - **问题**：#198 把 `GROUP_MAX_MEMBERS` 提到 200，但四处硬编码旧上限没跟上：
   1. `src/main/index.ts:1826` `groupCreate` handler：`memberIds.length > 64` 直接返回 null——UI（GroupCreator 已按 200 放开选人）选择 65 人以上建群时**静默失败**；
@@ -84,7 +84,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-2 【P0·稳定性】文件接收落盘的同步 fs 调用未捕获异常，可直接崩掉主进程
 
-- 状态：已完成（v0.32.5 / 本提交）
+- 状态：已完成（v0.32.5 / e7b34f5）
 - 涉及：`src/main/net/transfer.ts`；难度：小；commit 类型：`fix:`
 - **问题**：`pullTransfer()` 里 `mkdirSync`（:256/:260）、`renameSync`（:328）、`rmSync` 都跑在 socket 事件回调内，**没有 try/catch**。目标目录不可写、中间路径被文件占位（ENOTDIR）、传输中保存目录被删等情况会抛出未捕获异常 → Electron 主进程崩溃弹窗。接收端 `existing`/`stream` 错误路径有处理，唯独这些同步调用是裸的。
 - **方案**：把 `next()` 内的 `mkdirSync` 两处、`done` 帧回调内的 `renameSync(item.partPath, dedupeTargetPath(item.finalPath))` 用 try/catch 包住，失败走既有 `fail('write-error')`（rename 失败时同时 `rmSync(partPath, { force: true })` 清理，注意 rmSync 本身也要包）。`statSync` 已在 try 内的不动。
@@ -95,7 +95,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-3 【P0·资源泄漏】发送端 socket 中断后读流不销毁：fd 泄漏 + 流永久挂起
 
-- 状态：已完成（v0.32.6 / 本提交）
+- 状态：已完成（v0.32.6 / 77a2fd3）
 - 涉及：`src/main/net/transfer.ts`（`TransferServer.serve`，:67-171）；难度：中；commit 类型：`fix:`
 - **问题**：`serve()` 供流过程中，若接收方中途断开（取消/崩溃/断网）：`sendDataChunk` 里 `socket.write` 返回 false → `stream.pause()` 并等 `socket.once('drain')`——但 socket 已销毁，`drain` 永不触发，**读流永久 pause、文件 fd 泄漏**（断点续传路径的 `hashStream` 也会白读整个大文件）。每次被中断的发送泄漏 1-2 个 fd，长期运行的办公机会累积。
 - **方案**：在 `serve()` 内跟踪当前活动流（`let activeStreams: Array<ReturnType<ReadStreamFactory>> = []`，开流时登记、`finish` 时清空），给 socket 挂 `close` 处理：`socket.on('close', () => { for (const s of activeStreams) s.destroy(); activeStreams = [] })`。同时复位 `busy`（连接已关，复位只是卫生）。
@@ -106,7 +106,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-4 【P0·内存】接收端写盘无背压：快网络 + 慢磁盘时内存无界增长
 
-- 状态：已完成（v0.32.7 / 本提交）
+- 状态：已完成（v0.32.7 / 44ded19）
 - 涉及：`src/main/net/transfer.ts`（`pullTransfer` raw 回调，:333-339）；难度：中；commit 类型：`fix:`
 - **问题**：接收裸流回调里 `current.stream.write(chunk)` 忽略返回值，socket 不暂停。千兆内网收 10GB 文件写入慢盘（USB 盘/网络盘/老机械盘）时，写缓冲在内存里无界堆积，最坏可达 GB 级 → OOM 或系统卡死。发送端有对称的背压处理（:116-118），接收端漏了。
 - **方案**：raw 回调中：
@@ -129,7 +129,7 @@ opts.onProgress(chunk.length)
 
 ### OPT-5 【P1·性能/存储】`messages` 表缺 seq 索引：插入与分页随历史量线性劣化（"越用越卡"的最大来源）
 
-- 状态：已完成（v0.32.8 / 本提交）
+- 状态：已完成（v0.32.8 / 30250ec）
 - 涉及：`src/main/store/migrations.ts`、`docs/tech-design.md` §5；难度：小；commit 类型：`fix:`（文档先行）
 - **问题**：`messages` 只有 `idx_messages_conv (conv_id, ts, seq)`（`migrations.ts:54`），导致三组热路径全表/全会话扫描：
   1. **每次插入消息**执行 `SELECT COALESCE(MAX(seq), 0) + 1 FROM messages`（`msg-repo.ts:88`）——seq 无索引，**每条消息插入都全表扫**。10 万条历史时每次收发消息都要扫 10 万行；
@@ -153,7 +153,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-6 【P1·性能/存储】备份导入 O(n²)：每行重新 prepare + 每条消息全表 MAX(seq)
 
-- 状态：已完成（v0.32.9 / 本提交）
+- 状态：已完成（v0.32.9 / b0e7e63）
 - 涉及：`src/main/services/porter.ts`（`importBackup` 及各 `importXxx`，:298-484）；难度：中；commit 类型：`fix:`
 - **问题**：导入事务里**每一行都重新 `db.prepare()`**（`importMessage` 一条消息 prepare 4 次：exists 查询 :457、insert :463、FTS :479、conv bump :481；peers/groups/convs/transfers/stickers 同病）。且 insert 的 seq 用子查询 `(SELECT COALESCE(MAX(seq),0)+1 FROM messages)`（:465）——配合无索引即 O(n²)：往已有 5 万条的库导入 5 万条备份是数十亿行扫描级的工作量，用户面对的是导入卡死几分钟到几十分钟（期间主进程同步阻塞，整个应用无响应）。
 - **方案**：
@@ -167,7 +167,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-7 【P1·性能/主进程】每条入站消息用全量会话列表查 muted
 
-- 状态：已完成（v0.32.10 / 本提交）
+- 状态：已完成（v0.32.10 / a5c32d4）
 - 涉及：`src/main/index.ts:1080`、`src/main/services/chat.ts`；难度：小；commit 类型：`fix:`
 - **问题**：`notifyIncoming()` 判断免打扰用 `chat?.listConversations().find(...)`——每条入站消息（含群消息扇入）都全量拉会话列表（每个会话还带 preview 子查询，OPT-5 第 3 组扫描），只为读一个 `muted` 布尔。
 - **方案**：`ChatService` 已有私有 `isConversationMuted(convId)`（`chat.ts:509-511`）——公开它（或新增公开 `isMuted`），`notifyIncoming` 改调。
@@ -177,7 +177,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-8 【P1·性能/渲染】ChatPane 撤回倒计时 500ms 定时器驱动整列表常态重渲染
 
-- 状态：已完成（v0.32.11 / 本提交）
+- 状态：已完成（v0.32.11 / 1bb4249）
 - 涉及：`src/renderer/src/components/ChatPane.vue`（:319-320 定时器、:1095-1117 倒计时函数、:1694-1696 模板绑定）、`src/renderer/src/components/ImageBubble.vue`；难度：中；commit 类型：`fix:`
 - **问题**：`nowTs` 是响应式 ref，`setInterval` 每 500ms 更新（无条件常驻）。模板对每条图片/表情消息绑定 `:recall-disabled="!canRecallMessage(msg)"`、`:recall-label="recallButtonLabelFor(msg)"`，两者都读 `nowTs` → **只要当前会话有任意一条图片消息，整个消息列表 render 每 500ms 重跑一次**（所有消息的 `textParts`/`splitEmojiText` 全部重算 + 全列表 vdom diff）。Win7 软渲染机器上是常态 CPU 开销，会话越长越贵。
 - **方案**（外观与交互完全不变）：
@@ -191,7 +191,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-9 【P1·性能/渲染】消息列表整体重渲染：抽 MessageRow 行组件
 
-- 状态：已完成（v0.32.12 / 本提交）
+- 状态：已完成（v0.32.12 / 0292385）
 - 涉及：`src/renderer/src/components/ChatPane.vue`（模板 :1667-1756）、新增 `src/renderer/src/components/MessageRow.vue`；难度：大（谨慎执行）；commit 类型：`refactor:`
 - **问题**：消息列表是巨型内联 `v-for`（:1667），任何触发 ChatPane 重渲染的状态变化（新消息、任一条状态变化、输入区/浮层状态）都会**重跑所有行的渲染函数**：每行的 `textParts()`（正则 matchAll）、`splitEmojiText()`、`needSeparator()` 全部重算。50 条一页尚可，向上翻几页（几百条 DOM）后每次变化都是全量 vdom 重建。
 - **方案**：把 `v-for` 循环体抽成 `MessageRow.vue` 子组件（Vue 对子组件按 props 变化跳过重渲染）。要点：
@@ -206,7 +206,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-10 【P2·性能/渲染】长会话消息数组无上限：贴底时裁剪
 
-- 状态：已完成（v0.32.13 / 本提交）
+- 状态：已完成（v0.32.13 / 8e4fe81）
 - 涉及：`src/renderer/src/stores/chat.ts`、`src/renderer/src/components/ChatPane.vue`；难度：中；commit 类型：`fix:`
 - **问题**：`loadEarlier()` 向上翻页只增不减；长时间挂机 + 活跃群持续追加。翻过几千条后 DOM 节点数与 vdom 成本一路上涨（决议 #192 的"重进会话重载 50 条"只在重进时兜底，会话持续打开时无保护）。
 - **方案**：在 ChatPane 现有"尾部追加且贴底"侦听（:496-512）里加裁剪：`isNearBottom()` 且非 `viewingHistory` 且列表长度 > 400 时，调用 store 新增 action `trimConversationHead(convId, keep = 300)`（splice 后**必须**按 `setConversationMessages` 的方式重建消息缓存）。用户在底部时头部裁剪不可感知；`loadEarlier` 语义不受影响（裁掉的还能再翻回来）。
@@ -217,18 +217,19 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-11 【P2·性能/网络】`scanHosts` 每个地址一个 setTimeout：大扫描一次性创建上万定时器
 
-- 状态：已完成（v0.32.14 / 本提交）
+- 状态：已完成（v0.32.14 / de9cc55）
 - 涉及：`src/main/net/discovery.ts:181-187`；难度：小；commit 类型：`fix:`
 - **问题**：`scanHosts()` 对每个主机 `setTimeout(..., i * delay)`——设置页单网段扫描与自动后台扫描（`index.ts:809-816`）都走它，单网段最多 1024 个定时器，多网段自动扫描可叠到上万，一次性全量分配。主界面全局刷新已用正确的泵式模式（`startGlobalRangeScan` 单定时器链，`index.ts:743-767`），两处不一致。
 - **方案**：`scanHosts` 改为单定时器泵：内部索引推进，每 tick `probe` 一个地址后 `setTimeout(tick, hostDelayMs)`；返回值仍为地址总数（签名兼容）。顺带用内部 generation 计数支持中止（新一轮使旧泵自然停止）。
 - **验收**（必须回环/单测）：`discovery.test.ts` 既有用例全过；补一条 fake timers 用例——扫 100 个地址时任意时刻活跃定时器数为 1（`vi.useFakeTimers` + 逐步推进断言 probe 次数递进）。五连验证全过。
 - **注意**：限速语义（默认 8ms/地址、自动扫描 62ms/地址）必须保持。
+- **验收备注（2026-07-09）**：generation 中止带来一个轻微语义变化——多次调用 `scanHosts` 由"并行各扫各的"变为"新一轮中止上一轮"；若两个自动后台扫描恰好同刻触发，先启动的会被中止且因 `lastAutoScanAt` 已标记、12 小时内不补扫。触发概率低（30–90 分钟随机抖动窗口）、后果轻（下个 12h 周期补扫 + gossip/手动刷新兜底），接受现状；若未来观察到网段长期漏扫，再改为把多网段主机列表合并进同一泵。
 
 ---
 
 ### OPT-12 【P2·性能/主进程】`PeerRegistry.list()` 每次调用带中文排序：非 UI 调用方不需要
 
-- 状态：已完成（v0.32.15 / 本提交）
+- 状态：已完成（v0.32.15 / cde849c）
 - 涉及：`src/main/net/peer-registry.ts:121-126` 及各调用方；难度：小；commit 类型：`fix:`
 - **问题**：`list()` 每次 `[...values()].sort(localeCompare(…,'zh-Hans-CN'))`。带 locale 参数的 `localeCompare` 每次比较都走 Intl 查找，比缓存 `Intl.Collator.compare` 慢一个量级；且多数调用方不需要排序：presence 单播（每 30s，`discovery.ts:199`）、gossip、`announceProfile`、退出单播、`peersRepo.upsertMany(registry.list())` 持久化（`index.ts:1006`）、RangeSync `shareNow`、updater 候选（`index.ts:555`）。
 - **方案**：
@@ -240,7 +241,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-13 【P2·性能/主进程】`search.conversation` 每次查询动态 prepare
 
-- 状态：已完成（v0.32.16 / 本提交）
+- 状态：已完成（v0.32.16 / 783771e）
 - 涉及：`src/main/services/search.ts:171-178`；难度：小；commit 类型：`fix:`
 - **问题**：会话内历史搜索每次（200ms 防抖后）都拼 SQL 并 `db.prepare()`。子句组合是有限集（≤24 种）。
 - **方案**：类内 `Map<string, Statement>` 以 SQL 文本为键缓存 prepared statement。
@@ -250,7 +251,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-14 【P2·清理】网络/服务层小项打包（一个 commit）
 
-- 状态：已完成（v0.32.17 / 本提交）
+- 状态：已完成（v0.32.17 / 96a49b5）
 - 涉及：`messenger.ts` / `udp.ts` / `files.ts` / `discovery.ts`；难度：小；commit 类型：`fix:`
 - **问题与方案**（合并一个 commit，逐项核对）：
   1. **（可选，收益小）**`messenger.ts:161` 同一信封 `JSON.stringify` 判长 + `udp.send` 内部再 `encode()` 序列化一次——如做：先 `encode(env)` 得 Buffer 按长度判限并复用；必须保持 `UdpChannel.send(env)` 公有签名兼容，"超长文本走 TCP 控制帧"既有用例必须过；嫌风险大可跳过并在状态行注明；
@@ -265,7 +266,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-15 【P2·性能/主进程】`emitConvs` 每事件全量查询 + 全量 IPC 推送：微任务合并
 
-- 状态：已完成（v0.32.18 / 本提交）
+- 状态：已完成（v0.32.18 / f74e0e0）
 - 涉及：`src/main/services/chat.ts:505-507`、`groups.ts:367-369`、`files.ts:1039-1041`；难度：小；commit 类型：`fix:`
 - **问题**：三个服务的 `emitConvs()` 每次触发都全量查会话列表并整表推渲染层；单条消息处理链路可能触发多次，群消息扇入更密。OPT-5 后单次查询已便宜，但 IPC 序列化与渲染刷新仍按次付费。
 - **方案**：三处各自加微任务合并（`convsScheduled` 标志 + `queueMicrotask`），同一同步批次合并为一次查询 + 一次推送。渲染层 `onConvsUpdated` 是整表替换，语义无损。
@@ -276,7 +277,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-16 【P3·文档】文档漂移修正（纯文档，不递增版本）
 
-- 状态：已完成（纯文档 / 本提交）
+- 状态：已完成（纯文档 / 49e6498）
 - 涉及：`docs/handoff.md`、`docs/requirements.md`、`docs/tech-design.md`、`docs/ui-design.md`；难度：小；commit 类型：`docs:`
 - **问题**：
   1. **OCR 引擎表述过期**：handoff §5 等四处文档仍写旧 OCR 引擎名，实际代码是**内置 PaddleOCR（PP-OCRv6 tiny，onnxruntime-web 本地 wasm）**——`src/renderer/src/utils/paddleocr/`、`build/ocr/*.onnx`、`scripts/prepare-ocr-assets.mjs`。逐处核对改写（`electron.vite.config.ts` 注释里的类比可保留）；
@@ -288,7 +289,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-17 【P3·质量】index.ts 图片发送四个 IPC handler 重复逻辑收敛
 
-- 状态：已完成（0.32.19 / 本提交）
+- 状态：已完成（v0.32.19 / 7cabe69）
 - 涉及：`src/main/index.ts:1582-1636`；难度：小；commit 类型：`refactor:`
 - **问题**：`imgSendBytes`/`groupImgSendBytes` 与 `imgOfferPath`/`groupImgOfferPath` 两两只差目标参数与调用的 files 方法，~40 行重复；`IMG_EXTS` 在 `index.ts:159` 与 `ChatPane.vue:1184` 各一份。
 - **方案**：主进程内抽私有函数（`stageImageBytes` + 参数校验小函数），四个 handler 收敛为薄壳；`IMG_EXTS` 提为 `src/shared/` 常量（shared 只放类型与常量，符合分层），主进程与 ChatPane 共用。
@@ -299,7 +300,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-18 【P3·测试】测试补齐：range-sync 与 peer-registry 缺专项测试
 
-- 状态：已完成（0.32.20 / 本提交）
+- 状态：已完成（v0.32.20 / fad9333）
 - 涉及：新增 `src/main/net/range-sync.test.ts`、`src/main/net/peer-registry.test.ts`；难度：中；commit 类型：`test:`
 - **问题**：网络层唯二没有专项测试的模块。`peer-registry.ts` 的**地址漂移防护规则**（在线节点不接受源地址漂移、离线换址必须带完整 profile，`peer-registry.ts:53-60`，防伪造关键闸门）无直接断言。
 - **方案**：
@@ -331,3 +332,6 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 ## 5. 变更记录
 
 - 2026-07-09 v1.0 初稿（决议 #200）：基于 main @ 36823fc / v0.32.3 全库审查，落档 18 项分级优化待办。
+- 2026-07-09 v1.1 决议 #201：工作流程改为直接在 main 分支执行（dev-claude 已废弃删除）。
+- 2026-07-09 v1.2 执行完成：18 项由 GPT 逐项落地（13758e9…fad9333，v0.32.4 → v0.32.20，共 18 commit）。
+- 2026-07-09 v1.3 **验收通过**（Claude 复核）：逐项对照代码 diff 与验收标准检查——P0 四项修复正确且回环测试齐全；迁移 v10 只追加；porter 导入 2 万条 93ms（db-selftest 实测）；渲染层 ChatPane 撤回倒计时已收敛到菜单开启期、MessageRow 行组件行为等价、样式逐字搬移；协议 / 依赖 / 构建基线零触碰；测试新增 15+ 用例且全部遵守 127.0.0.1 + 空广播纪律；五连验证（test 213 过 / test:db PASS / typecheck / build / smoke exit 0）全过。状态行补记各 commit 短哈希；OPT-11 留一条 generation 中止的语义备注（见该条目）。
