@@ -129,6 +129,8 @@ const MSG_MENU_WIDTH = 112
 const MSG_MENU_ITEM_HEIGHT = 32
 const MSG_MENU_PADDING = 10
 const MENU_MARGIN = 8
+const ACTIVE_MESSAGE_TRIM_THRESHOLD = 400
+const ACTIVE_MESSAGE_TRIM_KEEP = 300
 interface HistoryCalendarDay {
   key: string
   label: number
@@ -487,7 +489,16 @@ watch(
     if (!old || !next.convId || next.convId !== old.convId || !next.id || next.id === old.id) {
       return
     }
-    if (isNearBottom() || next.isMine) scrollToBottom()
+    const shouldStickToBottom = isNearBottom() || next.isMine
+    if (!shouldStickToBottom) return
+    scrollToBottom()
+    if (
+      !chatStore.viewingHistory &&
+      chatStore.openScrollMode !== 'target' &&
+      chatStore.activeMessages.length > ACTIVE_MESSAGE_TRIM_THRESHOLD
+    ) {
+      chatStore.trimConversationHead(next.convId, ACTIVE_MESSAGE_TRIM_KEEP)
+    }
   }
 )
 // 搜索跳转高亮：滚动到目标消息居中

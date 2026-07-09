@@ -206,7 +206,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-10 【P2·性能/渲染】长会话消息数组无上限：贴底时裁剪
 
-- 状态：待办
+- 状态：已完成（v0.32.13 / 本提交）
 - 涉及：`src/renderer/src/stores/chat.ts`、`src/renderer/src/components/ChatPane.vue`；难度：中；commit 类型：`fix:`
 - **问题**：`loadEarlier()` 向上翻页只增不减；长时间挂机 + 活跃群持续追加。翻过几千条后 DOM 节点数与 vdom 成本一路上涨（决议 #192 的"重进会话重载 50 条"只在重进时兜底，会话持续打开时无保护）。
 - **方案**：在 ChatPane 现有"尾部追加且贴底"侦听（:496-512）里加裁剪：`isNearBottom()` 且非 `viewingHistory` 且列表长度 > 400 时，调用 store 新增 action `trimConversationHead(convId, keep = 300)`（splice 后**必须**按 `setConversationMessages` 的方式重建消息缓存）。用户在底部时头部裁剪不可感知；`loadEarlier` 语义不受影响（裁掉的还能再翻回来）。

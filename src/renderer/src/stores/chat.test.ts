@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationView, MessageView } from '../../../shared/ipc'
 import { useChatStore } from './chat'
 
-function msg(id: string, convId = 'single:node-bob'): MessageView {
+function msg(id: string, convId = 'single:node-bob', seq = 1): MessageView {
   return {
     id,
     convId,
@@ -12,7 +12,7 @@ function msg(id: string, convId = 'single:node-bob'): MessageView {
     kind: 'image',
     text: '[图片]',
     ts: Date.now(),
-    seq: 1,
+    seq,
     status: 'sending'
   }
 }
@@ -108,5 +108,30 @@ describe('chat store 自己发送后的滚动意图', () => {
     expect(store.messages['single:node-bob']).toEqual(latest)
     expect(store.openScrollMode).toBe('latest')
     expect(store.openScrollRun).toBe(1)
+  })
+
+  it('裁剪长会话头部消息后保持消息缓存一致', () => {
+    const store = useChatStore()
+    const convId = 'single:node-bob'
+    store.setConversationMessages(
+      convId,
+      Array.from({ length: 5 }, (_item, index) => msg(`msg-${index + 1}`, convId, index + 1))
+    )
+
+    const trimmed = store.trimConversationHead(convId, 3)
+
+    expect(trimmed).toBe(2)
+    expect(store.messages[convId].map((item) => item.id)).toEqual(['msg-3', 'msg-4', 'msg-5'])
+
+    store.updateConversationMessageStatus(convId, 'msg-4', 'sent')
+    expect(store.messages[convId][1].status).toBe('sent')
+    expect(store.appendConversationMessage(convId, msg('msg-4', convId, 4))).toBe(false)
+    expect(store.prependEarlierMessages(convId, [msg('msg-1', convId, 1), msg('msg-3', convId, 3)])).toBe(1)
+    expect(store.messages[convId].map((item) => item.id)).toEqual([
+      'msg-1',
+      'msg-3',
+      'msg-4',
+      'msg-5'
+    ])
   })
 })

@@ -253,6 +253,15 @@ export const useChatStore = defineStore('chat', {
       return fresh.length
     },
 
+    trimConversationHead(convId: string, keep = 300): number {
+      const list = this.messages[convId]
+      const normalizedKeep = Math.max(0, Math.floor(keep))
+      if (!list || list.length <= normalizedKeep) return 0
+      const trimmed = list.length - normalizedKeep
+      this.setConversationMessages(convId, normalizedKeep > 0 ? list.slice(-normalizedKeep) : [])
+      return trimmed
+    },
+
     updateConversationMessageStatus(convId: string, msgId: string, status: MessageView['status']): void {
       const list = this.messages[convId]
       if (!list) return
