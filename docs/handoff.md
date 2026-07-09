@@ -5,6 +5,7 @@
 > 当前补充：2026-07-03（**v0.31.3，密码组群管理入口已修复**）：v0.31.1 修复图片查看器小图窗口最小尺寸；v0.31.2 实现决议 #192，会话列表 / 联系人 / 通知 / 托盘 / 震动等入口默认重载最新 50 条并滚到底部；v0.31.3 实现决议 #193，群成员面板对有管理密码的讨论组改为内嵌密码输入框，改名、添加成员、移出成员均复用该输入并使用行内失败提示。
 > 当前补充：2026-07-09（**v0.32.3 已发布**）：含全局刷新二次确认（#197）与群成员上限 200（#198）。
 > 当前补充：2026-07-09（**决议 #199，内网通兼容暂缓**）：内网通兼容仅有设计落档（#194/#195/#196 + [nwt-compat-design.md](nwt-compat-design.md)），**代码零实现**；用户明确列为**长期待办 / 暂不排期**——调研与 VM 复测周期长，日常开发不要把它当「下一步」。需要再开时先从设计文档与 §15 取舍恢复。
+> 当前补充：2026-07-09（**决议 #200，代码优化方案落档**）：全库审查产出 [optimization-plan.md](optimization-plan.md)（P0 群 200 上限三处漏改、传输层健壮性、messages 索引缺失等 18 项分级待办）；跟进优化的代理从该文档开工，逐项执行并回写状态。
 
 ## 0. 必读顺序（15 分钟上手）
 
@@ -79,9 +80,10 @@ renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进
 ## 4. 下一步
 
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
-2. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
-3. **v1.0 打磨项**：macOS universal 包专项、Win7 / UOS 真实平台复测（本地 SVG emoji/头像、软渲染、SHA-2 KB 提示文案）；自更新闭环（备包 / 校验 / 安装重启）。
-4. **内网通兼容（决议 #199 · 暂缓，勿当下一步）**：设计见 [nwt-compat-design.md](nwt-compat-design.md)；未完成 VM 链路与产品取舍前**不写代码、不排期**。
+2. **代码优化待办（决议 #200）**：按 [optimization-plan.md](optimization-plan.md) 批次 A→E 逐项执行（先 P0 四个真 bug），一项一 commit、完成回写状态行。
+3. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
+4. **v1.0 打磨项**：macOS universal 包专项、Win7 / UOS 真实平台复测（本地 SVG emoji/头像、软渲染、SHA-2 KB 提示文案）；自更新闭环（备包 / 校验 / 安装重启）。
+5. **内网通兼容（决议 #199 · 暂缓，勿当下一步）**：设计见 [nwt-compat-design.md](nwt-compat-design.md)；未完成 VM 链路与产品取舍前**不写代码、不排期**。
 
 ## 5. 已知遗留 / TODO（非阻塞）
 
