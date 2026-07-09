@@ -167,7 +167,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-7 【P1·性能/主进程】每条入站消息用全量会话列表查 muted
 
-- 状态：待办
+- 状态：已完成（v0.32.10 / 本提交）
 - 涉及：`src/main/index.ts:1080`、`src/main/services/chat.ts`；难度：小；commit 类型：`fix:`
 - **问题**：`notifyIncoming()` 判断免打扰用 `chat?.listConversations().find(...)`——每条入站消息（含群消息扇入）都全量拉会话列表（每个会话还带 preview 子查询，OPT-5 第 3 组扫描），只为读一个 `muted` 布尔。
 - **方案**：`ChatService` 已有私有 `isConversationMuted(convId)`（`chat.ts:509-511`）——公开它（或新增公开 `isMuted`），`notifyIncoming` 改调。

@@ -1078,7 +1078,7 @@ if (!gotLock) {
     if (msg.isMine) return
     if (msg.kind === 'system') return
     if (appState && appState.config.notifications === false) return
-    if (chat?.listConversations().find((conv) => conv.id === msg.convId)?.muted) return
+    if (chat?.isMuted(msg.convId)) return
     if (mainWindow && mainWindow.isFocused() && mainWindow.isVisible()) return
     if (!Notification.isSupported()) return
 

@@ -129,6 +129,22 @@ function makeRow(overrides: Partial<MsgRow> = {}): MsgRow {
   }
 }
 
+describe('ChatService 会话设置', () => {
+  it('可直接查询单个会话的免打扰状态', () => {
+    const convRepo = new FakeConvRepo()
+    convRepo.muted.add('single:node-peer')
+    const chat = new ChatService({
+      selfId: 'node-self',
+      convRepo: convRepo as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      messenger: new FakeMessenger() as unknown as Messenger
+    })
+
+    expect(chat.isMuted('single:node-peer')).toBe(true)
+    expect(chat.isMuted('single:node-other')).toBe(false)
+  })
+})
+
 describe('ChatService 撤回', () => {
   it('撤回已排队的单聊消息时，先移除原文补发队列再发送 recall 指令', async () => {
     const msgRepo = new FakeMsgRepo()
