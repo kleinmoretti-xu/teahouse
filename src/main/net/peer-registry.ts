@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { Profile } from '../../shared/protocol'
 
+const zhCollator = new Intl.Collator('zh-Hans-CN')
+
 export interface PeerRecord {
   profile: Profile
   ip: string
@@ -119,9 +121,14 @@ export class PeerRegistry extends EventEmitter {
 
   /** 在线优先，再按昵称排序（通讯录展示顺序的最小实现） */
   list(): PeerRecord[] {
-    return [...this.peers.values()].sort((a, b) => {
+    return this.values().sort((a, b) => {
       if (a.online !== b.online) return a.online ? -1 : 1
-      return a.profile.nick.localeCompare(b.profile.nick, 'zh-Hans-CN')
+      return zhCollator.compare(a.profile.nick, b.profile.nick)
     })
+  }
+
+  /** 原始节点列表：保留 Map 迭代顺序，供网络/持久化等不需要展示排序的热路径使用。 */
+  values(): PeerRecord[] {
+    return [...this.peers.values()]
   }
 }

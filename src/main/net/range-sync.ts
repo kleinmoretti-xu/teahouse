@@ -85,7 +85,7 @@ export class RangeSync {
   shareNow(): void {
     const ranges = this.currentRanges()
     if (ranges.length === 0) return
-    for (const record of this.registry.list()) {
+    for (const record of this.registry.values()) {
       if (record.online) this.sendRangesTo(record.profile.nodeId, ranges)
     }
   }

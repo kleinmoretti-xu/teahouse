@@ -228,7 +228,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-12 【P2·性能/主进程】`PeerRegistry.list()` 每次调用带中文排序：非 UI 调用方不需要
 
-- 状态：待办
+- 状态：已完成（v0.32.15 / 本提交）
 - 涉及：`src/main/net/peer-registry.ts:121-126` 及各调用方；难度：小；commit 类型：`fix:`
 - **问题**：`list()` 每次 `[...values()].sort(localeCompare(…,'zh-Hans-CN'))`。带 locale 参数的 `localeCompare` 每次比较都走 Intl 查找，比缓存 `Intl.Collator.compare` 慢一个量级；且多数调用方不需要排序：presence 单播（每 30s，`discovery.ts:199`）、gossip、`announceProfile`、退出单播、`peersRepo.upsertMany(registry.list())` 持久化（`index.ts:1006`）、RangeSync `shareNow`、updater 候选（`index.ts:555`）。
 - **方案**：

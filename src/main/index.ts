@@ -553,7 +553,7 @@ if (!gotLock) {
   function currentUpdateSource(): ReturnType<typeof pickUpdateSource> {
     if (!appState || !registry) return null
     const self = { version: appState.profile.ver, platform: appState.profile.platform }
-    const candidates = registry.list().map((r) => ({
+    const candidates = registry.values().map((r) => ({
       profile: r.profile,
       online: r.online,
       displayName: resolvePeerDisplayName(r.profile.nodeId)
@@ -646,7 +646,7 @@ if (!gotLock) {
     const c = appState?.config
     if (!c) return []
     const sources = c.scanRangeSources ?? {}
-    const onlinePeers = registry ? registry.list().filter((p) => p.online) : []
+    const onlinePeers = registry ? registry.values().filter((p) => p.online) : []
     return c.scanRanges.map((cidr) => {
       const source = sources[cidr] ?? { source: 'self' as const, addedAt: Date.now() }
       return {
@@ -1004,7 +1004,7 @@ if (!gotLock) {
       if (!persistTimer) {
         persistTimer = setTimeout(() => {
           persistTimer = null
-          if (registry && peersRepo) peersRepo.upsertMany(registry.list())
+          if (registry && peersRepo) peersRepo.upsertMany(registry.values())
         }, 1000)
       }
     })
@@ -2103,7 +2103,7 @@ if (!gotLock) {
     if (persistTimer) clearTimeout(persistTimer)
     void files?.stop()
     try {
-      if (registry && peersRepo) peersRepo.upsertMany(registry.list()) // 离场前最后一次落库
+      if (registry && peersRepo) peersRepo.upsertMany(registry.values()) // 离场前最后一次落库
       db?.close()
     } catch (err) {
       console.error('[store] 退出落库失败：', err)

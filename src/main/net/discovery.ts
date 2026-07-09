@@ -98,7 +98,7 @@ export class Discovery {
     // 广播不可达（跨网段）时靠它快速重建在线列表
     const now = Date.now()
     const stale = this.registry
-      .list()
+      .values()
       .filter((r) => !r.online && now - r.lastSeen < this.t.peerCacheProbeTtl)
     stale.forEach((record, i) => {
       const timer = setTimeout(() => this.probe(record.ip, record.udpPort), 50 * i)
@@ -121,7 +121,7 @@ export class Discovery {
 
     const exit = makeEnvelope(MSG_TYPES.exit, this.selfId, {})
     this.udp.broadcast(exit)
-    for (const record of this.registry.list()) {
+    for (const record of this.registry.values()) {
       if (record.online) this.udp.send(exit, record.ip, record.udpPort)
     }
   }
@@ -133,7 +133,7 @@ export class Discovery {
 
   /** 周期 gossip（§6.3 兜底）：向随机 GOSSIP_FANOUT 个在线节点交换摘要 */
   private gossipRound(): void {
-    const online = this.registry.list().filter((r) => r.online)
+    const online = this.registry.values().filter((r) => r.online)
     if (online.length === 0) return
     const shuffled = [...online].sort(() => Math.random() - 0.5)
     for (const record of shuffled.slice(0, GOSSIP_FANOUT)) {
@@ -146,7 +146,7 @@ export class Discovery {
     const target = this.registry.get(nodeId)
     if (!target) return
     const summaries: PeerSummary[] = this.registry
-      .list()
+      .values()
       .filter((r) => r.online && r.profile.nodeId !== nodeId)
       .map((r) => ({
         nodeId: r.profile.nodeId,
@@ -171,7 +171,7 @@ export class Discovery {
       profile: this.profile
     })
     this.udp.broadcast(env)
-    for (const record of this.registry.list()) {
+    for (const record of this.registry.values()) {
       if (record.online) this.udp.send(env, record.ip, record.udpPort)
     }
   }
@@ -227,7 +227,7 @@ export class Discovery {
     const env = makeEnvelope(MSG_TYPES.presence, this.selfId, payload)
     this.udp.broadcast(env)
     // 跨网段在线节点单播心跳（protocol §6.2）；同网段节点会重复收到，靠去重无害
-    for (const record of this.registry.list()) {
+    for (const record of this.registry.values()) {
       if (record.online) this.udp.send(env, record.ip, record.udpPort)
     }
   }
