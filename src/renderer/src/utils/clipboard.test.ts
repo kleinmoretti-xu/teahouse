@@ -4,6 +4,7 @@ import {
   readClipboardTableText,
   hasClipboardText,
   imageMimeFromExt,
+  shouldScheduleIpcClipboardImageFallback,
   shouldSuppressNativeImageFallback
 } from './clipboard'
 import { TABLE_TEXT_LIMIT_BYTES } from '../../../shared/protocol'
@@ -57,6 +58,14 @@ describe('clipboard helpers', () => {
     expect(shouldSuppressNativeImageFallback(1_000, 1_000 + NATIVE_IMAGE_FALLBACK_SUPPRESS_MS - 1)).toBe(true)
     expect(shouldSuppressNativeImageFallback(1_000, 1_000 + NATIVE_IMAGE_FALLBACK_SUPPRESS_MS)).toBe(false)
     expect(shouldSuppressNativeImageFallback(0, 1_000)).toBe(false)
+  })
+
+  it('input/textarea 有焦点时不调度 IPC 图片兜底（决议 #207）', () => {
+    expect(shouldScheduleIpcClipboardImageFallback({ tagName: 'INPUT' })).toBe(false)
+    expect(shouldScheduleIpcClipboardImageFallback({ tagName: 'input' })).toBe(false)
+    expect(shouldScheduleIpcClipboardImageFallback({ tagName: 'TEXTAREA' })).toBe(false)
+    expect(shouldScheduleIpcClipboardImageFallback({ tagName: 'DIV' })).toBe(true)
+    expect(shouldScheduleIpcClipboardImageFallback(null)).toBe(true)
   })
 
   it('识别 HTML table 或多行 TSV 为表格粘贴', () => {

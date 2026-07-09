@@ -9,6 +9,7 @@ import {
   hasClipboardText,
   normalizeClipboardText,
   readClipboardTableText,
+  shouldScheduleIpcClipboardImageFallback,
   shouldSuppressNativeImageFallback,
   type ClipboardTableText
 } from '../utils/clipboard'
@@ -121,6 +122,8 @@ let stopClipboardPaste: (() => void) | null = null
 let clipboardImagePasteBusy = false
 let clipboardImageFallbackTimer: ReturnType<typeof setTimeout> | null = null
 let lastClipboardPasteHandledAt = 0
+/** 粘贴代次：mark 时递增；兜底在 await 后若代次变化则放弃发送（决议 #207） */
+let clipboardPasteEpoch = 0
 let historySearchTimer: ReturnType<typeof setTimeout> | null = null
 // 历史搜索结果点图片：单击放大 / 双击定位的延时区分（决议 #74）
 let hitClickTimer: ReturnType<typeof setTimeout> | null = null
@@ -329,10 +332,9 @@ onMounted(async () => {
     void nextTick(refreshInputFont)
   })
   stopClipboardPaste = window.pantry.onClipboardPasteImage(() => {
-    const active = document.activeElement
-    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
-      if (active !== inputEl.value) return
-    }
+    // 任一 input/textarea 有焦点时由 onPaste 独占（决议 #207）；IPC 兜底仅服务
+    // 焦点不在可编辑输入时（如点在消息区按 Ctrl+V）。
+    if (!shouldScheduleIpcClipboardImageFallback(document.activeElement)) return
     if (canSendMedia.value) scheduleClipboardImageFallback()
   })
   // 内容异步撑高（图片 / 文件卡片加载完成、消息渲染）后，若处于贴底意图则继续贴到最新（决议 #133）
@@ -868,8 +870,11 @@ async function send(): Promise<void> {
 async function sendClipboardImageFallback(event?: Event): Promise<boolean> {
   if (clipboardImagePasteBusy) return false
   clipboardImagePasteBusy = true
+  const epoch = clipboardPasteEpoch
   try {
     const bytes = await window.pantry.readImageFromClipboard()
+    // await 期间若 onPaste 已 mark（代次前进），放弃发送，避免双通道各发一张
+    if (epoch !== clipboardPasteEpoch) return false
     if (!bytes) return false
     event?.preventDefault()
     markClipboardPasteHandled()
@@ -881,6 +886,7 @@ async function sendClipboardImageFallback(event?: Event): Promise<boolean> {
 }
 
 function markClipboardPasteHandled(): void {
+  clipboardPasteEpoch += 1
   lastClipboardPasteHandledAt = Date.now()
   if (clipboardImageFallbackTimer) {
     clearTimeout(clipboardImageFallbackTimer)
@@ -1292,6 +1298,9 @@ async function sendTablePaste(data: DataTransfer, meta: ClipboardTableText): Pro
 async function onPaste(event: ClipboardEvent): Promise<void> {
   if (!canSendMedia.value) return
   const data = event.clipboardData
+  // paste 已派发即由本链路独占（决议 #207）：必须在任何 await 之前同步 mark 并清 IPC 定时器，
+  // 否则大截图 arrayBuffer 间隙里兜底会再发一张（UOS/Wayland 慢机双发根因）。
+  markClipboardPasteHandled()
   // 1) 从文件管理器复制的真实文件：Electron 为剪贴板 File 注入 path（与拖拽同机制）
   const paths: string[] = []
   if (data) {
@@ -1300,7 +1309,6 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
       if (p) paths.push(p)
     }
     if (paths.length > 0) {
-      markClipboardPasteHandled()
       event.preventDefault()
       const granted = await grantLocalFilePaths(paths)
       if (granted.length === 1 && isImagePath(granted[0])) await chatStore.sendImagePath(granted[0])
@@ -1309,25 +1317,23 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
     }
     const tableText = readClipboardTableText(data)
     if (tableText) {
-      markClipboardPasteHandled()
       event.preventDefault()
       await sendTablePaste(data, tableText)
       return
     }
     // 复制网页 / 富文本 emoji 时，剪贴板常同时带 text/plain 和 image/png；文本交给 textarea 原生粘贴。
     if (hasClipboardText(data)) {
-      markClipboardPasteHandled()
       return
     }
     // 2) 截图位图（无对应文件路径）：直接按图片 bytes 发送
     const imageItem = await readClipboardImageItem(data)
     if (imageItem) {
-      markClipboardPasteHandled()
       event.preventDefault()
       await chatStore.sendImageBytes(`粘贴图片${imageItem.ext}`, imageItem.bytes)
       return
     }
   }
+  // clipboardData 无图时显式走原生剪贴板（#138）；与 IPC 调度互斥，不双发
   await sendClipboardImageFallback(event)
 }
 

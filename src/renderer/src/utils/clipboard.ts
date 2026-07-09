@@ -39,6 +39,20 @@ export function shouldSuppressNativeImageFallback(
   )
 }
 
+/**
+ * 是否应调度主进程 Ctrl+V 触发的原生剪贴板图片兜底（决议 #207）。
+ * 任一 input/textarea 有焦点时 paste 事件会走 onPaste（含其尾部显式兜底），
+ * 再调度 IPC 兜底只会与 onPaste 竞态双发；仅「焦点不在可编辑输入」时需要 IPC。
+ * 用 tagName 判断以便 vitest（无 DOM 原型）与浏览器行为一致。
+ */
+export function shouldScheduleIpcClipboardImageFallback(
+  active: { tagName?: string } | null
+): boolean {
+  if (!active || typeof active.tagName !== 'string') return true
+  const tag = active.tagName.toUpperCase()
+  return tag !== 'INPUT' && tag !== 'TEXTAREA'
+}
+
 export function imageMimeFromExt(ext: string): string {
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.webp') return 'image/webp'
