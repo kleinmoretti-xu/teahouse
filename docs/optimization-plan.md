@@ -84,7 +84,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-2 【P0·稳定性】文件接收落盘的同步 fs 调用未捕获异常，可直接崩掉主进程
 
-- 状态：待办
+- 状态：已完成（v0.32.5 / 本提交）
 - 涉及：`src/main/net/transfer.ts`；难度：小；commit 类型：`fix:`
 - **问题**：`pullTransfer()` 里 `mkdirSync`（:256/:260）、`renameSync`（:328）、`rmSync` 都跑在 socket 事件回调内，**没有 try/catch**。目标目录不可写、中间路径被文件占位（ENOTDIR）、传输中保存目录被删等情况会抛出未捕获异常 → Electron 主进程崩溃弹窗。接收端 `existing`/`stream` 错误路径有处理，唯独这些同步调用是裸的。
 - **方案**：把 `next()` 内的 `mkdirSync` 两处、`done` 帧回调内的 `renameSync(item.partPath, dedupeTargetPath(item.finalPath))` 用 try/catch 包住，失败走既有 `fail('write-error')`（rename 失败时同时 `rmSync(partPath, { force: true })` 清理，注意 rmSync 本身也要包）。`statSync` 已在 try 内的不动。

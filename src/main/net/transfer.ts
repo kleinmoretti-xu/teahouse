@@ -209,6 +209,13 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       left: number
     } | null = null
     let settled = false
+    const removePart = (path: string): void => {
+      try {
+        rmSync(path, { force: true })
+      } catch {
+        // 清理失败不覆盖原始传输失败原因。
+      }
+    }
 
     const fail = (reason: string): void => {
       if (settled) return
@@ -222,7 +229,7 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
           reason === 'path-escape' ||
           reason === 'part-read-error'
         ) {
-          rmSync(current.partPath, { force: true })
+          removePart(current.partPath)
         }
       }
       socket.destroy()
@@ -253,11 +260,21 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
         return
       }
       if (plan.isDir) {
-        mkdirSync(finalPath, { recursive: true })
+        try {
+          mkdirSync(finalPath, { recursive: true })
+        } catch {
+          fail('write-error')
+          return
+        }
         next()
         return
       }
-      mkdirSync(dirname(finalPath), { recursive: true })
+      try {
+        mkdirSync(dirname(finalPath), { recursive: true })
+      } catch {
+        fail('write-error')
+        return
+      }
       const partPath = `${finalPath}.part`
       let offset = 0
       try {
@@ -294,7 +311,7 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       const existing = createReadStream(partPath, { start: 0, end: offset - 1 })
       existing.on('data', (chunk) => hash.update(chunk))
       existing.on('error', () => {
-        rmSync(partPath, { force: true })
+        removePart(partPath)
         fail('part-read-error')
       })
       existing.on('end', startPull)
@@ -320,12 +337,18 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
           item.stream.end(() => {
             const got = item.hash.digest('hex')
             if (got !== frame.sha256) {
-              rmSync(item.partPath, { force: true })
+              removePart(item.partPath)
               fail('hash-mismatch')
               return
             }
             // 重名避让（F-FILE-3 不覆盖）：根级避让在服务层，此处兜底逐文件避让
-            renameSync(item.partPath, dedupeTargetPath(item.finalPath))
+            try {
+              renameSync(item.partPath, dedupeTargetPath(item.finalPath))
+            } catch {
+              removePart(item.partPath)
+              fail('write-error')
+              return
+            }
             next()
           })
         }

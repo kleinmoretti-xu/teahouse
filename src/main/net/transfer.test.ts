@@ -152,6 +152,33 @@ describe('transfer 数据面回环', () => {
     ).rejects.toThrow(/peer:not-found/)
   })
 
+  it('保存路径中间段被文件占用时返回 write-error 且进程存活', async () => {
+    const src = makeTmp()
+    const dst = makeTmp()
+    writeFileSync(join(src, 'payload.bin'), 'payload')
+    writeFileSync(join(dst, 'x'), 'not-a-dir')
+    const outgoing = new Map<string, OutgoingFile>([
+      ['f1', { fileId: 'f1', absPath: join(src, 'payload.bin'), size: Buffer.byteLength('payload') }]
+    ])
+    const port = await startServer(new Map([['t-write-error', outgoing]]))
+
+    await expect(
+      Promise.race([
+        pullTransfer({
+          host: '127.0.0.1',
+          port,
+          selfId: 'node-receiver',
+          transferId: 't-write-error',
+          files: [{ fileId: 'f1', relPath: 'x/y.bin', size: Buffer.byteLength('payload') }],
+          saveDir: dst,
+          cancelRef: { canceled: false, socket: null },
+          onProgress: () => undefined
+        }),
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('timeout')), 500))
+      ])
+    ).rejects.toThrow(/write-error/)
+  })
+
   it('已有 .part 时从断点续传并校验整文件哈希', async () => {
     const src = makeTmp()
     const dst = makeTmp()
