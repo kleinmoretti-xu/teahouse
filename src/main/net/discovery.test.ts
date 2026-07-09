@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MSG_TYPES,
   type PeersPayload,
@@ -105,11 +105,54 @@ async function waitFor(cond: () => boolean, timeout = 2000): Promise<void> {
 }
 
 afterEach(async () => {
+  vi.useRealTimers()
   for (const stack of stacks.splice(0)) {
     stack.rangeSync.stop()
     stack.discovery.stop()
     await stack.udp.stop()
   }
+})
+
+describe('discovery scanHosts', () => {
+  it('扫描大量地址时只保留一个活跃定时器并按间隔推进', () => {
+    vi.useFakeTimers()
+    const sent: Array<{ host: string; port: number }> = []
+    const udp = {
+      on: vi.fn(),
+      send: vi.fn((_env: unknown, host: string, port: number) => {
+        sent.push({ host, port })
+      }),
+      broadcast: vi.fn()
+    }
+    const profile = makeProfile('scanner', 47888)
+    const discovery = new Discovery({
+      udp: udp as unknown as UdpChannel,
+      registry: new PeerRegistry(profile.nodeId),
+      profile
+    })
+    const hosts = Array.from({ length: 100 }, (_item, index) => `127.0.0.${index + 1}`)
+
+    expect(discovery.scanHosts(hosts, 17878, 8)).toBe(100)
+    expect(vi.getTimerCount()).toBe(1)
+    expect(sent).toHaveLength(0)
+
+    vi.runOnlyPendingTimers()
+    expect(sent.map((item) => item.host)).toEqual(['127.0.0.1'])
+    expect(vi.getTimerCount()).toBe(1)
+
+    vi.advanceTimersByTime(7)
+    expect(sent).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(1)
+
+    vi.advanceTimersByTime(1)
+    expect(sent.map((item) => item.host)).toEqual(['127.0.0.1', '127.0.0.2'])
+    expect(vi.getTimerCount()).toBe(1)
+
+    vi.runAllTimers()
+    expect(sent).toHaveLength(100)
+    expect(sent[99]).toEqual({ host: '127.0.0.100', port: 17878 })
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })
 
 describe('discovery 回环集成', () => {

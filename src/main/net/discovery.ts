@@ -50,6 +50,8 @@ export class Discovery {
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   private sweepTimer: ReturnType<typeof setInterval> | null = null
   private gossipTimer: ReturnType<typeof setInterval> | null = null
+  private scanTimer: ReturnType<typeof setTimeout> | null = null
+  private scanGeneration = 0
   private readonly pendingReplies = new Map<string, ReturnType<typeof setTimeout>>()
   /** nodeId → 最近一次发 alive 的时间（§6.1 去重应答，防批量开机风暴） */
   private readonly lastAliveAt = new Map<string, number>()
@@ -109,6 +111,11 @@ export class Discovery {
     if (this.presenceTimer) clearInterval(this.presenceTimer)
     if (this.sweepTimer) clearInterval(this.sweepTimer)
     if (this.gossipTimer) clearInterval(this.gossipTimer)
+    this.scanGeneration += 1
+    if (this.scanTimer) {
+      clearTimeout(this.scanTimer)
+      this.scanTimer = null
+    }
     for (const timer of this.pendingReplies.values()) clearTimeout(timer)
     this.pendingReplies.clear()
 
@@ -179,10 +186,34 @@ export class Discovery {
 
   /** 网段定向扫描（F-DISC-2 第二板斧）：错峰单播 entry，≤125 地址/秒；返回扫描地址数 */
   scanHosts(hosts: string[], port: number, hostDelayMs = 8): number {
-    hosts.forEach((host, i) => {
-      const timer = setTimeout(() => this.probe(host, port), i * hostDelayMs)
-      timer.unref?.()
-    })
+    this.scanGeneration += 1
+    if (this.scanTimer) {
+      clearTimeout(this.scanTimer)
+      this.scanTimer = null
+    }
+    if (hosts.length === 0) return 0
+
+    const generation = this.scanGeneration
+    const delay = Math.max(0, hostDelayMs)
+    let index = 0
+    const tick = (): void => {
+      if (generation !== this.scanGeneration) return
+      if (index >= hosts.length) {
+        this.scanTimer = null
+        return
+      }
+      const host = hosts[index]
+      this.probe(host, port)
+      index += 1
+      if (index >= hosts.length) {
+        this.scanTimer = null
+        return
+      }
+      this.scanTimer = setTimeout(tick, delay)
+      this.scanTimer.unref?.()
+    }
+    this.scanTimer = setTimeout(tick, 0)
+    this.scanTimer.unref?.()
     return hosts.length
   }
 

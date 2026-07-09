@@ -217,7 +217,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-11 【P2·性能/网络】`scanHosts` 每个地址一个 setTimeout：大扫描一次性创建上万定时器
 
-- 状态：待办
+- 状态：已完成（v0.32.14 / 本提交）
 - 涉及：`src/main/net/discovery.ts:181-187`；难度：小；commit 类型：`fix:`
 - **问题**：`scanHosts()` 对每个主机 `setTimeout(..., i * delay)`——设置页单网段扫描与自动后台扫描（`index.ts:809-816`）都走它，单网段最多 1024 个定时器，多网段自动扫描可叠到上万，一次性全量分配。主界面全局刷新已用正确的泵式模式（`startGlobalRangeScan` 单定时器链，`index.ts:743-767`），两处不一致。
 - **方案**：`scanHosts` 改为单定时器泵：内部索引推进，每 tick `probe` 一个地址后 `setTimeout(tick, hostDelayMs)`；返回值仍为地址总数（签名兼容）。顺带用内部 generation 计数支持中止（新一轮使旧泵自然停止）。
