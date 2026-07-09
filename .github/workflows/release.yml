@@ -35,8 +35,9 @@ jobs:
           EOF
           printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99no-check-valid-until
           apt-get update
+          # rpm 已移除（决议 #206）：dist 只打 deb/AppImage，装 rpm 纯属浪费
           apt-get install -y --no-install-recommends \
-            git ca-certificates python3 make g++ pkg-config dpkg fakeroot rpm \
+            git ca-certificates python3 make g++ pkg-config dpkg fakeroot \
             xvfb xauth dbus-x11 libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
             xdg-utils libatspi2.0-0 libuuid1 libfuse2 libasound2 libgbm1 \
             libdrm2 libx11-xcb1
@@ -146,10 +147,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # 决议 #206：ffi 1.15.5 每次都要编译 C 扩展 + fpm 全家约 46s，gem 目录跨 run 缓存
+      - name: 缓存 fpm gem（决议 #206）
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/lib/gems
+            /usr/local/bin/fpm
+          key: gems-buster-arm64-ffi1.15.5-fpm1.9.3
+
+      # 决议 #206：build_from_source 不再挂整个 step——否则 npm ci 的 postinstall 会先源码
+      # 编译一遍 better-sqlite3，脚本随后又显式 rebuild 一遍（白编译一次，约 45s）。
+      # 强制源码编译只按需作用于 rebuild:electron，见 scripts/ci-linux-arm64.sh。
       - name: 在 Debian 10 arm64 runner 容器内验证并打包
         shell: bash
-        env:
-          npm_config_build_from_source: "true"
         run: |
           set -euo pipefail
           bash scripts/ci-linux-arm64.sh

@@ -8,16 +8,20 @@ deb http://archive.debian.org/debian buster-updates main contrib non-free
 APT
 printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99no-check-valid-until
 apt-get update
+# rpm 已移除（决议 #206）：dist 只打 deb/AppImage，装 rpm 纯属浪费
 apt-get install -y --no-install-recommends \
-  git ca-certificates python3 make g++ pkg-config dpkg fakeroot rpm ruby ruby-dev libffi-dev squashfs-tools \
+  git ca-certificates python3 make g++ pkg-config dpkg fakeroot ruby ruby-dev libffi-dev squashfs-tools \
   xvfb xauth dbus-x11 libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
   xdg-utils libatspi2.0-0 libuuid1 libfuse2 libasound2 libgbm1 \
   libdrm2 libx11-xcb1
 rm -rf /var/lib/apt/lists/*
 
+# npm ci 阶段不强制源码编译（决议 #206）：postinstall 的 @electron/rebuild 走 prebuilt
+# （无 arm64 prebuilt 时自动回退源码编译，不会更糟）；GLIBC 基线由下面的显式
+# 强制源码 rebuild + check-native-glibc 校验保证，与 x64 job 的步骤划分对齐。
 npm ci
 
-npm run rebuild:electron
+npm_config_build_from_source=true npm run rebuild:electron
 node scripts/check-native-glibc.cjs node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
 npm test
@@ -27,8 +31,13 @@ npm run build
 # CI 容器以 root 运行，Electron 启动冒烟需关闭 Chromium sandbox；应用运行时安全配置不变。
 xvfb-run -a npm run smoke -- --no-sandbox
 
-gem install --no-document ffi -v 1.15.5
-gem install --no-document fpm -v 1.9.3
+# gem 缓存命中（release.yml 的 actions/cache）时跳过安装（决议 #206）
+if command -v fpm >/dev/null 2>&1 && fpm --version 2>/dev/null | grep -q '^1\.9\.3$'; then
+  echo "fpm 1.9.3 已就绪（缓存命中），跳过 gem install"
+else
+  gem install --no-document ffi -v 1.15.5
+  gem install --no-document fpm -v 1.9.3
+fi
 USE_SYSTEM_FPM=true USE_HARD_LINKS=false npm run dist:linux:arm64
 
 native=$(find release -path '*/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print | sort | head -1)
