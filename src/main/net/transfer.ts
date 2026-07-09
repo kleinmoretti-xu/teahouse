@@ -67,9 +67,19 @@ export class TransferServer extends EventEmitter {
   private serve(socket: Socket): void {
     socket.setNoDelay(true)
     let busy = false // 同一连接内文件串行（协议约定），防交叉 pull
+    let activeStreams: Array<ReturnType<ReadStreamFactory>> = []
 
     const send = (frame: TcpFrame): void => {
       socket.write(encodeFrame(frame))
+    }
+    const trackStream = (
+      stream: ReturnType<ReadStreamFactory>
+    ): ReturnType<ReadStreamFactory> => {
+      activeStreams.push(stream)
+      stream.once('close', () => {
+        activeStreams = activeStreams.filter((item) => item !== stream)
+      })
+      return stream
     }
 
     const reader = new FrameReader(
@@ -124,7 +134,7 @@ export class TransferServer extends EventEmitter {
 
         if (offset === 0) {
           // 首次拉取时同一条读流边发边算哈希；避免大文件先整盘预读导致 UI 长时间 0B。
-          const dataStream = this.openReadStream(file.absPath)
+          const dataStream = trackStream(this.openReadStream(file.absPath))
           dataStream.on('data', (chunk) => {
             hash.update(asBuffer(chunk))
             sendDataChunk(dataStream, chunk)
@@ -142,7 +152,7 @@ export class TransferServer extends EventEmitter {
           finish(digest)
         }
 
-        const hashStream = this.openReadStream(file.absPath)
+        const hashStream = trackStream(this.openReadStream(file.absPath))
         hashStream.on('data', (chunk) => hash.update(chunk))
         hashStream.on('error', () => socket.destroy())
         hashStream.on('end', () => {
@@ -154,7 +164,7 @@ export class TransferServer extends EventEmitter {
           finishResumeIfReady()
           return
         }
-        const dataStream = this.openReadStream(file.absPath, { start: offset })
+        const dataStream = trackStream(this.openReadStream(file.absPath, { start: offset }))
         dataStream.on('data', (chunk) => sendDataChunk(dataStream, chunk))
         dataStream.on('error', () => socket.destroy())
         dataStream.on('end', () => {
@@ -168,6 +178,10 @@ export class TransferServer extends EventEmitter {
 
     socket.on('data', (chunk) => reader.feed(chunk))
     socket.on('error', () => undefined)
+    socket.on('close', () => {
+      for (const stream of activeStreams.splice(0)) stream.destroy()
+      busy = false
+    })
   }
 }
 

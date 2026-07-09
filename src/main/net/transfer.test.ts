@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,6 +13,7 @@ import {
   type OutgoingFile,
   type ReadStreamFactory
 } from './transfer'
+import { encodeFrame, FrameReader } from './frame'
 
 // 数据面回环测试：真实文件、真实 TCP（127.0.0.1）、真实 SHA-256。
 // 控制面（offer/accept）的可靠投递已由 messenger.test 覆盖。
@@ -37,6 +39,50 @@ function makeTmp(): string {
   const dir = mkdtempSync(join(tmpdir(), 'pantry-transfer-'))
   tmpDirs.push(dir)
   return dir
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const start = Date.now()
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timeout')
+    await delay(10)
+  }
+}
+
+class SlowReadable extends Readable {
+  private sent = 0
+  private timer: ReturnType<typeof setTimeout> | null = null
+
+  constructor(
+    private readonly chunk: Buffer,
+    private readonly maxChunks: number
+  ) {
+    super()
+  }
+
+  _read(): void {
+    if (this.timer || this.destroyed) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      if (this.destroyed) return
+      if (this.sent >= this.maxChunks) {
+        this.push(null)
+        return
+      }
+      this.sent += 1
+      this.push(this.chunk)
+    }, 10)
+  }
+
+  _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    callback(error)
+  }
 }
 
 afterEach(async () => {
@@ -132,6 +178,50 @@ describe('transfer 数据面回环', () => {
 
     expect(readFileSync(join(dst, 'virtual.bin')).equals(body)).toBe(true)
     expect(readCalls).toEqual([{ start: undefined }])
+  })
+
+  it('接收方中断连接时销毁发送端正在读取的文件流', async () => {
+    const opened: SlowReadable[] = []
+    const openReadStream: ReadStreamFactory = () => {
+      const stream = new SlowReadable(Buffer.alloc(64 * 1024, 0x61), 1_000)
+      opened.push(stream)
+      return stream as unknown as ReturnType<ReadStreamFactory>
+    }
+    const outgoing = new Map<string, OutgoingFile>([
+      ['f1', { fileId: 'f1', absPath: 'virtual-large.bin', size: 64 * 1024 * 1_000 }]
+    ])
+    const port = await startServer(new Map([['t-close', outgoing]]), openReadStream)
+    const socket = createConnection({ host: '127.0.0.1', port })
+    const reader = new FrameReader(
+      () => undefined,
+      () => undefined,
+      () => undefined
+    )
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('connect', resolve)
+        socket.once('error', reject)
+      })
+      socket.on('data', (chunk) => reader.feed(chunk))
+      socket.write(
+        encodeFrame({
+          type: 'pull',
+          from: 'node-receiver',
+          transferId: 't-close',
+          fileId: 'f1',
+          offset: 0
+        })
+      )
+      await waitFor(() => opened.length > 0)
+      socket.destroy()
+      await delay(50)
+
+      expect(opened.every((stream) => stream.destroyed)).toBe(true)
+    } finally {
+      socket.destroy()
+      for (const stream of opened) stream.destroy()
+    }
   })
 
   it('未被授权的传输拒绝供流（accepted 才可拉取的最小闸门）', async () => {

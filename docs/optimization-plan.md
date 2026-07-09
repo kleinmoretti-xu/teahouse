@@ -95,7 +95,7 @@ npm test && npm run test:db && npm run typecheck && npm run build && npm run smo
 
 ### OPT-3 【P0·资源泄漏】发送端 socket 中断后读流不销毁：fd 泄漏 + 流永久挂起
 
-- 状态：待办
+- 状态：已完成（v0.32.6 / 本提交）
 - 涉及：`src/main/net/transfer.ts`（`TransferServer.serve`，:67-171）；难度：中；commit 类型：`fix:`
 - **问题**：`serve()` 供流过程中，若接收方中途断开（取消/崩溃/断网）：`sendDataChunk` 里 `socket.write` 返回 false → `stream.pause()` 并等 `socket.once('drain')`——但 socket 已销毁，`drain` 永不触发，**读流永久 pause、文件 fd 泄漏**（断点续传路径的 `hashStream` 也会白读整个大文件）。每次被中断的发送泄漏 1-2 个 fd，长期运行的办公机会累积。
 - **方案**：在 `serve()` 内跟踪当前活动流（`let activeStreams: Array<ReturnType<ReadStreamFactory>> = []`，开流时登记、`finish` 时清空），给 socket 挂 `close` 处理：`socket.on('close', () => { for (const s of activeStreams) s.destroy(); activeStreams = [] })`。同时复位 `busy`（连接已关，复位只是卫生）。
