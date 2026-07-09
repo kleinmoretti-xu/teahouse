@@ -146,7 +146,7 @@ dedup(msg_id TEXT PK, recv_ts INT)
 stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 ```
 
-- 索引：`messages(conv_id, ts, seq)`、`peers(last_seen)`、`send_queue(peer_id)`、`transfers(status)`。
+- 索引：`messages(conv_id, ts, seq)`、`messages(seq)`、`messages(conv_id, seq)`、`peers(last_seen)`、`send_queue(peer_id)`、`transfers(status)`。v10 追加两个 `seq` 索引（决议 #200 / OPT-5），用于全局 `MAX(seq)` 取号、会话内按 `seq` 分页 / 上下文窗口和会话预览，避免历史量增大后退化为全表或全会话扫描。
 - `remark` 为本地备注名（决议 #22/#37）：仅本机、不入协议；显示与搜索优先命中备注。通讯录资料卡与私聊头部资料弹窗都复用 `peers:set-remark` 写入 peers 表，主进程随后推送 `peers:updated` 刷新会话、通讯录与搜索显示名。
 - `groups.creator_ip/creator_id/admin_secret_hash/admin_hint` 为讨论组管理门槛（决议 #27/#30/#113）：密码明文不入库；提示仅用于成员输入密码时展示，不参与鉴权；无密码组优先以创建者 nodeId 接受管理变更，并保留创建 IP 作为旧版本兼容。v9 迁移把旧无密码群的 `updated_by` 回填为 `creator_id`，避免多网卡/虚拟机网络下创建 IP 与实际源 IP 不一致导致合法改名 `group.info` 被误拒。该机制服务于内网协作秩序，不替代加密/签名。
 - 群名变更提示（决议 #87）不新增协议字段、不新增迁移：`GroupsService` 在本机改名与远端 `group.info` 应用时，根据旧/新群名写入 `messages.kind='system'`，消息 ID 使用 `group:<groupId>:rename:<rev>` 保证重复 `info` 幂等；发送人显示名由主进程注入解析函数，优先本地备注，其次 registry 昵称。
@@ -384,3 +384,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-08 v1.04 决议 #195：扩展内网通兼容技术设计。`net/compat/` 增加附件 parser、实验 TCP 文件通道和 `nwt-capabilities` 能力门控；`services/nwt-compat.ts` 负责兼容能力投影，IPC 预留 `nwt:file-offer` / `nwt:accept-file-offer` 等实验接口；UI 通过 `ConversationCapabilities` 隐藏 PK、震动、图片、文件、文件夹、直接发送和媒体撤回。标准 IPMSG 文件 / 剪贴板图片已列入实验阶段，内网通私有 `901x` 通道和远程协助继续排除。
 - 2026-07-09 v1.05 决议 #197：全局网段刷新二次确认落渲染层。`App.vue` 在调用 `scanAllRanges` 前插入居中确认态；列表数据复用已加载的 `SettingsView.scanRangeItems` / `scanRanges`，不新增 IPC、协议、SQLite 或主进程扫描逻辑。版本 0.31.3 → 0.32.0。
 - 2026-07-09 v1.06 决议 #199：内网通兼容从里程碑「下一步」挪到**暂缓待办**；§12 表与 handoff 同步，代码仍为零实现。
+- 2026-07-09 v1.07 决议 #200 / OPT-5：SQLite 追加 v10 迁移，新增 `idx_messages_seq` 与 `idx_messages_conv_seq`，让消息插入取号、会话内按 seq 分页 / 上下文窗口和会话预览走索引。版本 0.32.7 → 0.32.8。

@@ -154,6 +154,12 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   UPDATE groups
     SET creator_id = updated_by
     WHERE admin_secret_hash = '' AND creator_id = '' AND updated_by <> '';
+  `,
+
+  // v10：消息 seq 索引（决议 #200 / OPT-5）：MAX(seq) 取号与按 seq 分页/预览不再全表扫
+  `
+  CREATE INDEX idx_messages_seq ON messages(seq);
+  CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
   `
 ]
 

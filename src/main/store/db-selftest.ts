@@ -52,8 +52,17 @@ try {
   console.log(`[db-selftest] runtime node=${process.versions.node} abi=${process.versions.modules}`)
 
   // 1. 迁移就位
-  assert.equal(db.pragma('user_version', { simple: true }), 9, '迁移版本应为 9')
+  assert.equal(db.pragma('user_version', { simple: true }), 10, '迁移版本应为 10')
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal', '应为 WAL 模式')
+  const messageIndexes = new Set(
+    (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'").all() as Array<{
+        name: string
+      }>
+    ).map((row) => row.name)
+  )
+  assert.equal(messageIndexes.has('idx_messages_seq'), true, 'messages(seq) 索引应存在')
+  assert.equal(messageIndexes.has('idx_messages_conv_seq'), true, 'messages(conv_id, seq) 索引应存在')
 
   // 2. 联系人 upsert / 载入往返
   const repo = new PeersRepo(db)

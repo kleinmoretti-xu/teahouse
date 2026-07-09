@@ -129,7 +129,7 @@ opts.onProgress(chunk.length)
 
 ### OPT-5 【P1·性能/存储】`messages` 表缺 seq 索引：插入与分页随历史量线性劣化（"越用越卡"的最大来源）
 
-- 状态：待办
+- 状态：已完成（v0.32.8 / 本提交）
 - 涉及：`src/main/store/migrations.ts`、`docs/tech-design.md` §5；难度：小；commit 类型：`fix:`（文档先行）
 - **问题**：`messages` 只有 `idx_messages_conv (conv_id, ts, seq)`（`migrations.ts:54`），导致三组热路径全表/全会话扫描：
   1. **每次插入消息**执行 `SELECT COALESCE(MAX(seq), 0) + 1 FROM messages`（`msg-repo.ts:88`）——seq 无索引，**每条消息插入都全表扫**。10 万条历史时每次收发消息都要扫 10 万行；
