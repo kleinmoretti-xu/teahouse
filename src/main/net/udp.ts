@@ -19,6 +19,9 @@ interface Bucket {
   last: number
 }
 
+const BUCKET_CLEANUP_THRESHOLD = 2048
+const BUCKET_TTL_MS = 10 * 60_000
+
 /**
  * UDP 通道：收发信封、广播目标计算、每源令牌桶限速。
  * 事件：'envelope' (env, known, rinfo)、'drop' (reason, rinfo?)。
@@ -68,8 +71,11 @@ export class UdpChannel extends EventEmitter {
   }
 
   send(env: Envelope, address: string, port: number): void {
+    this.sendBuffer(encode(env), address, port)
+  }
+
+  sendBuffer(buf: Buffer, address: string, port: number): void {
     if (!this.socket) return
-    const buf = encode(env)
     if (buf.length > UDP_MAX_PAYLOAD) {
       this.emit('drop', 'outbound-oversize')
       return
@@ -105,6 +111,7 @@ export class UdpChannel extends EventEmitter {
   }
 
   private onMessage(buf: Buffer, rinfo: RemoteInfo): void {
+    this.cleanupBuckets()
     if (!this.allow(rinfo.address)) {
       this.emit('drop', 'rate-limit', rinfo)
       return
@@ -115,6 +122,14 @@ export class UdpChannel extends EventEmitter {
       return
     }
     this.emit('envelope', result.env, result.known, rinfo)
+  }
+
+  private cleanupBuckets(): void {
+    if (this.buckets.size <= BUCKET_CLEANUP_THRESHOLD) return
+    const cutoff = Date.now() - BUCKET_TTL_MS
+    for (const [ip, bucket] of this.buckets) {
+      if (bucket.last < cutoff) this.buckets.delete(ip)
+    }
   }
 }
 

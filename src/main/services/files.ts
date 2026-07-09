@@ -970,6 +970,7 @@ export class FilesService extends EventEmitter {
     this.outgoing.delete(transferId)
     if (status !== 'failed') this.incoming.delete(transferId)
     this.emitTransfer(transferId, true)
+    this.lastEmit.delete(transferId)
   }
 
   private updateBlob(transferId: string, patch: Partial<FilesBlob>): void {

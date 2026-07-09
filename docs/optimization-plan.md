@@ -250,7 +250,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-14 【P2·清理】网络/服务层小项打包（一个 commit）
 
-- 状态：待办
+- 状态：已完成（v0.32.17 / 本提交）
 - 涉及：`messenger.ts` / `udp.ts` / `files.ts` / `discovery.ts`；难度：小；commit 类型：`fix:`
 - **问题与方案**（合并一个 commit，逐项核对）：
   1. **（可选，收益小）**`messenger.ts:161` 同一信封 `JSON.stringify` 判长 + `udp.send` 内部再 `encode()` 序列化一次——如做：先 `encode(env)` 得 Buffer 按长度判限并复用；必须保持 `UdpChannel.send(env)` 公有签名兼容，"超长文本走 TCP 控制帧"既有用例必须过；嫌风险大可跳过并在状态行注明；

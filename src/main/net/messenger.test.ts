@@ -393,6 +393,38 @@ describe('messenger 回环集成', () => {
     expect(a.queue.items).toHaveLength(0)
   })
 
+  it('未知收件人快速入队，不等待 ACK 重试窗口', async () => {
+    nextPort += 2
+    const a = await makeStack('alice', nextPort)
+    const env = textEnv(a.profile.nodeId, '从未见过的群成员')
+
+    const outcome = await Promise.race([
+      a.messenger.sendUserMessage('node-never-seen', env),
+      sleep(50).then(() => 'timeout' as const)
+    ])
+
+    expect(outcome).toBe('queued')
+    expect(a.queue.items).toHaveLength(1)
+  })
+
+  it('撤回非发送或补发中的消息不留下取消键', () => {
+    nextPort += 2
+    const udp = new UdpChannel({ port: nextPort, bindAddress: '127.0.0.1', broadcastTargets: [] })
+    const messenger = new Messenger({
+      udp,
+      registry: new PeerRegistry('node-alice'),
+      selfId: 'node-alice',
+      queue: new MemQueue(),
+      dedup: new MemDedup(),
+      timings: FAST
+    })
+
+    messenger.dropQueuedMessage('msg-already-settled', ['node-bob'])
+
+    const internals = messenger as unknown as { cancelledQueued: Set<string> }
+    expect(internals.cancelledQueued.size).toBe(0)
+  })
+
   it('退出期数据库已关闭时忽略晚到的补发触发', async () => {
     nextPort += 2
     const udp = new UdpChannel({ port: nextPort, bindAddress: '127.0.0.1', broadcastTargets: [] })

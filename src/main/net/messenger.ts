@@ -9,7 +9,7 @@ import {
   type Envelope,
   type Timings
 } from '../../shared/protocol'
-import { decodeTcpEnvelopeObject, makeEnvelope } from './codec'
+import { decodeTcpEnvelopeObject, encode, makeEnvelope } from './codec'
 import { encodeFrame, FrameReader } from './frame'
 import type { UdpChannel } from './udp'
 import type { PeerRegistry } from './peer-registry'
@@ -134,8 +134,9 @@ export class Messenger extends EventEmitter {
   dropQueuedMessage(msgId: string, peerIds: string[]): void {
     for (const peerId of peerIds) {
       const key = this.queueKey(peerId, msgId)
-      this.cancelledQueued.add(key)
-      this.pending.get(key)?.settle(false)
+      const pending = this.pending.get(key)
+      if (pending || this.flushing.has(peerId)) this.cancelledQueued.add(key)
+      pending?.settle(false)
       this.queue.remove(msgId, peerId)
     }
   }
@@ -158,7 +159,8 @@ export class Messenger extends EventEmitter {
   /** 发送并等待 ACK：按 ackRetrySchedule 退避重发，每次重发都重读对端最新地址。
    *  等待表按 (收件人, 信封 id) 复合键——群消息同一信封并发发往多个成员互不串线（§7.4） */
   private sendAwaitAck(peerId: string, env: Envelope): Promise<boolean> {
-    if (Buffer.byteLength(JSON.stringify(env), 'utf8') > UDP_MAX_PAYLOAD) {
+    const buf = encode(env)
+    if (buf.length > UDP_MAX_PAYLOAD) {
       return this.sendTcpAwaitAck(peerId, env)
     }
     return new Promise((resolve) => {
@@ -186,10 +188,12 @@ export class Messenger extends EventEmitter {
           return
         }
         const record = this.registry.get(peerId)
-        if (record) {
-          entry.expected = { ip: record.ip, udpPort: record.udpPort }
-          this.udp.send(env, record.ip, record.udpPort)
+        if (!record) {
+          queueMicrotask(() => entry.settle(false))
+          return
         }
+        entry.expected = { ip: record.ip, udpPort: record.udpPort }
+        this.udp.sendBuffer(buf, record.ip, record.udpPort)
         entry.timer = setTimeout(step, delays[attempt])
         attempt += 1
       }

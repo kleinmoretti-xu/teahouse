@@ -135,7 +135,7 @@ export class Discovery {
   private gossipRound(): void {
     const online = this.registry.values().filter((r) => r.online)
     if (online.length === 0) return
-    const shuffled = [...online].sort(() => Math.random() - 0.5)
+    const shuffled = shuffle([...online])
     for (const record of shuffled.slice(0, GOSSIP_FANOUT)) {
       this.sendPeersTo(record.profile.nodeId)
     }
@@ -310,4 +310,14 @@ export class Discovery {
     }, delay)
     this.pendingReplies.set(nodeId, timer)
   }
+}
+
+function shuffle<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const current = items[i]
+    items[i] = items[j]
+    items[j] = current
+  }
+  return items
 }
