@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import type { AppInfo, ScanProgressView, ScanRangeItemView, SettingsView } from '../../shared/ipc'
+import type { AppInfo, ScanProgressView, SettingsView } from '../../shared/ipc'
 import { usePeersStore } from './stores/peers'
 import { useChatStore } from './stores/chat'
 import { useUpdateStore } from './stores/update'
@@ -122,39 +122,26 @@ const scanButtonTitle = computed(() => {
 })
 const scanProgressTitle = computed(() => `扫描进度 ${scanPercent.value}%`)
 
-// 全量刷新二次确认（决议 #197）：列表摘要最多 6 条，超出折叠
-const SCAN_CONFIRM_PREVIEW_LIMIT = 6
+// 全量刷新二次确认（决议 #197）：只展示 CIDR 摘要，最多 4 条，超出折叠；不堆说明文案
+const SCAN_CONFIRM_PREVIEW_LIMIT = 4
 const showScanConfirm = ref(false)
-type ScanConfirmRow = { cidr: string; sourceLabel: string | null }
 
-const scanConfirmRows = computed<ScanConfirmRow[]>(() => {
+const scanConfirmCidrs = computed(() => {
   const items = settings.value?.scanRangeItems
-  if (items && items.length > 0) {
-    return items.map((item: ScanRangeItemView) => ({
-      cidr: item.cidr,
-      sourceLabel:
-        item.source === 'remote'
-          ? item.sourceName?.trim()
-            ? `来自 ${item.sourceName.trim()}`
-            : '来自同事'
-          : '本机'
-    }))
-  }
-  return (settings.value?.scanRanges ?? []).map((cidr) => ({
-    cidr,
-    sourceLabel: null as string | null
-  }))
+  if (items && items.length > 0) return items.map((item) => item.cidr)
+  return settings.value?.scanRanges ?? []
 })
-const scanConfirmTotal = computed(() => scanConfirmRows.value.length)
+const scanConfirmTotal = computed(() => scanConfirmCidrs.value.length)
 const scanConfirmPreview = computed(() =>
-  scanConfirmRows.value.slice(0, SCAN_CONFIRM_PREVIEW_LIMIT)
+  scanConfirmCidrs.value.slice(0, SCAN_CONFIRM_PREVIEW_LIMIT)
 )
 const scanConfirmExtra = computed(() =>
   Math.max(0, scanConfirmTotal.value - SCAN_CONFIRM_PREVIEW_LIMIT)
 )
-const scanConfirmCountLabel = computed(() => {
+const scanConfirmSub = computed(() => {
   const n = scanConfirmTotal.value
-  return n > 0 ? `${n} 个网段` : ''
+  if (n <= 0) return ''
+  return n === 1 ? '将探测 1 个网段' : `将探测 ${n} 个网段`
 })
 const selfName = computed(() => settings.value?.nick.trim() || '未设置昵称')
 const selfOrgPath = computed(() => {
@@ -524,7 +511,7 @@ onUnmounted(() => {
     </main>
   </div>
 
-  <!-- 全量刷新二次确认（决议 #197）：居中模态 + 网段列表摘要，确认后才 scanAllRanges -->
+  <!-- 全量刷新二次确认（决议 #197）：标题 + 一句摘要 + CIDR 列表，确认后才扫 -->
   <div
     v-if="showScanConfirm"
     class="scan-confirm-mask"
@@ -535,30 +522,16 @@ onUnmounted(() => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="scan-confirm-title"
-      aria-describedby="scan-confirm-desc"
+      aria-describedby="scan-confirm-sub"
     >
-      <div class="scan-confirm-head">
-        <span class="scan-confirm-icon" aria-hidden="true">
-          <PantryIcon name="refresh" :size="18" />
-        </span>
-        <div class="scan-confirm-head-text">
-          <h3 id="scan-confirm-title">刷新全局用户</h3>
-          <p v-if="scanConfirmCountLabel" class="scan-confirm-meta">{{ scanConfirmCountLabel }}</p>
-        </div>
-      </div>
-      <p id="scan-confirm-desc" class="scan-confirm-lead">
-        将扫描以下已保存网段并探测在线用户：
-      </p>
+      <h3 id="scan-confirm-title">刷新全局用户</h3>
+      <p id="scan-confirm-sub" class="scan-confirm-sub">{{ scanConfirmSub }}</p>
       <ul class="scan-confirm-list" aria-label="将扫描的网段">
-        <li v-for="row in scanConfirmPreview" :key="row.cidr" class="scan-confirm-row">
-          <code class="scan-confirm-cidr">{{ row.cidr }}</code>
-          <span v-if="row.sourceLabel" class="scan-confirm-source">（{{ row.sourceLabel }}）</span>
+        <li v-for="cidr in scanConfirmPreview" :key="cidr">
+          <code>{{ cidr }}</code>
         </li>
-        <li v-if="scanConfirmExtra > 0" class="scan-confirm-more">
-          …另有 {{ scanConfirmExtra }} 个网段
-        </li>
+        <li v-if="scanConfirmExtra > 0" class="scan-confirm-more">另 {{ scanConfirmExtra }} 个</li>
       </ul>
-      <p class="scan-confirm-hint">可能持续数十秒，会向局域网发送探测。</p>
       <div class="scan-confirm-actions">
         <button type="button" class="scan-confirm-cancel" @click="cancelScanConfirm">取消</button>
         <button type="button" class="scan-confirm-go" @click="confirmRefreshAllUsers">
@@ -1096,7 +1069,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-/* 全量刷新二次确认（决议 #197）：居中模态、网段摘要、茶青「开始扫描」；taste 克制打磨 */
+/* 全量刷新二次确认（决议 #197）：去冗余——标题 + 一句摘要 + CIDR，无图标/长说明/来源 */
 .scan-confirm-mask {
   position: fixed;
   inset: 0;
@@ -1104,120 +1077,79 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(20, 28, 24, 0.38);
-  animation: scan-confirm-fade 0.16s ease;
+  background: rgba(20, 28, 24, 0.32);
+  animation: scan-confirm-fade 0.14s ease;
 }
 .scan-confirm-card {
-  width: min(360px, 100%);
-  max-height: min(72vh, 520px);
-  display: flex;
-  flex-direction: column;
+  width: min(300px, 100%);
   padding: 18px 18px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--bg-window);
-  box-shadow: 0 18px 48px rgba(20, 28, 24, 0.18);
-  animation: scan-confirm-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 12px 40px rgba(20, 28, 24, 0.16);
+  animation: scan-confirm-rise 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.scan-confirm-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  min-width: 0;
-}
-.scan-confirm-icon {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  background: var(--primary-weak);
-  color: var(--primary);
-}
-.scan-confirm-head-text {
-  min-width: 0;
-  flex: 1;
-}
-.scan-confirm-head-text h3 {
+.scan-confirm-card h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-1);
   line-height: 1.3;
 }
-.scan-confirm-meta {
-  margin: 3px 0 0;
-  font-size: 12px;
-  color: var(--primary);
-  font-weight: 500;
-  line-height: 1.2;
-}
-.scan-confirm-lead {
-  margin: 0 0 8px;
+.scan-confirm-sub {
+  margin: 6px 0 0;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.45;
   color: var(--text-2);
 }
 .scan-confirm-list {
-  margin: 0 0 10px;
-  padding: 8px 10px;
+  margin: 12px 0 0;
+  padding: 0;
   list-style: none;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--bg-list);
-  max-height: 168px;
-  overflow-y: auto;
-  min-height: 0;
-}
-.scan-confirm-row {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 4px;
-  padding: 5px 0;
-  font-size: 12px;
-  line-height: 1.35;
-  border-bottom: 1px solid var(--line);
+  flex-direction: column;
+  gap: 6px;
+  max-height: 132px;
+  overflow-y: auto;
 }
-.scan-confirm-row:last-child {
-  border-bottom: none;
+.scan-confirm-list li {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg-list);
 }
-.scan-confirm-cidr {
+.scan-confirm-list code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-1);
+  letter-spacing: 0.01em;
   background: transparent;
   padding: 0;
-}
-.scan-confirm-source {
-  color: var(--text-3);
-  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .scan-confirm-more {
-  padding: 6px 0 2px;
-  font-size: 12px;
+  justify-content: center;
+  background: transparent !important;
   color: var(--text-3);
-  border-bottom: none;
-}
-.scan-confirm-hint {
-  margin: 0 0 14px;
   font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-3);
+  min-height: 22px !important;
+  padding: 0 !important;
 }
 .scan-confirm-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  flex-shrink: 0;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 .scan-confirm-actions button {
-  height: 32px;
-  padding: 0 16px;
+  height: 30px;
+  padding: 0 14px;
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
@@ -1230,7 +1162,7 @@ onUnmounted(() => {
 }
 .scan-confirm-cancel {
   border: 1px solid var(--line);
-  background: var(--bg-window);
+  background: transparent;
   color: var(--text-2);
 }
 .scan-confirm-cancel:hover {
@@ -1261,7 +1193,7 @@ onUnmounted(() => {
 @keyframes scan-confirm-rise {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.98);
+    transform: translateY(6px) scale(0.98);
   }
   to {
     opacity: 1;
