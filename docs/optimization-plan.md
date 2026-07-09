@@ -240,7 +240,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ### OPT-13 【P2·性能/主进程】`search.conversation` 每次查询动态 prepare
 
-- 状态：待办
+- 状态：已完成（v0.32.16 / 本提交）
 - 涉及：`src/main/services/search.ts:171-178`；难度：小；commit 类型：`fix:`
 - **问题**：会话内历史搜索每次（200ms 防抖后）都拼 SQL 并 `db.prepare()`。子句组合是有限集（≤24 种）。
 - **方案**：类内 `Map<string, Statement>` 以 SQL 文本为键缓存 prepared statement。

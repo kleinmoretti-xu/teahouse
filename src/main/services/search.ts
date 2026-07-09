@@ -18,6 +18,7 @@ export class SearchService {
   private readonly msgGroupStmt: DatabaseT.Statement
   private readonly msgLatestStmt: DatabaseT.Statement
   private readonly fileStmt: DatabaseT.Statement
+  private readonly conversationStmtCache = new Map<string, DatabaseT.Statement>()
 
   constructor(
     private readonly db: DatabaseT.Database,
@@ -168,14 +169,15 @@ export class SearchService {
       )
     }
 
-    const stmt = this.db.prepare(`
+    const sql = `
       SELECT id, conv_id AS convId, sender_id AS senderId, is_mine AS isMine,
              kind, content, file_ref AS fileRef, ts, seq
       FROM messages
       WHERE ${clauses.join(' AND ')}
       ORDER BY ts DESC, seq DESC
       LIMIT @limit
-    `)
+    `
+    const stmt = this.prepareConversationStatement(sql)
     const rows = stmt.all(params) as Array<{
       id: string
       convId: string
@@ -204,6 +206,14 @@ export class SearchService {
       if (fileRef) hit.fileRef = fileRef
       return hit
     })
+  }
+
+  private prepareConversationStatement(sql: string): DatabaseT.Statement {
+    const cached = this.conversationStmtCache.get(sql)
+    if (cached) return cached
+    const stmt = this.db.prepare(sql)
+    this.conversationStmtCache.set(sql, stmt)
+    return stmt
   }
 }
 
