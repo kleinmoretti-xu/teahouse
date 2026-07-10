@@ -256,6 +256,10 @@ export interface TransferView {
   savedPath: string
   /** 是否为直接发送传输；群文件不会为 true。 */
   direct: boolean
+  /** 入站传输在发送端并发预算内排队中（决议 #211）：进度行显示「排队等待发送方」 */
+  queued?: boolean
+  /** 入站失败/取消后能否继续或重新下载（决议 #211）：本会话传输上下文仍在且对端语义支持 */
+  retryable?: boolean
   /** 直接发送入站保存目录使用的发送人目录名。 */
   directPeerName?: string
 }

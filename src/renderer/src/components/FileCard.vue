@@ -80,6 +80,8 @@ const inProgress = computed(() => !multiOut.value && transfer.value?.status === 
 const metaText = computed(() => {
   const t = transfer.value
   if (inProgress.value && t) {
+    // 排队中（决议 #211）：发送方并发预算已满，显示真实状态而不是假 0 速度
+    if (t.queued) return `${fmtBytes(t.bytesDone)} / ${fmtBytes(t.totalSize)} · 排队等待发送方`
     return `${fmtBytes(t.bytesDone)} / ${fmtBytes(t.totalSize)} · ${fmtBytes(speed.value)}/s`
   }
   if (directFile.value && t?.direction === 'in' && t.status === 'done') {
@@ -166,8 +168,16 @@ const directButtonTitle = computed(() => {
 const showReveal = computed(
   () => !multiOut.value && transfer.value?.status === 'done' && transfer.value.direction === 'in'
 )
+// 失败「继续」/ 取消「重新下载」（决议 #211）：仅本会话传输上下文仍可恢复时展示
 const showRetry = computed(
-  () => !multiOut.value && transfer.value?.status === 'failed' && transfer.value.direction === 'in'
+  () =>
+    !multiOut.value &&
+    transfer.value?.direction === 'in' &&
+    (transfer.value.status === 'failed' || transfer.value.status === 'canceled') &&
+    transfer.value.retryable === true
+)
+const retryLabel = computed(() =>
+  transfer.value?.status === 'canceled' ? '重新下载' : '继续'
 )
 const showBadge = computed(
   () => !showRecvActions.value && !showCancel.value && !showReveal.value && !showRetry.value
@@ -275,7 +285,7 @@ function requestDirect(): void {
         打开所在文件夹
       </button>
       <button v-else-if="showRetry" class="act primary" @click="transfers.accept(ref_.transferId)">
-        继续
+        {{ retryLabel }}
       </button>
       <span v-else-if="showBadge" class="badge" :class="badgeTone">
         <PantryIcon v-if="badgeTone === 'done'" name="check" :size="13" />

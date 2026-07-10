@@ -666,6 +666,189 @@ describe('transfer 数据面回环', () => {
     }
   }, 15_000)
 
+  it('排队时向声明 tw1 的接收端发 wait 帧，槽位释放后正常完成（决议 #211）', async () => {
+    nextPort += 1
+    const dst = makeTmp()
+    const held = new HeldReadable()
+    const body = Buffer.alloc(2048, 0x42)
+    const server = new TransferServer(
+      nextPort,
+      {
+        resolve: (transferId, fileId) => {
+          if (transferId === 't-hold' && fileId === 'fh') {
+            return { fileId: 'fh', absPath: '/virtual/hold', size: 1 }
+          }
+          if (transferId === 't-queued' && fileId === 'fq') {
+            return { fileId: 'fq', absPath: '/virtual/queued', size: body.length }
+          }
+          return null
+        },
+        supportsWait: (peerId) => peerId === 'node-new'
+      },
+      '127.0.0.1',
+      (path) => {
+        if (path === '/virtual/hold') return held as unknown as ReturnType<ReadStreamFactory>
+        return Readable.from([body]) as ReturnType<ReadStreamFactory>
+      },
+      { maxConcurrentStreams: 1, waitHeartbeatMs: 30 }
+    )
+    await server.start()
+    servers.push(server)
+
+    // 第一条连接占住唯一数据流槽位
+    const holder = await connectSocket(nextPort)
+    holder.write(
+      encodeFrame({ type: 'pull', from: 'node-old', transferId: 't-hold', fileId: 'fh', offset: 0 })
+    )
+    await delay(30)
+
+    const queuedStates: boolean[] = []
+    const pull = pullTransfer({
+      host: '127.0.0.1',
+      port: nextPort,
+      selfId: 'node-new',
+      transferId: 't-queued',
+      files: [{ fileId: 'fq', relPath: 'queued.bin', size: body.length }],
+      saveDir: dst,
+      cancelRef: { canceled: false, socket: null },
+      onProgress: () => undefined,
+      onQueued: (queued) => queuedStates.push(queued)
+    })
+
+    // 排队期间：立即一帧 + 心跳重发，接收端持续上报排队中
+    await waitFor(() => queuedStates.length >= 2, 2_000)
+    expect(queuedStates.every((state) => state)).toBe(true)
+
+    held.release()
+    holder.destroy()
+    await pull
+    expect(queuedStates[queuedStates.length - 1]).toBe(false)
+    expect(readFileSync(join(dst, 'queued.bin')).equals(body)).toBe(true)
+  }, 15_000)
+
+  it('对端未声明 tw1 时排队不发 wait 帧（旧端遇未知帧型会断链）', async () => {
+    nextPort += 1
+    const held = new HeldReadable()
+    const server = new TransferServer(
+      nextPort,
+      {
+        resolve: (transferId) =>
+          transferId === 't-hold' || transferId === 't-old'
+            ? { fileId: 'f', absPath: '/virtual/x', size: 1 }
+            : null
+        // supportsWait 未提供 = 一律不发
+      },
+      '127.0.0.1',
+      () => held as unknown as ReturnType<ReadStreamFactory>,
+      { maxConcurrentStreams: 1, waitHeartbeatMs: 20 }
+    )
+    await server.start()
+    servers.push(server)
+
+    const holder = await connectSocket(nextPort)
+    holder.write(
+      encodeFrame({ type: 'pull', from: 'node-a', transferId: 't-hold', fileId: 'f', offset: 0 })
+    )
+    await delay(20)
+
+    const queuedSocket = await connectSocket(nextPort)
+    const received: string[] = []
+    const reader = new FrameReader(
+      (frame) => received.push(frame.type),
+      () => undefined,
+      () => undefined
+    )
+    queuedSocket.on('data', (chunk) => reader.feed(chunk))
+    queuedSocket.write(
+      encodeFrame({ type: 'pull', from: 'node-old', transferId: 't-old', fileId: 'f', offset: 0 })
+    )
+
+    await delay(120)
+    expect(received).toEqual([]) // 排队期间静默，尤其没有 wait
+
+    held.destroy()
+    holder.destroy()
+    queuedSocket.destroy()
+  })
+
+  it('接收端空闲超时（决议 #211）：发送端静默时判 timeout 失败，不永久冻结', async () => {
+    const dst = makeTmp()
+    // 手工静默服务端：收下连接与 pull 后不回任何帧
+    const silent = createServer(() => undefined)
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', () => resolve()))
+    const port = (silent.address() as { port: number }).port
+
+    try {
+      await expect(
+        pullTransfer({
+          host: '127.0.0.1',
+          port,
+          selfId: 'node-receiver',
+          transferId: 't-idle',
+          files: [{ fileId: 'f1', relPath: 'x.bin', size: 8 }],
+          saveDir: dst,
+          cancelRef: { canceled: false, socket: null },
+          onProgress: () => undefined,
+          idleTimeoutMs: 120
+        })
+      ).rejects.toThrow(/timeout/)
+    } finally {
+      silent.close()
+    }
+  })
+
+  it('wait 帧刷新接收端空闲计时：慢启动的发送端不被误判超时', async () => {
+    const dst = makeTmp()
+    const body = Buffer.from('slow-start-ok')
+    const digest = createHash('sha256').update(body).digest('hex')
+    // 手工服务端：先只发 wait 保活，超过一个空闲窗口后才供流
+    const server = createServer((socket) => {
+      const reader = new FrameReader(
+        (frame) => {
+          if (frame.type !== 'pull') return
+          const beat = setInterval(() => socket.write(encodeFrame({ type: 'wait' })), 60)
+          setTimeout(() => {
+            clearInterval(beat)
+            socket.write(
+              Buffer.concat([
+                encodeFrame({ type: 'pull-ok', fileId: frame.fileId, len: body.length }),
+                body,
+                encodeFrame({ type: 'done', fileId: frame.fileId, sha256: digest })
+              ])
+            )
+          }, 400)
+        },
+        () => undefined,
+        () => socket.destroy()
+      )
+      socket.on('data', (chunk) => reader.feed(chunk))
+      socket.on('error', () => undefined)
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    const port = (server.address() as { port: number }).port
+
+    const queuedStates: boolean[] = []
+    try {
+      await pullTransfer({
+        host: '127.0.0.1',
+        port,
+        selfId: 'node-receiver',
+        transferId: 't-keepalive',
+        files: [{ fileId: 'f1', relPath: 'slow.bin', size: body.length }],
+        saveDir: dst,
+        cancelRef: { canceled: false, socket: null },
+        onProgress: () => undefined,
+        onQueued: (queued) => queuedStates.push(queued),
+        idleTimeoutMs: 200 // 小于总等待 400ms：没有 wait 保活必超时
+      })
+      expect(readFileSync(join(dst, 'slow.bin')).equals(body)).toBe(true)
+      expect(queuedStates[0]).toBe(true)
+      expect(queuedStates[queuedStates.length - 1]).toBe(false)
+    } finally {
+      server.close()
+    }
+  })
+
   it('重名避让：name.ext → name(1).ext', () => {
     const dir = makeTmp()
     writeFileSync(join(dir, 'a.txt'), '1')

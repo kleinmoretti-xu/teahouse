@@ -4,7 +4,15 @@ import { createReadStream, createWriteStream, mkdirSync, renameSync, rmSync, sta
 import { dirname, join, sep } from 'node:path'
 import { resolve as pathResolve } from 'node:path'
 import { EventEmitter } from 'node:events'
-import type { DoneFrame, Envelope, PullFrame, PullOkFrame, TcpFrame } from '../../shared/protocol'
+import {
+  PULL_IDLE_TIMEOUT,
+  PULL_WAIT_HEARTBEAT,
+  type DoneFrame,
+  type Envelope,
+  type PullFrame,
+  type PullOkFrame,
+  type TcpFrame
+} from '../../shared/protocol'
 import { encodeFrame, FrameReader } from './frame'
 
 // 文件传输数据面（protocol §8，拉取式）：
@@ -23,6 +31,8 @@ export interface OutgoingLookup {
   resolve(transferId: string, fileId: string): OutgoingFile | null
   /** 超长文本 TCP 控制帧入口；返回 true 表示已接收并应 ACK */
   receiveMessage?: (env: Envelope) => boolean
+  /** 对端是否声明 tw1（决议 #211）：只有声明者才能收 wait 帧，旧端遇未知帧型会断链 */
+  supportsWait?: (peerId: string) => boolean
 }
 
 export type ReadStreamFactory = (
@@ -35,6 +45,7 @@ export interface TransferServerLimits {
   maxConnections: number
   handshakeTimeoutMs: number
   idleTimeoutMs: number
+  waitHeartbeatMs: number
 }
 
 interface PendingStreamStart {
@@ -48,7 +59,8 @@ const DEFAULT_SERVER_LIMITS: TransferServerLimits = {
   maxConcurrentStreams: 3,
   maxConnections: 256,
   handshakeTimeoutMs: 15_000,
-  idleTimeoutMs: 60_000
+  idleTimeoutMs: 60_000,
+  waitHeartbeatMs: PULL_WAIT_HEARTBEAT
 }
 
 function positiveLimit(value: number | undefined, fallback: number): number {
@@ -88,7 +100,11 @@ export class TransferServer extends EventEmitter {
         limits.handshakeTimeoutMs,
         DEFAULT_SERVER_LIMITS.handshakeTimeoutMs
       ),
-      idleTimeoutMs: positiveLimit(limits.idleTimeoutMs, DEFAULT_SERVER_LIMITS.idleTimeoutMs)
+      idleTimeoutMs: positiveLimit(limits.idleTimeoutMs, DEFAULT_SERVER_LIMITS.idleTimeoutMs),
+      waitHeartbeatMs: positiveLimit(
+        limits.waitHeartbeatMs,
+        DEFAULT_SERVER_LIMITS.waitHeartbeatMs
+      )
     }
   }
 
@@ -188,9 +204,27 @@ export class TransferServer extends EventEmitter {
     let streamJob: PendingStreamStart | null = null
     /** 发送端写缓冲满时只挂一个 drain，避免重复 resume 与泄漏 listener */
     let waitingDrain = false
+    /** wait 保活（决议 #211）：排队 / 哈希收尾期间周期告知对端「仍在处理」 */
+    let waitTimer: ReturnType<typeof setInterval> | null = null
 
     const send = (frame: TcpFrame): void => {
       socket.write(encodeFrame(frame))
+    }
+    const stopWaitHeartbeat = (): void => {
+      if (!waitTimer) return
+      clearInterval(waitTimer)
+      waitTimer = null
+    }
+    const startWaitHeartbeat = (wantsWait: boolean): void => {
+      if (!wantsWait || waitTimer || socket.destroyed) return
+      send({ type: 'wait' })
+      waitTimer = setInterval(() => {
+        if (socket.destroyed) {
+          stopWaitHeartbeat()
+          return
+        }
+        send({ type: 'wait' })
+      }, this.limits.waitHeartbeatMs)
     }
     const trackStream = (
       stream: ReturnType<ReadStreamFactory>
@@ -231,7 +265,9 @@ export class TransferServer extends EventEmitter {
           return
         }
         busy = true
+        const wantsWait = this.lookup.supportsWait?.(pull.from) === true
         const job = this.enqueueStreamStart(socket, () => {
+          stopWaitHeartbeat()
           socket.setTimeout(this.limits.idleTimeoutMs)
           const currentFile = this.lookup.resolve(pull.transferId, pull.fileId)
           if (!currentFile || offset > currentFile.size) {
@@ -262,6 +298,7 @@ export class TransferServer extends EventEmitter {
             }
           }
           const finish = (sha256: string): void => {
+            stopWaitHeartbeat()
             if (socket.destroyed) return
             send({ type: 'done', fileId: currentFile.fileId, sha256 } satisfies DoneFrame)
             busy = false
@@ -308,11 +345,15 @@ export class TransferServer extends EventEmitter {
           dataStream.on('error', () => socket.destroy())
           dataStream.on('end', () => {
             dataEnded = true
+            // 数据发完但整文件哈希还没算完（大文件近尾续传）：wait 保活防接收端空闲超时误判
+            if (digest === null) startWaitHeartbeat(wantsWait)
             finishResumeIfReady()
           })
         })
         streamJob = job
         this.pumpStreamStarts()
+        // 并发预算满、进入 FIFO 排队：立即告知对端并周期保活，避免对端只看到 0 速度
+        if (!job.started && !job.released) startWaitHeartbeat(wantsWait)
       },
       () => socket.destroy(),
       () => socket.destroy()
@@ -327,6 +368,7 @@ export class TransferServer extends EventEmitter {
     })
     socket.on('error', () => undefined)
     socket.on('close', () => {
+      stopWaitHeartbeat()
       this.sockets.delete(socket)
       if (streamJob) {
         this.releaseStreamStart(streamJob)
@@ -356,6 +398,10 @@ export interface PullOptions {
   onProgress: (bytesDelta: number) => void
   /** 由服务侧设置以支持取消：destroy 当前 socket */
   cancelRef: { canceled: boolean; socket: Socket | null }
+  /** 排队状态回调（决议 #211）：收到 wait 帧且尚未开始供流时 true，pull-ok 到达后 false */
+  onQueued?: (queued: boolean) => void
+  /** 空闲超时（决议 #211）：超过该时长无任何帧/数据判失败；默认 PULL_IDLE_TIMEOUT */
+  idleTimeoutMs?: number
   /** 测试注入：默认写入真实文件系统 */
   openWriteStream?: WriteStreamFactory
 }
@@ -367,6 +413,9 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
     const socket = createConnection({ host: opts.host, port: opts.port })
     opts.cancelRef.socket = socket
     socket.setNoDelay(true)
+    // 空闲超时（决议 #211）：建连与排队阶段同样计时；发送端 wait 保活会刷新计时器
+    socket.setTimeout(positiveLimit(opts.idleTimeoutMs, PULL_IDLE_TIMEOUT))
+    socket.on('timeout', () => fail('timeout'))
 
     const queue = [...opts.files]
     let current: {
@@ -376,6 +425,8 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       stream: ReturnType<WriteStreamFactory>
       hash: ReturnType<typeof createHash>
       left: number
+      /** pull-ok 已到达：之后的 wait 帧只是哈希收尾保活，不再是排队状态 */
+      started: boolean
     } | null = null
     let settled = false
     /** 写盘背压 pause 后，文件切换时 end() 可能吞掉 drain，须显式 resume */
@@ -399,8 +450,8 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
       resumeSocket()
       if (current) {
         current.stream.destroy()
+        // 取消不再清 .part（决议 #211）：留给「重新下载」断点续传
         if (
-          reason === 'canceled' ||
           reason === 'hash-mismatch' ||
           reason === 'size-mismatch' ||
           reason === 'path-escape' ||
@@ -469,7 +520,8 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
           finalPath,
           stream: (opts.openWriteStream ?? createWriteStream)(partPath, { flags: offset > 0 ? 'a' : 'w' }),
           hash,
-          left: plan.size - offset
+          left: plan.size - offset,
+          started: false
         }
         current.stream.on('error', () => fail('write-error'))
         socket.write(
@@ -501,7 +553,14 @@ export function pullTransfer(opts: PullOptions): Promise<void> {
           fail(`peer:${frame.reason}`)
           return
         }
+        if (frame.type === 'wait') {
+          // 发送端排队 / 哈希收尾保活（决议 #211）：帧本身已刷新空闲计时
+          if (current && !current.started) opts.onQueued?.(true)
+          return
+        }
         if (frame.type === 'pull-ok' && current) {
+          current.started = true
+          opts.onQueued?.(false)
           if (frame.len !== current.left) {
             fail('size-mismatch')
             return

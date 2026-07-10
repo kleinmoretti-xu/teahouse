@@ -55,6 +55,9 @@ export function decodeTcpFrameObject(raw: unknown): TcpFrame | null {
       if (!hasOnlyKeys(raw, ['type', 'reason'])) return null
       if (!isBoundedString(raw.reason, ERR_REASON_MAX)) return null
       return raw as unknown as TcpFrame
+    case 'wait':
+      if (!hasOnlyKeys(raw, ['type'])) return null
+      return raw as unknown as TcpFrame
     case 'msg': {
       if (!hasOnlyKeys(raw, ['type', 'envelope'])) return null
       const decoded = decodeTcpEnvelopeObject(raw.envelope)

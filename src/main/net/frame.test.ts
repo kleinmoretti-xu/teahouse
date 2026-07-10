@@ -82,6 +82,7 @@ describe('FrameReader', () => {
     { frame: { type: 'done', fileId: 'f1', sha256: 'ABC' }, label: 'done 非标准哈希' },
     { frame: { type: 'err', reason: 'x'.repeat(129) }, label: 'err 原因过长' },
     { frame: { type: 'msg-ack', ackFor: 'a', extra: true }, label: '未知字段' },
+    { frame: { type: 'wait', extra: 1 }, label: 'wait 带未知字段' },
     {
       frame: {
         type: 'msg',
@@ -103,6 +104,17 @@ describe('FrameReader', () => {
 
     expect(frames).toEqual([])
     expect(errors).toEqual(['bad-frame-shape'])
+  })
+
+  it('wait 帧（决议 #211）：无字段合法帧正常解析', () => {
+    const frames: TcpFrame[] = []
+    const reader = new FrameReader(
+      (item) => frames.push(item),
+      () => undefined,
+      () => undefined
+    )
+    reader.feed(encodeUnknownFrame({ type: 'wait' }))
+    expect(frames).toEqual([{ type: 'wait' }])
   })
 
   it('首次解析失败后清空状态，后续数据不再回调', () => {

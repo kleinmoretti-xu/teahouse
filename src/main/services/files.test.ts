@@ -1268,3 +1268,162 @@ describe('FilesService 发送状态以数据面为准（issue #3）', () => {
     expect(msgRepo.get(view!.id)?.status).toBe('sent')
   })
 })
+
+describe('FilesService 取消可恢复（决议 #211）', () => {
+  function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const start = Date.now()
+      const timer = setInterval(() => {
+        if (predicate()) {
+          clearInterval(timer)
+          resolve()
+        } else if (Date.now() - start > timeoutMs) {
+          clearInterval(timer)
+          reject(new Error('timeout'))
+        }
+      }, 10)
+    })
+  }
+
+  function makeIncomingService(peerCaps: string[]): {
+    service: FilesService
+    messenger: FakeMessenger
+    transferRepo: FakeTransferRepo
+  } {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-retry-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], peerCaps) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-retry',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-1', path: 'a.bin', size: 8 }],
+        totalSize: 8,
+        fileCount: 1,
+        rootName: 'a.bin'
+      })
+    )
+    return { service, messenger, transferRepo }
+  }
+
+  it('接收方取消后（对端支持 tw1）可重新下载：上下文保留、再次 accept 成功', async () => {
+    const { service, messenger, transferRepo } = makeIncomingService([CAPS.transferWait])
+    await waitTick()
+    expect(transferRepo.get('t-retry')?.status).toBe('offering')
+
+    await service.cancel('t-retry')
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+    expect(service.transferView('t-retry')?.retryable).toBe(true)
+    // 仍会通知发送方（发送方据此把卡片置为已取消，但保留供流授权）
+    expect(
+      messenger.sent.some((item) => item.env.payload.op === 'cancel')
+    ).toBe(true)
+
+    const ok = await service.accept('t-retry')
+    expect(ok).toBe(true)
+    expect(
+      messenger.sent.some((item) => item.env.payload.op === 'accept')
+    ).toBe(true)
+    // 无真实供流端口，重拉很快失败 → 回到 failed 且上下文仍在，可继续重试
+    await waitUntil(() => transferRepo.get('t-retry')?.status === 'failed')
+    expect(service.transferView('t-retry')?.retryable).toBe(true)
+  })
+
+  it('对端为旧版本（无 tw1）时取消即终态：不提供重新下载', async () => {
+    const { service, transferRepo } = makeIncomingService([])
+    await waitTick()
+
+    await service.cancel('t-retry')
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+    expect(service.transferView('t-retry')?.retryable).toBe(false)
+    await expect(service.accept('t-retry')).resolves.toBe(false)
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+  })
+
+  it('发送方主动取消是终态：接收方作废上下文，不再展示重新下载', async () => {
+    const { service, transferRepo, messenger } = makeIncomingService([CAPS.transferWait])
+    await waitTick()
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'cancel',
+        transferId: 't-retry'
+      })
+    )
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+    expect(service.transferView('t-retry')?.retryable).toBe(false)
+    await expect(service.accept('t-retry')).resolves.toBe(false)
+  })
+
+  it('发送方收到对端 cancel 保留供流授权：对方重新 accept 后卡片恢复传输中', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-out-cancel-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, 'payload.bin')
+    writeFileSync(filePath, 'payload-data')
+
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], [CAPS.transferWait]) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    await service.offerPaths('node-bob', [filePath])
+    await waitTick()
+    const tid = [...transferRepo.rows.keys()][0]
+
+    // 对端接受后又取消：状态置已取消，但供流授权保留
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', { op: 'accept', transferId: tid })
+    )
+    expect(transferRepo.get(tid)?.status).toBe('accepted')
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', { op: 'cancel', transferId: tid })
+    )
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+
+    // 对端点「重新下载」再次 accept → 恢复传输中（证明 outgoing 未被作废）
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', { op: 'accept', transferId: tid })
+    )
+    expect(transferRepo.get(tid)?.status).toBe('accepted')
+
+    // 发送方自己取消才是终态：outgoing 作废，对端再 accept 不再恢复
+    await service.cancel(tid)
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', { op: 'accept', transferId: tid })
+    )
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+  })
+})

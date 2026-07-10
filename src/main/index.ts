@@ -2080,6 +2080,7 @@ if (!gotLock) {
       CAPS.mediaRecall,
       CAPS.fileDirect,
       CAPS.tableText,
+      CAPS.transferWait,
       ...updateCaps
     ])
     udpPort = envUdpPort ?? appState.config.udpPort

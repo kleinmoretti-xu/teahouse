@@ -71,6 +71,8 @@ interface IncomingState {
   msgId: string
   plans: IncomingFilePlan[]
   bytesDone: number
+  /** 发送端并发预算满、本传输在对端 FIFO 排队中（决议 #211，wait 帧驱动） */
+  queued: boolean
   cancelRef: { canceled: boolean; socket: import('node:net').Socket | null }
 }
 
@@ -142,7 +144,8 @@ export class FilesService extends EventEmitter {
           if (!out || !out.accepted) return null
           return out.files.get(fileId) ?? null
         },
-        receiveMessage: (env) => this.deps.messenger.acceptTcpEnvelope(env)
+        receiveMessage: (env) => this.deps.messenger.acceptTcpEnvelope(env),
+        supportsWait: (peerId) => this.peerSupportsTransferWait(peerId)
       },
       deps.bindAddress
     )
@@ -542,7 +545,15 @@ export class FilesService extends EventEmitter {
   async accept(transferId: string, saveDirOverride?: string): Promise<boolean> {
     const inc = this.incoming.get(transferId)
     const row = this.deps.transferRepo.get(transferId)
-    if (!inc || !row || (row.status !== 'offering' && row.status !== 'failed')) return false
+    if (
+      !inc ||
+      !row ||
+      (row.status !== 'offering' && row.status !== 'failed' && row.status !== 'canceled')
+    ) {
+      return false
+    }
+    // 取消后重新下载（决议 #211）：旧版本发送端收到 cancel 已作废供流授权，重拉必 not-found
+    if (row.status === 'canceled' && !this.peerSupportsTransferWait(inc.peerId)) return false
     const peer = this.deps.registry.get(inc.peerId)
     if (!peer || !peer.online) {
       this.finish(transferId, 'failed')
@@ -552,7 +563,9 @@ export class FilesService extends EventEmitter {
     let rememberedBase = ''
     try {
       const blob = JSON.parse(row.files) as FilesBlob
-      if (row.status === 'failed' && blob.savedPath) rememberedBase = dirname(blob.savedPath)
+      if ((row.status === 'failed' || row.status === 'canceled') && blob.savedPath) {
+        rememberedBase = dirname(blob.savedPath)
+      }
     } catch {
       rememberedBase = ''
     }
@@ -575,6 +588,7 @@ export class FilesService extends EventEmitter {
 
     this.deps.transferRepo.updateStatus(transferId, 'accepted')
     inc.bytesDone = 0
+    inc.queued = false
     inc.cancelRef = { canceled: false, socket: null }
     this.updateBlob(transferId, { savedPath })
     this.emitTransfer(transferId, true)
@@ -602,13 +616,20 @@ export class FilesService extends EventEmitter {
       onProgress: (delta) => {
         inc.bytesDone += delta
         this.emitTransfer(transferId, false)
+      },
+      onQueued: (queued) => {
+        if (inc.queued === queued) return
+        inc.queued = queued
+        this.emitTransfer(transferId, true)
       }
     })
       .then(() => {
+        inc.queued = false
         this.deps.transferRepo.updateProgress(transferId, inc.bytesDone)
         this.finish(transferId, 'done')
       })
       .catch((err: Error) => {
+        inc.queued = false
         this.deps.transferRepo.updateProgress(transferId, inc.bytesDone)
         this.finish(transferId, inc.cancelRef.canceled ? 'canceled' : 'failed')
         if (!inc.cancelRef.canceled) console.warn('[files] 拉取失败：', err.message)
@@ -660,7 +681,14 @@ export class FilesService extends EventEmitter {
     }
     if (blob.purpose === 'update') return null
     const msg = this.deps.msgRepo.get(row.msg_id)
-    const live = this.outgoing.get(transferId)?.bytesDone ?? this.incoming.get(transferId)?.bytesDone
+    const inc = this.incoming.get(transferId)
+    const live = this.outgoing.get(transferId)?.bytesDone ?? inc?.bytesDone
+    // 失败可无条件「继续」；取消后重新下载要求对端支持 tw1（旧端已作废供流授权）
+    const retryable =
+      row.direction === 'in' &&
+      inc !== undefined &&
+      (row.status === 'failed' ||
+        (row.status === 'canceled' && this.peerSupportsTransferWait(row.peer_id)))
     const fileRef = ((): FileRefView | null => {
       if (!msg?.file_ref) return null
       try {
@@ -683,6 +711,8 @@ export class FilesService extends EventEmitter {
       name: blob.name,
       savedPath: blob.savedPath ?? '',
       direct: blob.direct === true || fileRef?.direct === true,
+      queued: inc?.queued === true,
+      retryable,
       ...(blob.directPeerName ? { directPeerName: blob.directPeerName } : {})
     }
   }
@@ -723,6 +753,8 @@ export class FilesService extends EventEmitter {
         inc.cancelRef.socket?.destroy()
       }
       this.finish(transferId, 'canceled')
+      // 撤回是终态：不保留重新下载上下文
+      this.incoming.delete(transferId)
     }
     return true
   }
@@ -739,7 +771,8 @@ export class FilesService extends EventEmitter {
     if (!row || row.peer_id !== env.from) return // 只认传输双方
     if (ctl.op === 'accept') {
       const out = this.outgoing.get(ctl.transferId)
-      if (out && row.status === 'offering') {
+      // canceled → accepted：对端取消后点「重新下载」，供流授权仍在，卡片恢复传输中（决议 #211）
+      if (out && (row.status === 'offering' || row.status === 'canceled')) {
         out.accepted = true
         this.deps.transferRepo.updateStatus(ctl.transferId, 'accepted')
         // 对方已接受即「已发送」，迟到的 offer-ACK 判负不再翻成失败（issue #3）
@@ -755,7 +788,15 @@ export class FilesService extends EventEmitter {
         inc.cancelRef.socket?.destroy()
       }
       if (row.status === 'offering' || row.status === 'accepted') {
-        this.finish(ctl.transferId, 'canceled')
+        if (row.direction === 'out') {
+          // 对端（接收方）取消：卡片置已取消但保留供流授权，对方可断点重拉（决议 #211）
+          this.deps.transferRepo.updateStatus(ctl.transferId, 'canceled')
+          this.emitTransfer(ctl.transferId, true)
+        } else {
+          // 发送方主动取消才是终态：作废本地传输上下文，不再提供重新下载
+          this.finish(ctl.transferId, 'canceled')
+          this.incoming.delete(ctl.transferId)
+        }
       }
     } else if (ctl.op === 'direct') {
       this.onDirectRequest(env.from, ctl.transferId, row)
@@ -887,6 +928,7 @@ export class FilesService extends EventEmitter {
       msgId,
       plans,
       bytesDone: 0,
+      queued: false,
       cancelRef: { canceled: false, socket: null }
     })
     const msgRow = this.deps.msgRepo.get(msgId)
@@ -938,6 +980,7 @@ export class FilesService extends EventEmitter {
       msgId,
       plans,
       bytesDone: 0,
+      queued: false,
       cancelRef: { canceled: false, socket: null }
     })
     void this.accept(offer.transferId, this.updateDir())
@@ -975,7 +1018,9 @@ export class FilesService extends EventEmitter {
   private finish(transferId: string, status: 'done' | 'declined' | 'canceled' | 'failed'): void {
     this.deps.transferRepo.updateStatus(transferId, status)
     this.outgoing.delete(transferId)
-    if (status !== 'failed') this.incoming.delete(transferId)
+    // failed 保留 incoming 供「继续」，canceled 保留供「重新下载」（决议 #211）；
+    // 远端主动取消 / 撤回等终态由调用方显式 delete。
+    if (status !== 'failed' && status !== 'canceled') this.incoming.delete(transferId)
     this.emitTransfer(transferId, true)
     this.lastEmit.delete(transferId)
   }
@@ -1018,6 +1063,11 @@ export class FilesService extends EventEmitter {
   private peerSupportsTableText(peerId: string): boolean {
     const caps = this.deps.registry.get(peerId)?.profile.caps
     return Array.isArray(caps) && caps.includes(CAPS.tableText)
+  }
+
+  private peerSupportsTransferWait(peerId: string): boolean {
+    const caps = this.deps.registry.get(peerId)?.profile.caps
+    return Array.isArray(caps) && caps.includes(CAPS.transferWait)
   }
 
   private defaultReceiveDir(peerId: string): string {
