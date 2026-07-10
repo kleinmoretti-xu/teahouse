@@ -419,6 +419,22 @@ describe('codec', () => {
     })
     expect(decode(encode(updateOffer))).toMatchObject({ ok: true, known: true })
 
+    const oversized = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-aaaa', {
+      op: 'offer',
+      transferId: 'transfer-update-oversized',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'Teahouse-0.28.0-linux-amd64.deb', size: 512 * 1024 * 1024 + 1 }],
+      totalSize: 512 * 1024 * 1024 + 1,
+      fileCount: 1,
+      rootName: 'Teahouse-0.28.0-linux-amd64.deb',
+      purpose: 'update'
+    })
+    expect(decode(encode(oversized))).toEqual({
+      ok: false,
+      reason: 'bad-payload:file-ctl'
+    })
+
     const badPurpose = makeEnvelope(MSG_TYPES.fileCtl, 'node-aaaa', {
       op: 'offer',
       transferId: 'transfer-update-2',

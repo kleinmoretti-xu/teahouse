@@ -284,6 +284,7 @@ describe('FilesService 群聊媒体', () => {
       getSaveDir: () => dir,
       getImagesDir: () => dir,
       getUpdateDir: () => updateDir,
+      authorizeUpdateOffer: () => true,
       bindAddress: '127.0.0.1'
     })
 
@@ -294,10 +295,10 @@ describe('FilesService 群聊媒体', () => {
         transferId: 't-update',
         seq: 1,
         total: 1,
-        files: [{ fileId: 'f-1', path: 'Teahouse-0.28.0-linux-x64.deb', size: 1024 }],
+        files: [{ fileId: 'f-1', path: 'Teahouse-0.28.0-linux-amd64.deb', size: 1024 }],
         totalSize: 1024,
         fileCount: 1,
-        rootName: 'Teahouse-0.28.0-linux-x64.deb',
+        rootName: 'Teahouse-0.28.0-linux-amd64.deb',
         purpose: 'update'
       })
     )
@@ -310,13 +311,61 @@ describe('FilesService 群聊媒体', () => {
     expect(row?.msg_id).toBe('update:t-update')
     expect(row?.status).toBe('failed')
     expect(JSON.parse(row!.files)).toMatchObject({
-      name: 'Teahouse-0.28.0-linux-x64.deb',
+      name: 'Teahouse-0.28.0-linux-amd64.deb',
       purpose: 'update',
-      savedPath: join(updateDir, 'Teahouse-0.28.0-linux-x64.deb')
+      savedPath: join(updateDir, 'Teahouse-0.28.0-linux-amd64.deb')
     })
     expect(messenger.sent[0]).toMatchObject({
       peerId: 'node-bob',
       env: { payload: { op: 'accept', transferId: 't-update' } }
+    })
+  })
+
+  it('未经用户请求授权的更新包 offer 直接拒绝且不入库', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-service-'))
+    const updateDir = mkdtempSync(join(tmpdir(), 'pantry-update-service-'))
+    tmpDirs.push(dir, updateDir)
+
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      getUpdateDir: () => updateDir,
+      authorizeUpdateOffer: () => false,
+      bindAddress: '127.0.0.1'
+    })
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-update-unauthorized',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-1', path: 'Teahouse-0.28.0-linux-amd64.deb', size: 1024 }],
+        totalSize: 1024,
+        fileCount: 1,
+        rootName: 'Teahouse-0.28.0-linux-amd64.deb',
+        purpose: 'update'
+      })
+    )
+    await waitTick()
+
+    expect(msgRepo.rows.size).toBe(0)
+    expect(transferRepo.rows.size).toBe(0)
+    expect(messenger.sent[0]).toMatchObject({
+      peerId: 'node-bob',
+      env: { payload: { op: 'decline', transferId: 't-update-unauthorized' } }
     })
   })
 

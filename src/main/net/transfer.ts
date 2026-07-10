@@ -30,6 +30,31 @@ export type ReadStreamFactory = (
   options?: { start?: number }
 ) => ReturnType<typeof createReadStream>
 
+export interface TransferServerLimits {
+  maxConcurrentStreams: number
+  maxConnections: number
+  handshakeTimeoutMs: number
+  idleTimeoutMs: number
+}
+
+interface PendingStreamStart {
+  socket: Socket
+  start: () => void
+  started: boolean
+  released: boolean
+}
+
+const DEFAULT_SERVER_LIMITS: TransferServerLimits = {
+  maxConcurrentStreams: 3,
+  maxConnections: 256,
+  handshakeTimeoutMs: 15_000,
+  idleTimeoutMs: 60_000
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && value! > 0 ? value! : fallback
+}
+
 export type WriteStreamFactory = (
   path: string,
   options?: { flags?: string }
@@ -40,19 +65,42 @@ export class TransferServer extends EventEmitter {
   private server: Server | null = null
   /** 活跃连接：stop 时强制销毁，避免 server.close 因残留 socket 挂起 */
   private readonly sockets = new Set<Socket>()
+  private readonly limits: TransferServerLimits
+  private readonly pendingStreamStarts: PendingStreamStart[] = []
+  private activeStreamSlots = 0
+  private pumpingStreamStarts = false
 
   constructor(
     private readonly port: number,
     private readonly lookup: OutgoingLookup,
     private readonly bindAddress?: string,
-    private readonly openReadStream: ReadStreamFactory = createReadStream
+    private readonly openReadStream: ReadStreamFactory = createReadStream,
+    limits: Partial<TransferServerLimits> = {}
   ) {
     super()
+    this.limits = {
+      maxConcurrentStreams: positiveLimit(
+        limits.maxConcurrentStreams,
+        DEFAULT_SERVER_LIMITS.maxConcurrentStreams
+      ),
+      maxConnections: positiveLimit(limits.maxConnections, DEFAULT_SERVER_LIMITS.maxConnections),
+      handshakeTimeoutMs: positiveLimit(
+        limits.handshakeTimeoutMs,
+        DEFAULT_SERVER_LIMITS.handshakeTimeoutMs
+      ),
+      idleTimeoutMs: positiveLimit(limits.idleTimeoutMs, DEFAULT_SERVER_LIMITS.idleTimeoutMs)
+    }
   }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const server = createServer((socket) => this.serve(socket))
+      const server = createServer((socket) => {
+        if (this.sockets.size >= this.limits.maxConnections) {
+          socket.destroy()
+          return
+        }
+        this.serve(socket)
+      })
       server.once('error', reject)
       server.listen(this.port, this.bindAddress, () => {
         server.removeListener('error', reject)
@@ -84,11 +132,60 @@ export class TransferServer extends EventEmitter {
     })
   }
 
+  private enqueueStreamStart(socket: Socket, start: () => void): PendingStreamStart {
+    const job: PendingStreamStart = { socket, start, started: false, released: false }
+    this.pendingStreamStarts.push(job)
+    socket.setTimeout(0)
+    return job
+  }
+
+  private releaseStreamStart(job: PendingStreamStart): void {
+    if (job.released) return
+    job.released = true
+    if (job.started) {
+      this.activeStreamSlots = Math.max(0, this.activeStreamSlots - 1)
+    } else {
+      const index = this.pendingStreamStarts.indexOf(job)
+      if (index >= 0) this.pendingStreamStarts.splice(index, 1)
+    }
+    this.pumpStreamStarts()
+  }
+
+  private pumpStreamStarts(): void {
+    if (this.pumpingStreamStarts) return
+    this.pumpingStreamStarts = true
+    try {
+      while (
+        this.activeStreamSlots < this.limits.maxConcurrentStreams &&
+        this.pendingStreamStarts.length > 0
+      ) {
+        const job = this.pendingStreamStarts.shift()!
+        if (job.released || job.socket.destroyed) {
+          job.released = true
+          continue
+        }
+        job.started = true
+        this.activeStreamSlots += 1
+        try {
+          job.start()
+        } catch {
+          this.releaseStreamStart(job)
+          job.socket.destroy()
+        }
+      }
+    } finally {
+      this.pumpingStreamStarts = false
+    }
+  }
+
   private serve(socket: Socket): void {
     this.sockets.add(socket)
     socket.setNoDelay(true)
+    socket.setTimeout(this.limits.handshakeTimeoutMs)
+    socket.on('timeout', () => socket.destroy())
     let busy = false // 同一连接内文件串行（协议约定），防交叉 pull
     let activeStreams: Array<ReturnType<ReadStreamFactory>> = []
+    let streamJob: PendingStreamStart | null = null
     /** 发送端写缓冲满时只挂一个 drain，避免重复 resume 与泄漏 listener */
     let waitingDrain = false
 
@@ -107,6 +204,7 @@ export class TransferServer extends EventEmitter {
 
     const reader = new FrameReader(
       (frame) => {
+        socket.setTimeout(this.limits.idleTimeoutMs)
         if (frame.type === 'finish') {
           this.emit('served', frame.transferId)
           return
@@ -127,86 +225,113 @@ export class TransferServer extends EventEmitter {
           send({ type: 'err', reason: 'not-found' })
           return
         }
-        const offset = Number.isInteger(pull.offset) && pull.offset >= 0 ? pull.offset : 0
+        const offset = pull.offset
         if (offset > file.size) {
           send({ type: 'err', reason: 'bad-offset' })
           return
         }
         busy = true
-        const len = file.size - offset
-        send({ type: 'pull-ok', fileId: file.fileId, len } satisfies PullOkFrame)
-
-        const hash = createHash('sha256')
-        const asBuffer = (chunk: Buffer | string): Buffer =>
-          Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-        const sendDataChunk = (
-          stream: ReturnType<ReadStreamFactory>,
-          chunk: Buffer | string
-        ): void => {
-          const data = asBuffer(chunk)
-          this.emit('progress', pull.transferId, data.length)
-          if (!socket.write(data) && !waitingDrain) {
-            waitingDrain = true
-            stream.pause()
-            socket.once('drain', () => {
-              waitingDrain = false
-              if (!socket.destroyed) stream.resume()
-            })
+        const job = this.enqueueStreamStart(socket, () => {
+          socket.setTimeout(this.limits.idleTimeoutMs)
+          const currentFile = this.lookup.resolve(pull.transferId, pull.fileId)
+          if (!currentFile || offset > currentFile.size) {
+            send({ type: 'err', reason: currentFile ? 'bad-offset' : 'not-found' })
+            busy = false
+            this.releaseStreamStart(job)
+            return
           }
-        }
-        const finish = (sha256: string): void => {
-          send({ type: 'done', fileId: file.fileId, sha256 } satisfies DoneFrame)
-          busy = false
-        }
 
-        if (offset === 0) {
-          // 首次拉取时同一条读流边发边算哈希；避免大文件先整盘预读导致 UI 长时间 0B。
-          const dataStream = trackStream(this.openReadStream(file.absPath))
-          dataStream.on('data', (chunk) => {
-            hash.update(asBuffer(chunk))
-            sendDataChunk(dataStream, chunk)
+          const len = currentFile.size - offset
+          send({ type: 'pull-ok', fileId: currentFile.fileId, len } satisfies PullOkFrame)
+          const hash = createHash('sha256')
+          const asBuffer = (chunk: Buffer | string): Buffer =>
+            Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+          const sendDataChunk = (
+            stream: ReturnType<ReadStreamFactory>,
+            chunk: Buffer | string
+          ): void => {
+            const data = asBuffer(chunk)
+            this.emit('progress', pull.transferId, data.length)
+            if (!socket.write(data) && !waitingDrain) {
+              waitingDrain = true
+              stream.pause()
+              socket.once('drain', () => {
+                waitingDrain = false
+                if (!socket.destroyed) stream.resume()
+              })
+            }
+          }
+          const finish = (sha256: string): void => {
+            if (socket.destroyed) return
+            send({ type: 'done', fileId: currentFile.fileId, sha256 } satisfies DoneFrame)
+            busy = false
+            this.releaseStreamStart(job)
+            if (streamJob === job) streamJob = null
+          }
+
+          if (offset === 0) {
+            // 首次拉取时同一条读流边发边算哈希；避免大文件先整盘预读导致 UI 长时间 0B。
+            const dataStream = trackStream(this.openReadStream(currentFile.absPath))
+            dataStream.on('data', (chunk) => {
+              hash.update(asBuffer(chunk))
+              sendDataChunk(dataStream, chunk)
+            })
+            dataStream.on('error', () => socket.destroy())
+            dataStream.on('end', () => finish(hash.digest('hex')))
+            return
+          }
+
+          // 断点续传仍需整文件哈希；数据流先启动，哈希流完成后再发送 done。
+          let dataEnded = len === 0
+          let digest: string | null = null
+          const finishResumeIfReady = (): void => {
+            if (!dataEnded || digest === null) return
+            finish(digest)
+          }
+
+          const hashStream = trackStream(this.openReadStream(currentFile.absPath))
+          hashStream.on('data', (chunk) => hash.update(chunk))
+          hashStream.on('error', () => socket.destroy())
+          hashStream.on('end', () => {
+            digest = hash.digest('hex')
+            finishResumeIfReady()
           })
+
+          if (len === 0) {
+            finishResumeIfReady()
+            return
+          }
+          const dataStream = trackStream(
+            this.openReadStream(currentFile.absPath, { start: offset })
+          )
+          dataStream.on('data', (chunk) => sendDataChunk(dataStream, chunk))
           dataStream.on('error', () => socket.destroy())
-          dataStream.on('end', () => finish(hash.digest('hex')))
-          return
-        }
-
-        // 断点续传仍需整文件哈希；数据流先启动，哈希流完成后再发送 done。
-        let dataEnded = len === 0
-        let digest: string | null = null
-        const finishResumeIfReady = (): void => {
-          if (!dataEnded || digest === null) return
-          finish(digest)
-        }
-
-        const hashStream = trackStream(this.openReadStream(file.absPath))
-        hashStream.on('data', (chunk) => hash.update(chunk))
-        hashStream.on('error', () => socket.destroy())
-        hashStream.on('end', () => {
-          digest = hash.digest('hex')
-          finishResumeIfReady()
+          dataStream.on('end', () => {
+            dataEnded = true
+            finishResumeIfReady()
+          })
         })
-
-        if (len === 0) {
-          finishResumeIfReady()
-          return
-        }
-        const dataStream = trackStream(this.openReadStream(file.absPath, { start: offset }))
-        dataStream.on('data', (chunk) => sendDataChunk(dataStream, chunk))
-        dataStream.on('error', () => socket.destroy())
-        dataStream.on('end', () => {
-          dataEnded = true
-          finishResumeIfReady()
-        })
+        streamJob = job
+        this.pumpStreamStarts()
       },
       () => socket.destroy(),
       () => socket.destroy()
     )
 
-    socket.on('data', (chunk) => reader.feed(chunk))
+    socket.on('data', (chunk) => {
+      try {
+        reader.feed(chunk)
+      } catch {
+        socket.destroy()
+      }
+    })
     socket.on('error', () => undefined)
     socket.on('close', () => {
       this.sockets.delete(socket)
+      if (streamJob) {
+        this.releaseStreamStart(streamJob)
+        streamJob = null
+      }
       for (const stream of activeStreams.splice(0)) stream.destroy()
       busy = false
     })

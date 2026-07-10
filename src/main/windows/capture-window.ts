@@ -34,6 +34,7 @@ export function openCaptureWindow(
   })
   win.setAlwaysOnTop(true, 'screen-saver')
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event) => event.preventDefault())
   win.on('closed', () => {
     win = null
     onClosed()

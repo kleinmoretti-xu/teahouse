@@ -12,6 +12,7 @@ import {
   OFFER_FILES_PER_PACKET,
   CAPS,
   TABLE_TEXT_LIMIT_BYTES,
+  UPDATE_PACKAGE_MAX_BYTES,
   type Envelope,
   type FileCtlOffer,
   type FileCtlPayload,
@@ -111,6 +112,8 @@ export interface FilesDeps {
   getImagesDir: () => string
   /** 更新包临时目录（决议 #166）：不进聊天接收目录 */
   getUpdateDir?: () => string
+  /** 用户确认更新请求后，对来源、包名与大小做一次性授权消费。 */
+  authorizeUpdateOffer?: (peerId: string, name: string, totalSize: number) => boolean
   /** 是否允许私聊直接发送自动接收；默认允许。 */
   allowDirectFileSend?: () => boolean
   /** 展示名：用于默认接收子目录（备注优先可由 main 注入）。 */
@@ -911,7 +914,10 @@ export class FilesService extends EventEmitter {
       !plan ||
       plan.isDir ||
       plan.relPath.includes('/') ||
-      trustedTotalSize <= 0
+      plan.relPath !== asm.rootName ||
+      trustedTotalSize <= 0 ||
+      trustedTotalSize > UPDATE_PACKAGE_MAX_BYTES ||
+      this.deps.authorizeUpdateOffer?.(peerId, asm.rootName, trustedTotalSize) !== true
     ) {
       void this.declineUnknown(peerId, offer.transferId)
       return

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
-import { createConnection, createServer } from 'node:net'
+import { createConnection, createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -12,9 +12,40 @@ import {
   type IncomingFilePlan,
   type OutgoingFile,
   type ReadStreamFactory,
+  type TransferServerLimits,
   type WriteStreamFactory
 } from './transfer'
 import { encodeFrame, FrameReader } from './frame'
+
+function encodeUnknownFrame(frame: unknown): Buffer {
+  const body = Buffer.from(JSON.stringify(frame), 'utf8')
+  const head = Buffer.alloc(4)
+  head.writeUInt32BE(body.length)
+  return Buffer.concat([head, body])
+}
+
+function connectSocket(port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port })
+    socket.once('connect', () => resolve(socket))
+    socket.once('error', reject)
+  })
+}
+
+function waitForClose(socket: Socket): Promise<void> {
+  return new Promise((resolve) => socket.once('close', () => resolve()))
+}
+
+function closesWithin(socket: Socket, timeoutMs = 500): Promise<boolean> {
+  if (socket.destroyed) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    socket.once('close', () => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+  })
+}
 
 // 数据面回环测试：真实文件、真实 TCP（127.0.0.1）、真实 SHA-256。
 // 控制面（offer/accept）的可靠投递已由 messenger.test 覆盖。
@@ -83,6 +114,21 @@ class SlowReadable extends Readable {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     callback(error)
+  }
+}
+
+class HeldReadable extends Readable {
+  private released = false
+
+  _read(): void {
+    // 测试主动 release 前保持流打开。
+  }
+
+  release(byte = 0x61): void {
+    if (this.released) return
+    this.released = true
+    this.push(Buffer.from([byte]))
+    this.push(null)
   }
 }
 
@@ -170,6 +216,114 @@ async function startServer(
 }
 
 describe('transfer 数据面回环', () => {
+  it('发送端最多同时打开 3 条数据读流，第四条授权拉取按 FIFO 等待', async () => {
+    nextPort += 1
+    const held: HeldReadable[] = []
+    const opened: string[] = []
+    const files = new Map<string, OutgoingFile>()
+    for (let i = 1; i <= 4; i++) {
+      files.set(`t${i}`, { fileId: `f${i}`, absPath: `/virtual/t${i}`, size: 1 })
+    }
+    const server = new TransferServer(
+      nextPort,
+      {
+        resolve: (transferId, fileId) => {
+          const file = files.get(transferId)
+          return file?.fileId === fileId ? file : null
+        }
+      },
+      '127.0.0.1',
+      (path) => {
+        opened.push(path)
+        const stream = new HeldReadable()
+        held.push(stream)
+        return stream as unknown as ReturnType<ReadStreamFactory>
+      }
+    )
+    await server.start()
+    servers.push(server)
+
+    const sockets: Socket[] = []
+    for (let i = 1; i <= 4; i++) {
+      const socket = await connectSocket(nextPort)
+      sockets.push(socket)
+      socket.write(
+        encodeFrame({ type: 'pull', from: 'receiver', transferId: `t${i}`, fileId: `f${i}`, offset: 0 })
+      )
+    }
+
+    await waitFor(() => opened.length === 3)
+    await delay(40)
+    expect(opened).toEqual(['/virtual/t1', '/virtual/t2', '/virtual/t3'])
+
+    held[0].release()
+    await waitFor(() => opened.length === 4)
+    expect(opened[3]).toBe('/virtual/t4')
+
+    for (const stream of held) stream.release()
+    for (const socket of sockets) socket.destroy()
+  })
+
+  it('连接总数达到上限时立即关闭新连接', async () => {
+    nextPort += 1
+    const limits: Partial<TransferServerLimits> = { maxConnections: 1, handshakeTimeoutMs: 1_000 }
+    const server = new TransferServer(nextPort, { resolve: () => null }, '127.0.0.1', undefined, limits)
+    await server.start()
+    servers.push(server)
+
+    const first = await connectSocket(nextPort)
+    const second = await connectSocket(nextPort)
+
+    await expect(closesWithin(second)).resolves.toBe(true)
+    expect(first.destroyed).toBe(false)
+    first.destroy()
+  })
+
+  it('握手阶段和有效控制阶段分别应用可注入空闲超时', async () => {
+    nextPort += 1
+    const limits: Partial<TransferServerLimits> = {
+      handshakeTimeoutMs: 30,
+      idleTimeoutMs: 45
+    }
+    const server = new TransferServer(nextPort, { resolve: () => null }, '127.0.0.1', undefined, limits)
+    await server.start()
+    servers.push(server)
+
+    const silent = await connectSocket(nextPort)
+    await expect(closesWithin(silent)).resolves.toBe(true)
+
+    const active = await connectSocket(nextPort)
+    active.write(encodeFrame({ type: 'finish', transferId: 't-finished' }))
+    await delay(35)
+    expect(active.destroyed).toBe(false)
+    await expect(closesWithin(active, 200)).resolves.toBe(true)
+  })
+
+  it('畸形 finish 只关闭当前连接，后续合法连接仍可完成', async () => {
+    nextPort += 1
+    const server = new TransferServer(
+      nextPort,
+      { resolve: () => null },
+      '127.0.0.1'
+    )
+    const served: string[] = []
+    server.on('served', (transferId) => served.push(transferId as string))
+    await server.start()
+    servers.push(server)
+
+    const badSocket = await connectSocket(nextPort)
+    const badClosed = waitForClose(badSocket)
+    badSocket.write(encodeUnknownFrame({ type: 'finish', transferId: {} }))
+    await badClosed
+
+    const goodSocket = await connectSocket(nextPort)
+    goodSocket.write(encodeFrame({ type: 'finish', transferId: 'valid-transfer' }))
+    await waitFor(() => served.length > 0)
+    goodSocket.destroy()
+
+    expect(served).toEqual(['valid-transfer'])
+  })
+
   it('文件夹结构 + 大文件 + 空文件：逐文件拉取、哈希校验、结构还原', async () => {
     const src = makeTmp()
     const dst = makeTmp()

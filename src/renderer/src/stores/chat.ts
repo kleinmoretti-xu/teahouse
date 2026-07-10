@@ -13,6 +13,7 @@ import type { PkGame } from '../../../shared/pk'
 // 主进程聊天数据的投影 + 乐观更新（tech-design §7 状态流）
 let nudgeClearTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeOpenRun = 0
+let navigationRun = 0
 // 移除聊天的 10 秒撤回窗口（决议 #125）：commit 定时器 + 每秒倒计时
 let removalCommitTimer: ReturnType<typeof setTimeout> | null = null
 let removalTickTimer: ReturnType<typeof setInterval> | null = null
@@ -159,49 +160,60 @@ export const useChatStore = defineStore('chat', {
     /** 从通讯录或会话列表进入会话 */
     async openPeer(
       peerNodeId: string,
-      options: OpenConversationOptions = { scroll: 'latest' }
+      options: OpenConversationOptions = { scroll: 'latest' },
+      run = ++navigationRun
     ): Promise<void> {
       const scroll = options.scroll ?? 'latest'
       const conv = await window.pantry.openConversation(peerNodeId)
-      if (!conv) return
+      if (!conv || run !== navigationRun) return
       this.upsertConversation(conv)
       this.activeConvId = conv.id
       this.viewingHistory = false
       // latest 语义 = 必看最新页：即使已缓存（可能是历史搜索上下文窗口或不完整页），
       // 也重载最新一页，确保贴的"底部"就是真正最新消息（震动 / 通知直达，决议 #133）
       if (scroll === 'latest' || !this.messages[conv.id]) {
-        this.setConversationMessages(conv.id, await window.pantry.pageMessages(conv.id, null, 50))
+        const messages = await window.pantry.pageMessages(conv.id, null, 50)
+        if (run !== navigationRun) return
+        this.setConversationMessages(conv.id, messages)
       }
+      if (run !== navigationRun) return
       this.requestConversationScroll(scroll)
     },
 
     /** 按会话 id 打开（会话列表 / 群会话 / 通知跳转通用）：用户主动进入默认看最新（决议 #192）。 */
     async openConv(convId: string, options: OpenConversationOptions = { scroll: 'latest' }): Promise<void> {
+      const run = ++navigationRun
       const scroll = options.scroll ?? 'latest'
       if (convId.startsWith('single:')) {
-        await this.openPeer(convId.slice(7), { scroll })
+        await this.openPeer(convId.slice(7), { scroll }, run)
         return
       }
       this.activeConvId = convId
       this.viewingHistory = false
       // latest 入口（通知 / 托盘直达等）重载最新页，不复用可能过期 / 历史的缓存（决议 #133）
       if (scroll === 'latest' || !this.messages[convId]) {
-        this.setConversationMessages(convId, await window.pantry.pageMessages(convId, null, 50))
+        const messages = await window.pantry.pageMessages(convId, null, 50)
+        if (run !== navigationRun) return
+        this.setConversationMessages(convId, messages)
       }
       await window.pantry.markRead(convId)
+      if (run !== navigationRun) return
       this.requestConversationScroll(scroll)
     },
 
     /** 搜索结果跳转：载入目标前后窗口并短暂高亮（ui-design §6） */
     async jumpToMessage(convId: string, seq: number, msgId: string): Promise<void> {
+      const run = ++navigationRun
       if (convId.startsWith('single:')) {
         const conv = await window.pantry.openConversation(convId.slice(7))
-        if (!conv) return
+        if (!conv || run !== navigationRun) return
       } else {
         await window.pantry.markRead(convId)
+        if (run !== navigationRun) return
       }
       this.activeConvId = convId
       const ctx = await window.pantry.getMessageContext(convId, seq)
+      if (run !== navigationRun || this.activeConvId !== convId) return
       this.setConversationMessages(convId, ctx)
       // 跳转窗口若已含会话最新消息（尾条 ts 触达 lastTs），则不算"看历史"，
       // 避免点最新命中 / 关闭搜索后仍误显"回到最新"（决议 #74）
@@ -211,14 +223,17 @@ export const useChatStore = defineStore('chat', {
       this.highlightId = msgId || null
       this.requestConversationScroll('target')
       setTimeout(() => {
-        if (this.highlightId === msgId) this.highlightId = null
+        if (run === navigationRun && this.highlightId === msgId) this.highlightId = null
       }, 2600)
     },
 
     async backToLatest(): Promise<void> {
       const convId = this.activeConvId
       if (!convId) return
-      this.setConversationMessages(convId, await window.pantry.pageMessages(convId, null, 50))
+      const run = ++navigationRun
+      const messages = await window.pantry.pageMessages(convId, null, 50)
+      if (run !== navigationRun || this.activeConvId !== convId) return
+      this.setConversationMessages(convId, messages)
       this.viewingHistory = false
       this.requestConversationScroll('latest')
     },

@@ -48,6 +48,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 校验版本与 tag 一致性
+        run: npm run check:version
+
       - name: 安装 npm 依赖
         run: npm ci
 
@@ -147,6 +150,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 校验版本与 tag 一致性
+        run: npm run check:version
+
       # 决议 #206：ffi 1.15.5 每次都要编译 C 扩展 + fpm 全家约 46s，gem 目录跨 run 缓存
       - name: 缓存 fpm gem（决议 #206）
         uses: actions/cache@v4
@@ -192,6 +198,9 @@ jobs:
         with:
           node-version: "18"
           cache: npm
+
+      - name: 校验版本与 tag 一致性
+        run: npm run check:version
 
       - name: 安装 npm 依赖
         run: npm ci
@@ -258,6 +267,9 @@ jobs:
           node-version: "18"
           cache: npm
 
+      - name: 校验版本与 tag 一致性
+        run: npm run check:version
+
       - name: 安装 npm 依赖
         run: npm ci
 
@@ -319,6 +331,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: 校验发布产物版本
+        run: npm run check:version -- --artifacts artifacts
 
       - name: 生成发布说明
         shell: bash

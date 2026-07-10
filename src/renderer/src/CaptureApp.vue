@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { placeCaptureToolbar } from './utils/capture-toolbar'
 
 // 截图框选窗（F-CAP-1）：屏幕图像做背景 → 拖拽框选 → 发送/复制/取消。
 // Esc 取消，Enter=发送。坐标按 scaleFactor 还原到物理像素裁剪。
@@ -10,6 +11,18 @@ const dragging = ref(false)
 const startX = ref(0)
 const startY = ref(0)
 const rect = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+const barEl = ref<HTMLElement | null>(null)
+const toolbarSize = ref({ width: 560, height: 40 })
+const viewportSize = ref({ width: window.innerWidth, height: window.innerHeight })
+const toolbarPosition = computed(() => {
+  const current = rect.value
+  if (!current) return { left: 8, top: 8 }
+  return placeCaptureToolbar(
+    { x: current.x, y: current.y, width: current.w, height: current.h },
+    toolbarSize.value,
+    viewportSize.value
+  )
+})
 type Tool = 'select' | 'rect' | 'arrow' | 'text' | 'mosaic'
 interface Annotation {
   type: Exclude<Tool, 'select'>
@@ -31,11 +44,23 @@ onMounted(() => {
     scale.value = factor
   })
   window.addEventListener('keydown', onKey)
+  window.addEventListener('resize', refreshToolbarLayout)
 })
 onBeforeUnmount(() => {
   unsubscribe?.()
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('resize', refreshToolbarLayout)
 })
+
+function refreshToolbarLayout(): void {
+  viewportSize.value = { width: window.innerWidth, height: window.innerHeight }
+  const bar = barEl.value
+  if (!bar) return
+  const bounds = bar.getBoundingClientRect()
+  if (bounds.width > 0 && bounds.height > 0) {
+    toolbarSize.value = { width: bounds.width, height: bounds.height }
+  }
+}
 
 function onKey(event: KeyboardEvent): void {
   if (event.key === 'Escape') void window.pantry.captureDone(new ArrayBuffer(0), false)
@@ -70,7 +95,7 @@ function onMouseMove(event: MouseEvent): void {
   }
 }
 
-function onMouseUp(): void {
+async function onMouseUp(): Promise<void> {
   if (drawingAnnotation.value !== null) {
     const ann = annotations.value[drawingAnnotation.value]
     if (ann && ann.type !== 'text' && Math.abs(ann.w) < 4 && Math.abs(ann.h) < 4) {
@@ -81,6 +106,10 @@ function onMouseUp(): void {
   }
   dragging.value = false
   if (rect.value && (rect.value.w < 4 || rect.value.h < 4)) rect.value = null
+  if (rect.value) {
+    await nextTick()
+    refreshToolbarLayout()
+  }
 }
 
 function cancel(): void {
@@ -251,10 +280,11 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
       </div>
       <div
         v-if="!dragging"
+        ref="barEl"
         class="bar"
         :style="{
-          left: `${Math.max(8, Math.min(rect.x, rect.x + rect.w - 560))}px`,
-          top: `${rect.y + rect.h + 8}px`
+          left: `${toolbarPosition.left}px`,
+          top: `${toolbarPosition.top}px`
         }"
         @mousedown.stop
       >

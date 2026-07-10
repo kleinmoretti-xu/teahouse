@@ -232,11 +232,11 @@ sequenceDiagram
 - **offer**（UDP，≤1200B 装不下时拆多条同 transferId；单个可靠信封超过 UDP 上限时走既有 TCP 控制帧兜底）：`msgId` 为可选聊天消息 ID；新端发送图片 / 普通文件 / 群文件等会出现在聊天流里的媒体时必须填写，接收端若识别该字段则用它作为 `messages.id`，以支撑撤回与去重；`purpose:"update"` 等隐藏传输不填写。`files[]: {fileId, path, size, isDir}`，`path` 为相对路径（文件夹传输即展平的相对路径树，含空目录条目）。可选 `purpose:"image"|"sticker"|"update"` 表示免确认图片 / 表情 / 自更新安装包；可选 `tableText` 仅允许在 `purpose:"image"`、单文件、非目录图片 offer 中携带，用于表格图片消息的文字视图；可选 `tableTextTruncated:true` 仅允许与 `tableText` 同时出现，表示发送端已按上限截断文字视图，图片内容仍完整；可选 `groupId/groupRev` 表示该 transfer 是群聊媒体的一次点对点投递，收端据此入 `group:<groupId>` 会话。入站校验须拒绝 `groupId` 存在且 `purpose` 存在但总大小超过 10MB 的 offer。旧端忽略未知 `msgId/tableText/tableTextTruncated` 字段并按旧逻辑生成本地消息；新端仅在对端声明 `mrec1` 时展示媒体撤回入口，仅在本地消息 `file_ref.tableText` 存在时展示表格图片/文字切换。`purpose:"update"` 由 updater 接管（落临时目录、不入聊天 / 不存到接收目录），不受 10MB 限制，见 §8.1。
 - **direct**（UDP，发送方在已有私聊文件卡片上触发）：`{op:"direct", transferId}`。发送端只在本地已有该 transfer、普通文件 offer 已送达、对端在线且 caps 含 `fd1`、非群聊会话时发送。收端仅在该 transfer 是私聊入站普通文件、状态仍为 `offering` 且本地允许直接接收时自动 accept；否则忽略，继续保持普通文件卡片。**群聊文件不允许直接发送**，即使收到 direct 控制帧也不得自动接收。
 - **默认接收落盘（本地策略）**：普通手动「接收」和 direct 自动 accept 都不改变 TCP 拉取式数据面，仍由接收方连接发送方拉取、校验 SHA-256、写 `.part` 后重命名。未使用「另存为」时，默认落点由接收方本地计算为 `文件保存位置/联系人名称/`（direct 场景即发送人名字）；目录名以本地备注优先、其次 profile 昵称生成并清洗。点击「另存为」时直接使用用户选择目录。该目录名不入协议，避免远端控制本机路径。
-- **TCP 帧格式**：4 字节大端长度前缀 + UTF-8 JSON 控制帧；`pull-ok` 后紧跟声明长度的裸字节流（零拷贝直传，不做 base64）。帧型：`msg`（承载超长消息/大控制信封）/ `msg-ack` / `pull` / `pull-ok` / `done`（带整文件 SHA-256）/ `finish`（接收方全部拉完，发送方据此判定完成）/ `err`（拒绝原因，如未授权 `not-found`、并发 `busy`）。同一连接内文件串行拉取；`msg` 帧独立短连接发送。
+- **TCP 帧格式**：4 字节大端长度前缀 + UTF-8 JSON 控制帧；`pull-ok` 后紧跟声明长度的裸字节流（零拷贝直传，不做 base64）。帧型：`msg`（承载超长消息/大控制信封）/ `msg-ack` / `pull` / `pull-ok` / `done`（带整文件 SHA-256）/ `finish`（接收方全部拉完，发送方据此判定完成）/ `err`（拒绝原因，如未授权 `not-found`、并发 `busy`）。入站控制帧逐类型执行精确字段白名单：ID / 节点 ID 必须为受限非空字符串，`offset/len` 必须为非负安全整数，`done.sha256` 必须为 64 位小写十六进制，嵌套 `msg.envelope` 复用 UDP 信封校验；未知字段、未知帧型、畸形 JSON 与长度越界均拒绝。帧解析器首次失败后进入终止态并清空缓冲，同一连接后续字节不再解析；服务端捕获解析异常并只销毁当前 socket。同一连接内文件串行拉取；`msg` 帧独立短连接发送。
 - **校验**：发送方流式计算 SHA-256，`done` 帧携带；接收方边收边算比对，不一致则丢弃 `.part` 重拉。
 - **续传**（P1）：保留 `.part` 与已收字节数，重连后 `pull{offset}` 续传，`done` 校验整文件。
 - **取消**：任一方 `file-ctl{op:cancel}`（UDP）或直接断开 TCP；接收方清理 `.part`。
-- 并发：每个 transfer 一条 TCP 连接，全局默认并发 3（可配）；同一 transfer 内文件串行拉取。
+- 并发与资源预算：每个 transfer 一条 TCP 连接，同一 transfer 内文件串行拉取；发送端同时执行的数据供流任务默认最多 3 条，超额的已授权 `pull` 按 FIFO 等待；TCP 服务最多保留 256 条连接，连接建立后 15 秒内未收到有效首帧即断开，已进入控制 / 数据阶段后 60 秒无读写即断开。排队中的授权拉取暂停空闲计时，获得数据流槽位后重新启用。
 - 安全：`path` 清洗——拒绝绝对路径、`..`、盘符、保留字符；落盘限定在接收目录内；重名自动加后缀（F-FILE-3）。
 - 对方离线时不入队，仅提示（决议 #4）。
 
@@ -246,7 +246,7 @@ sequenceDiagram
 
 1. B 经发现得知 A **同平台、`ver` 更高、`caps` 含 `upd1`、在线**；用户确认更新后，B → A 发 `update{op:"req", platform, arch}`（可靠投递 + ACK，UDP 失败可走 TCP 控制帧；`platform` 供 A 复核同平台、拒绝跨平台请求；`arch` 可选，当前只取 `x64|arm64`，用于 Linux x64/arm64 并存时筛选正确安装包）。
 2. A 收到 `req` → 复核请求方在线、同平台且版本低于本机，再按请求架构备妥本平台安装包（**Windows**：安装时自留在数据目录的 nsis 安装器；**Linux**：运行态用 `dpkg-deb` 现场把自身重打包成 deb；当前实现先回传本地已有匹配版本和架构的包），随即向 B 发 `file-ctl{op:"offer", purpose:"update", files:[安装包]}`；A 暂时无法提供（找不到本地包、重打包失败、无对应架构包等）则不回 offer，B 端超时按"暂不可用"提示、可重试。
-3. B 收到 `purpose:"update"` 的 offer → 由 updater 接管：自动 accept、TCP 拉取到**临时目录**（不入聊天、不落接收目录），沿用 `done` 帧的 SHA-256 校验完整性，再核对包内版本号 == A 声明的 `ver`、大小合理。
+3. B 发出可靠 `update{op:"req"}` 前登记一次性授权，绑定源节点 A、目标版本、平台与架构，有效期 **120 秒**；可靠发送失败时撤销同一次授权。B 收到 `purpose:"update"` 的 offer 后先校验：来源必须是 A；仅一个非目录文件；路径等于根文件名且不含分隔符；文件名精确匹配 `Teahouse-<version>-win-<arch>-setup.exe`、`Teahouse-<version>-linux-amd64.deb` 或 `Teahouse-<version>-linux-arm64.deb`；大小为正且不超过 **512 MiB**。校验通过后消费授权并由 updater 接管：自动 accept、TCP 拉取到**临时目录**（不入聊天、不落接收目录），沿用 `done` 帧的 SHA-256 校验完整性，再核对包内版本号 == A 声明的 `ver`。其余 offer 一律 decline。
 4. 校验通过 → 应用更新（nsis 静默装 / deb 经 pkexec 授权装）并重启；B 保留该包、自身改为声明 `upd1`，成为新的更新源（接力扩散）。
 5. 全程纯内网点对点、零外网；信任内网边界（决议 #5，v1 不签名），以"用户确认 + SHA-256 + 同平台同架构 + 版本核对"为安全底线。
 
@@ -258,6 +258,7 @@ sequenceDiagram
 | UDP_MAX_PAYLOAD | 1200 B | 防 IP 分片 |
 | TEXT_UDP_LIMIT | 800 B | 超过走 TCP |
 | TEXT_TCP_LIMIT | 4096 B | 文本输入硬上限 |
+| UPDATE_PACKAGE_MAX_BYTES | 536870912 B（512 MiB） | `purpose:"update"` 单包硬上限，决议 #208 |
 | ACK_RETRY | 1s / 2s / 4s ×3 | 之后入补发队列 |
 | ENTRY_REPLY_JITTER | 0–2s，按在线规模自适应扩至 0–8s | 防应答风暴（含批量开机，§6.1） |
 | PRESENCE_INTERVAL / OFFLINE_AFTER | 30s / 90s | 决议 #1，实测可调 |
@@ -347,3 +348,4 @@ sequenceDiagram
 - 2026-07-08 v0.37 决议 #194：文档澄清茶话间主协议仍保持 UTF-8 JSON 与自有信封，IPMSG / 内网通兼容能力不进入主 `UdpChannel` / `codec`，而是由独立兼容适配器实现；兼容子集的 `BR_ENTRY` / `ANSENTRY` / `SENDMSG` / `RECVMSG`、`2425/UDP` 与 GBK 解码策略见 [nwt-compat-design.md](nwt-compat-design.md)。
 - 2026-07-08 v0.38 决议 #195：补充说明内网通文件、图片、震动等能力仍属于独立兼容适配器范围。IPMSG `FILEATTACHOPT` / `CLIPBOARDOPT` / TCP `GETFILEDATA` 可在 `net/compat/` 内实验，主协议继续只保留茶话间自有文件、图片、PK、窗口震动和媒体撤回语义；兼容会话的能力隐藏规则见 [nwt-compat-design.md](nwt-compat-design.md)。
 - 2026-07-09 v0.39 决议 #198：`GROUP_MAX_MEMBERS` 50 → **200**（§7.4 与常量表）；codec 对 `group.info.members` 与 `group-text.mentions` 上限同步。旧端仍按 50 拒绝超限元数据。
+- 2026-07-10 v0.40 决议 #208：TCP 控制帧启用逐类型精确白名单与失败终止态；发送端增加数据流 / 连接 / 超时资源预算；自更新请求增加 120 秒一次性授权、精确包名与 512 MiB 上限。版本 0.32.24 → **0.32.25**。

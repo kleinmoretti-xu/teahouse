@@ -12,6 +12,7 @@ import {
   TEXT_TCP_LIMIT,
   TEXT_UDP_LIMIT,
   UDP_MAX_INBOUND,
+  UPDATE_PACKAGE_MAX_BYTES,
   type AckPayload,
   type Envelope,
   type FileCtlOffer,
@@ -225,7 +226,13 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
       ) {
         return false
       }
-      if (o.purpose === 'update' && (o.groupId !== undefined || o.fileCount !== 1 || o.totalSize! <= 0)) {
+      if (
+        o.purpose === 'update' &&
+        (o.groupId !== undefined ||
+          o.fileCount !== 1 ||
+          o.totalSize! <= 0 ||
+          o.totalSize! > UPDATE_PACKAGE_MAX_BYTES)
+      ) {
         return false
       }
       if (o.groupId !== undefined) {

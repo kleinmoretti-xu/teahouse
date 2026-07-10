@@ -108,7 +108,8 @@ import { canServeUpdates } from './util/release-format'
 import {
   findLocalUpdatePackage,
   pickUpdateSource,
-  shouldServeUpdateRequest
+  shouldServeUpdateRequest,
+  UpdateRequestGate
 } from './services/updater'
 
 // Win7（NT 6.1）终端为统一 VM 部署，虚拟显卡驱动不可靠；UOS/Debian 目标机多国产 GPU 或旧驱动，
@@ -162,6 +163,7 @@ if (!gotLock) {
   const IMAGE_SEND_MAX_BYTES = 20 * 1024 * 1024
   const imageOcrCache = new ImageOcrResultCache()
   const rendererPathGrants = new PathGrantStore()
+  const updateRequestGate = new UpdateRequestGate()
   let discovery: Discovery | null = null
   let registry: PeerRegistry | null = null
   let messenger: Messenger | null = null
@@ -650,14 +652,28 @@ if (!gotLock) {
     if (!appState || !messenger) return false
     const src = currentUpdateSource()
     if (!src) return false
-    return messenger.sendReliable(
-      src.nodeId,
-      makeEnvelope<UpdateReqPayload>(MSG_TYPES.update, appState.nodeId, {
-        op: 'req',
-        platform: appState.profile.platform,
-        arch: currentRuntimeArch()
-      })
-    )
+    const arch = currentRuntimeArch()
+    const token = updateRequestGate.begin({
+      nodeId: src.nodeId,
+      version: src.version,
+      platform: src.platform,
+      arch
+    })
+    try {
+      const ok = await messenger.sendReliable(
+        src.nodeId,
+        makeEnvelope<UpdateReqPayload>(MSG_TYPES.update, appState.nodeId, {
+          op: 'req',
+          platform: appState.profile.platform,
+          arch
+        })
+      )
+      if (!ok) updateRequestGate.cancel(token)
+      return ok
+    } catch {
+      updateRequestGate.cancel(token)
+      return false
+    }
   }
 
   function currentProtocolPlatform(): Platform {
@@ -1013,6 +1029,8 @@ if (!gotLock) {
           appState?.config.fileDir || defaultFileDir(),
         getImagesDir: imagesDir,
         getUpdateDir: updatesDir,
+        authorizeUpdateOffer: (peerId, name, totalSize) =>
+          updateRequestGate.consume(peerId, name, totalSize),
         allowDirectFileSend: () => appState?.config.allowDirectFileSend !== false,
         peerDisplayName: resolvePeerDisplayName
       })

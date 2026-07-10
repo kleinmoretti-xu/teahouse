@@ -1,9 +1,74 @@
-import type { TcpFrame } from '../../shared/protocol'
+import { LIMITS, type TcpFrame } from '../../shared/protocol'
+import { decodeTcpEnvelopeObject } from './codec'
 
 // TCP 帧编解码（protocol §8）：4 字节大端长度前缀 + UTF-8 JSON 控制帧；
 // pull-ok 之后切换 raw 模式直收 len 字节裸流（零拷贝直传，不做 base64）。
 
 const MAX_FRAME = 64 * 1024
+const ERR_REASON_MAX = 128
+const SHA256_RE = /^[0-9a-f]{64}$/
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value)
+  return actual.length === keys.length && actual.every((key) => keys.includes(key))
+}
+
+function isBoundedString(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+/** TCP 控制帧逐类型白名单校验；所有网络输入先经此处再进入服务层。 */
+export function decodeTcpFrameObject(raw: unknown): TcpFrame | null {
+  if (!isRecord(raw) || typeof raw.type !== 'string') return null
+
+  switch (raw.type) {
+    case 'pull':
+      if (!hasOnlyKeys(raw, ['type', 'from', 'transferId', 'fileId', 'offset'])) return null
+      if (!isBoundedString(raw.from, LIMITS.from)) return null
+      if (!isBoundedString(raw.transferId, LIMITS.id)) return null
+      if (!isBoundedString(raw.fileId, LIMITS.id)) return null
+      if (!isNonNegativeSafeInteger(raw.offset)) return null
+      return raw as unknown as TcpFrame
+    case 'pull-ok':
+      if (!hasOnlyKeys(raw, ['type', 'fileId', 'len'])) return null
+      if (!isBoundedString(raw.fileId, LIMITS.id)) return null
+      if (!isNonNegativeSafeInteger(raw.len)) return null
+      return raw as unknown as TcpFrame
+    case 'done':
+      if (!hasOnlyKeys(raw, ['type', 'fileId', 'sha256'])) return null
+      if (!isBoundedString(raw.fileId, LIMITS.id)) return null
+      if (typeof raw.sha256 !== 'string' || !SHA256_RE.test(raw.sha256)) return null
+      return raw as unknown as TcpFrame
+    case 'finish':
+      if (!hasOnlyKeys(raw, ['type', 'transferId'])) return null
+      if (!isBoundedString(raw.transferId, LIMITS.id)) return null
+      return raw as unknown as TcpFrame
+    case 'err':
+      if (!hasOnlyKeys(raw, ['type', 'reason'])) return null
+      if (!isBoundedString(raw.reason, ERR_REASON_MAX)) return null
+      return raw as unknown as TcpFrame
+    case 'msg': {
+      if (!hasOnlyKeys(raw, ['type', 'envelope'])) return null
+      const decoded = decodeTcpEnvelopeObject(raw.envelope)
+      if (!decoded.ok || !decoded.known) return null
+      return { type: 'msg', envelope: decoded.env }
+    }
+    case 'msg-ack':
+      if (!hasOnlyKeys(raw, ['type', 'ackFor'])) return null
+      if (!isBoundedString(raw.ackFor, LIMITS.id)) return null
+      return raw as unknown as TcpFrame
+    default:
+      return null
+  }
+}
 
 export function encodeFrame(frame: TcpFrame): Buffer {
   const body = Buffer.from(JSON.stringify(frame), 'utf8')
@@ -19,6 +84,7 @@ export function encodeFrame(frame: TcpFrame): Buffer {
 export class FrameReader {
   private buf: Buffer = Buffer.alloc(0)
   private rawLeft = 0
+  private failed = false
 
   constructor(
     private readonly onFrame: (frame: TcpFrame) => void,
@@ -27,13 +93,27 @@ export class FrameReader {
   ) {}
 
   expectRaw(bytes: number): void {
+    if (this.failed) return
+    if (!isNonNegativeSafeInteger(bytes)) {
+      this.fail('bad-raw-length')
+      return
+    }
     this.rawLeft = bytes
     this.drain()
   }
 
   feed(chunk: Buffer): void {
+    if (this.failed) return
     this.buf = this.buf.length === 0 ? chunk : Buffer.concat([this.buf, chunk])
     this.drain()
+  }
+
+  private fail(reason: string): void {
+    if (this.failed) return
+    this.failed = true
+    this.buf = Buffer.alloc(0)
+    this.rawLeft = 0
+    this.onError(reason)
   }
 
   private drain(): void {
@@ -50,21 +130,22 @@ export class FrameReader {
       if (this.buf.length < 4) return
       const len = this.buf.readUInt32BE(0)
       if (len === 0 || len > MAX_FRAME) {
-        this.onError('bad-frame-length')
+        this.fail('bad-frame-length')
         return
       }
       if (this.buf.length < 4 + len) return
       const body = this.buf.subarray(4, 4 + len)
       this.buf = this.buf.subarray(4 + len)
-      let frame: TcpFrame
+      let raw: unknown
       try {
-        frame = JSON.parse(body.toString('utf8')) as TcpFrame
+        raw = JSON.parse(body.toString('utf8'))
       } catch {
-        this.onError('bad-frame-json')
+        this.fail('bad-frame-json')
         return
       }
-      if (typeof frame !== 'object' || frame === null || typeof frame.type !== 'string') {
-        this.onError('bad-frame-shape')
+      const frame = decodeTcpFrameObject(raw)
+      if (!frame) {
+        this.fail('bad-frame-shape')
         return
       }
       this.onFrame(frame)

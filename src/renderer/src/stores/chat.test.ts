@@ -31,6 +31,14 @@ function conv(id = 'single:node-bob'): ConversationView {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
 describe('chat store 自己发送后的滚动意图', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -108,6 +116,85 @@ describe('chat store 自己发送后的滚动意图', () => {
     expect(store.messages['single:node-bob']).toEqual(latest)
     expect(store.openScrollMode).toBe('latest')
     expect(store.openScrollRun).toBe(1)
+  })
+
+  it('A 单聊打开迟到时不得覆盖已完成的 B 会话导航', async () => {
+    const openingA = deferred<ConversationView | null>()
+    const openingB = deferred<ConversationView | null>()
+    const openConversation = vi.fn((peerId: string) =>
+      peerId === 'node-a' ? openingA.promise : openingB.promise
+    )
+    const pageMessages = vi.fn(async (convId: string) => [msg(`latest-${convId}`, convId)])
+    vi.stubGlobal('window', { pantry: { openConversation, pageMessages } })
+    const store = useChatStore()
+
+    const openA = store.openConv('single:node-a')
+    const openB = store.openConv('single:node-b')
+    openingB.resolve(conv('single:node-b'))
+    await openB
+    openingA.resolve(conv('single:node-a'))
+    await openA
+
+    expect(store.activeConvId).toBe('single:node-b')
+    expect(store.messages['single:node-b']?.map((item) => item.id)).toEqual([
+      'latest-single:node-b'
+    ])
+    expect(store.messages['single:node-a']).toBeUndefined()
+  })
+
+  it('迟到的历史搜索上下文不得改写新会话的高亮与滚动意图', async () => {
+    const contextA = deferred<MessageView[]>()
+    const pageMessages = vi.fn(async (convId: string) => [msg(`latest-${convId}`, convId)])
+    const markRead = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', {
+      pantry: {
+        getMessageContext: vi.fn(() => contextA.promise),
+        pageMessages,
+        markRead
+      }
+    })
+    const store = useChatStore()
+    store.convs = [conv('group:a'), conv('group:b')]
+
+    const jump = store.jumpToMessage('group:a', 10, 'target-a')
+    await Promise.resolve()
+    await store.openConv('group:b')
+    const scrollRun = store.openScrollRun
+    contextA.resolve([msg('target-a', 'group:a', 10)])
+    await jump
+
+    expect(store.activeConvId).toBe('group:b')
+    expect(store.highlightId).toBeNull()
+    expect(store.openScrollMode).toBe('latest')
+    expect(store.openScrollRun).toBe(scrollRun)
+    expect(store.messages['group:a']).toBeUndefined()
+  })
+
+  it('迟到的返回最新结果不得覆盖离开会话后的状态', async () => {
+    const latestA = deferred<MessageView[]>()
+    const oldA = [msg('old-a', 'group:a')]
+    const pageMessages = vi.fn((convId: string) =>
+      convId === 'group:a' ? latestA.promise : Promise.resolve([msg('latest-b', 'group:b')])
+    )
+    vi.stubGlobal('window', {
+      pantry: {
+        pageMessages,
+        markRead: vi.fn().mockResolvedValue(undefined)
+      }
+    })
+    const store = useChatStore()
+    store.activeConvId = 'group:a'
+    store.messages['group:a'] = oldA
+
+    const back = store.backToLatest()
+    await store.openConv('group:b')
+    const scrollRun = store.openScrollRun
+    latestA.resolve([msg('latest-a', 'group:a')])
+    await back
+
+    expect(store.activeConvId).toBe('group:b')
+    expect(store.messages['group:a'].map((item) => item.id)).toEqual(['old-a'])
+    expect(store.openScrollRun).toBe(scrollRun)
   })
 
   it('裁剪长会话头部消息后保持消息缓存一致', () => {

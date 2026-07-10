@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it, expect } from 'vitest'
-import { findLocalUpdatePackage, pickUpdateSource, shouldServeUpdateRequest } from './updater'
+import {
+  findLocalUpdatePackage,
+  matchesUpdatePackageName,
+  pickUpdateSource,
+  shouldServeUpdateRequest,
+  UpdateRequestGate
+} from './updater'
 import type { SourceCandidate } from './updater'
 import type { Profile } from '../../shared/protocol'
 
@@ -108,5 +114,45 @@ describe('自更新请求复核与本地包查找', () => {
     )
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.28.0', platform: 'mac' })).toBeNull()
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.29.0', platform: 'linux', arch: 'x64' })).toBeNull()
+  })
+
+  it('安装包名必须精确匹配版本、平台与架构', () => {
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-win-x64-setup.exe', '0.28.0', 'win', 'x64')).toBe(true)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-amd64.deb', '0.28.0', 'linux', 'x64')).toBe(true)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-arm64.deb', '0.28.0', 'linux', 'arm64')).toBe(true)
+    expect(matchesUpdatePackageName('copy-Teahouse-0.28.0-linux-amd64.deb', '0.28.0', 'linux', 'x64')).toBe(false)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-amd64.deb.bak', '0.28.0', 'linux', 'x64')).toBe(false)
+    expect(matchesUpdatePackageName('Teahouse-0.28.1-win-x64-setup.exe', '0.28.0', 'win', 'x64')).toBe(false)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-mac-arm64.dmg', '0.28.0', 'mac', 'arm64')).toBe(false)
+  })
+})
+
+describe('UpdateRequestGate', () => {
+  it('只消费有效期内来源、包名和大小全部匹配的一次 offer', () => {
+    const gate = new UpdateRequestGate()
+    gate.begin({ nodeId: 'node-a', version: '0.28.0', platform: 'linux', arch: 'x64' }, 1_000)
+
+    expect(gate.consume('node-b', 'Teahouse-0.28.0-linux-amd64.deb', 1024, 1_100)).toBe(false)
+    expect(gate.consume('node-a', 'Teahouse-0.28.0-linux-arm64.deb', 1024, 1_100)).toBe(false)
+    expect(gate.consume('node-a', 'Teahouse-0.28.0-linux-amd64.deb', 512 * 1024 * 1024 + 1, 1_100)).toBe(false)
+    expect(gate.consume('node-a', 'Teahouse-0.28.0-linux-amd64.deb', 1024, 1_100)).toBe(true)
+    expect(gate.consume('node-a', 'Teahouse-0.28.0-linux-amd64.deb', 1024, 1_100)).toBe(false)
+  })
+
+  it('授权过期，且旧请求取消不会清掉新请求', () => {
+    const gate = new UpdateRequestGate()
+    const oldToken = gate.begin({ nodeId: 'node-a', version: '0.28.0', platform: 'win', arch: 'x64' }, 1_000)
+    const newToken = gate.begin({ nodeId: 'node-b', version: '0.29.0', platform: 'win', arch: 'x64' }, 2_000)
+    gate.cancel(oldToken)
+
+    expect(gate.consume('node-b', 'Teahouse-0.29.0-win-x64-setup.exe', 1024, 2_100)).toBe(true)
+
+    gate.begin({ nodeId: 'node-c', version: '0.30.0', platform: 'win', arch: 'x64' }, 3_000)
+    expect(gate.consume('node-c', 'Teahouse-0.30.0-win-x64-setup.exe', 1024, 123_000)).toBe(false)
+
+    const canceled = gate.begin({ nodeId: 'node-d', version: '0.31.0', platform: 'win', arch: 'x64' }, 4_000)
+    expect(canceled).toBeGreaterThan(newToken)
+    gate.cancel(canceled)
+    expect(gate.consume('node-d', 'Teahouse-0.31.0-win-x64-setup.exe', 1024, 4_100)).toBe(false)
   })
 })

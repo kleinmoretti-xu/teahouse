@@ -2,12 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { FrameReader, encodeFrame } from './frame'
 import type { TcpFrame } from '../../shared/protocol'
 
+const SHA256 = 'a'.repeat(64)
+
+function encodeUnknownFrame(frame: unknown): Buffer {
+  const body = Buffer.from(JSON.stringify(frame), 'utf8')
+  const head = Buffer.alloc(4)
+  head.writeUInt32BE(body.length)
+  return Buffer.concat([head, body])
+}
+
 describe('FrameReader', () => {
   it('黏包/半包：多帧一次喂入与逐字节喂入结果一致', () => {
     const frames: TcpFrame[] = [
       { type: 'pull', from: 'n1', transferId: 't1', fileId: 'f1', offset: 0 },
       { type: 'pull-ok', fileId: 'f1', len: 5 },
-      { type: 'done', fileId: 'f1', sha256: 'abc' }
+      { type: 'done', fileId: 'f1', sha256: SHA256 }
     ]
     const wire = Buffer.concat(frames.map(encodeFrame))
 
@@ -43,7 +52,7 @@ describe('FrameReader', () => {
       Buffer.concat([
         encodeFrame({ type: 'pull-ok', fileId: 'f', len: raw.length }),
         raw,
-        encodeFrame({ type: 'done', fileId: 'f', sha256: 'x' })
+        encodeFrame({ type: 'done', fileId: 'f', sha256: SHA256 })
       ])
     )
     expect(types).toEqual(['pull-ok', 'done'])
@@ -61,5 +70,55 @@ describe('FrameReader', () => {
     head.writeUInt32BE(10 * 1024 * 1024)
     reader.feed(head)
     expect(errors).toEqual(['bad-frame-length'])
+  })
+
+  it.each([
+    { frame: { type: 'finish', transferId: {} }, label: 'finish transferId 类型错误' },
+    {
+      frame: { type: 'pull', from: 'n1', transferId: 't1', fileId: 'f1', offset: -1 },
+      label: 'pull 负偏移'
+    },
+    { frame: { type: 'pull-ok', fileId: 'f1', len: 1.5 }, label: 'pull-ok 非整数长度' },
+    { frame: { type: 'done', fileId: 'f1', sha256: 'ABC' }, label: 'done 非标准哈希' },
+    { frame: { type: 'err', reason: 'x'.repeat(129) }, label: 'err 原因过长' },
+    { frame: { type: 'msg-ack', ackFor: 'a', extra: true }, label: '未知字段' },
+    {
+      frame: {
+        type: 'msg',
+        envelope: { v: 1, type: 'msg', id: 'm1', from: 'n1', ts: 1, payload: { kind: 'text' } }
+      },
+      label: 'msg 内层信封非法'
+    },
+    { frame: { type: 'future-frame', value: 1 }, label: '未知帧型' }
+  ])('严格拒收 $label', ({ frame }) => {
+    const frames: TcpFrame[] = []
+    const errors: string[] = []
+    const reader = new FrameReader(
+      (item) => frames.push(item),
+      () => undefined,
+      (reason) => errors.push(reason)
+    )
+
+    reader.feed(encodeUnknownFrame(frame))
+
+    expect(frames).toEqual([])
+    expect(errors).toEqual(['bad-frame-shape'])
+  })
+
+  it('首次解析失败后清空状态，后续数据不再回调', () => {
+    const frames: TcpFrame[] = []
+    const errors: string[] = []
+    const reader = new FrameReader(
+      (frame) => frames.push(frame),
+      () => undefined,
+      (reason) => errors.push(reason)
+    )
+
+    reader.feed(encodeUnknownFrame({ type: 'finish', transferId: {} }))
+    reader.feed(encodeFrame({ type: 'finish', transferId: 't1' }))
+    reader.feed(Buffer.from([0, 0, 0, 0]))
+
+    expect(frames).toEqual([])
+    expect(errors).toEqual(['bad-frame-shape'])
   })
 })

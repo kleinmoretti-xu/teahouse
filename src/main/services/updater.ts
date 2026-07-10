@@ -1,6 +1,6 @@
 // 局域网 P2P 自更新编排（决议 #166）。
 import type { Platform, Profile, RuntimeArch } from '../../shared/protocol'
-import { CAPS } from '../../shared/protocol'
+import { CAPS, UPDATE_PACKAGE_MAX_BYTES } from '../../shared/protocol'
 import { compareSemver } from '../util/semver'
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -29,6 +29,50 @@ export interface SourceCandidate {
 export interface UpdateRequester {
   profile: Profile
   online: boolean
+}
+
+export interface UpdateRequestAuthorization {
+  nodeId: string
+  version: string
+  platform: Platform
+  arch: RuntimeArch
+}
+
+interface PendingUpdateRequest extends UpdateRequestAuthorization {
+  token: number
+  expiresAt: number
+}
+
+const UPDATE_REQUEST_TTL_MS = 120_000
+
+/** 用户确认后的短期一次性授权，只允许匹配来源与安装包进入隐藏传输。 */
+export class UpdateRequestGate {
+  private sequence = 0
+  private pending: PendingUpdateRequest | null = null
+
+  begin(request: UpdateRequestAuthorization, now = Date.now()): number {
+    const token = ++this.sequence
+    this.pending = { ...request, token, expiresAt: now + UPDATE_REQUEST_TTL_MS }
+    return token
+  }
+
+  cancel(token: number): void {
+    if (this.pending?.token === token) this.pending = null
+  }
+
+  consume(peerId: string, name: string, size: number, now = Date.now()): boolean {
+    const pending = this.pending
+    if (!pending) return false
+    if (now >= pending.expiresAt) {
+      this.pending = null
+      return false
+    }
+    if (peerId !== pending.nodeId) return false
+    if (!matchesUpdatePackageName(name, pending.version, pending.platform, pending.arch)) return false
+    if (!Number.isSafeInteger(size) || size <= 0 || size > UPDATE_PACKAGE_MAX_BYTES) return false
+    this.pending = null
+    return true
+  }
 }
 
 /**
@@ -72,7 +116,6 @@ export function findLocalUpdatePackage(opts: {
   platform: Platform
   arch?: RuntimeArch
 }): string | null {
-  const versionNeedle = opts.version.toLowerCase()
   for (const dir of opts.dirs) {
     let names: string[]
     try {
@@ -81,10 +124,7 @@ export function findLocalUpdatePackage(opts: {
       continue
     }
     const matches = names
-      .filter((name) => {
-        const lower = name.toLowerCase()
-        return lower.includes(versionNeedle) && isPackageNameForPlatform(lower, opts.platform, opts.arch)
-      })
+      .filter((name) => matchesUpdatePackageName(name, opts.version, opts.platform, opts.arch))
       .sort()
     for (const name of matches) {
       const path = join(dir, name)
@@ -99,18 +139,28 @@ export function findLocalUpdatePackage(opts: {
   return null
 }
 
-function isPackageNameForPlatform(lowerName: string, platform: Platform, arch?: RuntimeArch): boolean {
+export function matchesUpdatePackageName(
+  name: string,
+  version: string,
+  platform: Platform,
+  arch?: RuntimeArch
+): boolean {
   if (platform === 'win') {
-    if (!lowerName.endsWith('.exe') || !lowerName.includes('setup') || lowerName.includes('portable')) {
-      return false
-    }
-    return arch ? lowerName.includes(`-win-${arch}-`) : true
+    if (arch) return name === `Teahouse-${version}-win-${arch}-setup.exe`
+    return (
+      name === `Teahouse-${version}-win-x64-setup.exe` ||
+      name === `Teahouse-${version}-win-arm64-setup.exe`
+    )
   }
   if (platform === 'linux') {
-    if (!lowerName.endsWith('.deb')) return false
-    if (!arch) return true
-    const debArch = arch === 'x64' ? 'amd64' : 'arm64'
-    return lowerName.includes(`-linux-${debArch}.deb`)
+    if (arch) {
+      const debArch = arch === 'x64' ? 'amd64' : 'arm64'
+      return name === `Teahouse-${version}-linux-${debArch}.deb`
+    }
+    return (
+      name === `Teahouse-${version}-linux-amd64.deb` ||
+      name === `Teahouse-${version}-linux-arm64.deb`
+    )
   }
   return false
 }

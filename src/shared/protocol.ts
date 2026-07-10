@@ -13,6 +13,8 @@ export const UDP_MAX_INBOUND = 4096
 export const TEXT_UDP_LIMIT = 800
 /** 文本输入硬上限；超出不发送 */
 export const TEXT_TCP_LIMIT = 4096
+/** 局域网自更新单包硬上限（决议 #208）。 */
+export const UPDATE_PACKAGE_MAX_BYTES = 512 * 1024 * 1024
 
 /** 时序参数（protocol §9）。测试中可整体注入缩短。 */
 export const TIMINGS = {
