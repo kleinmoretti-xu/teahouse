@@ -38,7 +38,8 @@ class FakeMessenger extends EventEmitter {
 class FakeRegistry {
   constructor(
     private readonly onlineIds: string[],
-    private readonly caps: string[] | Record<string, string[]> = []
+    private readonly caps: string[] | Record<string, string[]> = [],
+    private readonly tcpPort = 17879
   ) {}
 
   get(nodeId: string): unknown {
@@ -48,7 +49,7 @@ class FakeRegistry {
       online: true,
       ip: '127.0.0.1',
       udpPort: 17878,
-      profile: { tcpPort: 17879, caps, nick: nodeId }
+      profile: { tcpPort: this.tcpPort, caps, nick: nodeId }
     }
   }
 }
@@ -1371,6 +1372,87 @@ describe('FilesService 取消可恢复（决议 #211）', () => {
     expect(transferRepo.get('t-retry')?.status).toBe('canceled')
     expect(service.transferView('t-retry')?.retryable).toBe(false)
     await expect(service.accept('t-retry')).resolves.toBe(false)
+  })
+
+  it('接收后传输中取消（用户反馈复现）：状态回 canceled 且重新下载仍可用', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-midpull-'))
+    tmpDirs.push(dir)
+    // 静默供流端：接受连接与 pull 帧但永不回应，把接收方钉在「传输中」
+    const { createServer } = await import('node:net')
+    const silent = createServer(() => undefined)
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', () => resolve()))
+    const port = (silent.address() as { port: number }).port
+
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], [CAPS.transferWait], port) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: new FakeGroupRepo({
+        groupId: 'g-1',
+        name: '测试群',
+        members: ['node-bob', 'node-self'],
+        rev: 1,
+        updatedBy: 'node-bob',
+        updatedTs: 1,
+        creatorIp: '127.0.0.1',
+        creatorId: 'node-bob',
+        adminSecretHash: '',
+        adminHint: ''
+      }) as unknown as GroupRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    // 完整对齐用户场景：群聊文件 offer（带 groupId/groupRev/msgId）
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-midpull',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-1', path: 'a.bin', size: 8 }],
+        totalSize: 8,
+        fileCount: 1,
+        rootName: 'a.bin',
+        msgId: 'm-group-file',
+        groupId: 'g-1',
+        groupRev: 1
+      })
+    )
+    await waitTick()
+
+    try {
+      // 用户点「接收」：进入传输中，拉取悬挂在静默供流端
+      await expect(service.accept('t-midpull')).resolves.toBe(true)
+      expect(transferRepo.get('t-midpull')?.status).toBe('accepted')
+      await waitUntil(
+        () =>
+          (service as unknown as { incoming: Map<string, { cancelRef: { socket: unknown } }> })
+            .incoming.get('t-midpull')?.cancelRef.socket !== null
+      )
+
+      // 用户点「取消」
+      await service.cancel('t-midpull')
+      expect(transferRepo.get('t-midpull')?.status).toBe('canceled')
+      expect(service.transferView('t-midpull')?.retryable).toBe(true)
+
+      // 拉取 promise 的失败回调随后落地，不得把状态/可恢复性冲掉
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(transferRepo.get('t-midpull')?.status).toBe('canceled')
+      expect(service.transferView('t-midpull')?.retryable).toBe(true)
+
+      // 再点「重新下载」仍可发起
+      await expect(service.accept('t-midpull')).resolves.toBe(true)
+    } finally {
+      silent.close()
+    }
   })
 
   it('发送方收到对端 cancel 保留供流授权：对方重新 accept 后卡片恢复传输中', async () => {
