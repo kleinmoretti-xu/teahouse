@@ -14,7 +14,7 @@ export default defineConfig({
     build: { target: 'node16' }
   },
   renderer: {
-    build: { target: 'chrome108' },
+    build: { target: 'chrome108', manifest: true, minify: 'esbuild' },
     plugins: [
       vue(),
       {

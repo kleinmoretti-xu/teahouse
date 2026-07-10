@@ -1,4 +1,5 @@
 import type { ImageOcrSource } from '../../../shared/ipc'
+import { BoundedLruCache, RetryableAsyncValue } from './bounded-cache'
 import { PaddleOcrService, type OrtModule, type RecognitionResult } from './paddleocr'
 
 export const OCR_AUTO_MAX_PIXELS = 1_500_000
@@ -56,8 +57,8 @@ interface PreparedImage {
   scale: number
 }
 
-const resultCache = new Map<string, OcrResult>()
-let servicePromise: Promise<PaddleOcrService> | null = null
+const resultCache = new BoundedLruCache<string, OcrResult>(16)
+const serviceCache = new RetryableAsyncValue<PaddleOcrService>()
 
 export function getCachedOcrResult(cacheKey: string): OcrResult | null {
   return resultCache.get(cacheKey) ?? null
@@ -142,10 +143,7 @@ export async function recognizeImageText(params: {
 }
 
 async function getService(): Promise<PaddleOcrService> {
-  if (!servicePromise) {
-    servicePromise = createService()
-  }
-  return servicePromise
+  return serviceCache.get(createService)
 }
 
 async function createService(): Promise<PaddleOcrService> {

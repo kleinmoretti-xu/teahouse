@@ -83,7 +83,7 @@
 
 ### 5.1 Manifest
 
-renderer 构建启用 Vite manifest，正式路径固定为：
+renderer 生产构建启用 Vite manifest 并显式使用 esbuild 压缩，正式路径固定为：
 
 `out/renderer/.vite/manifest.json`
 

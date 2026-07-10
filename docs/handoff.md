@@ -8,18 +8,19 @@
 > 当前补充：2026-07-09（**决议 #200，代码优化方案落档**）：全库审查产出 [optimization-plan.md](optimization-plan.md)（P0 群 200 上限三处漏改、传输层健壮性、messages 索引缺失等 18 项分级待办）；跟进优化的代理从该文档开工，逐项执行并回写状态。
 > 当前补充：2026-07-09（**决议 #202，文档漂移修正**）：当前图片 OCR 引擎为内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm；数据库迁移版本以 `src/main/store/migrations.ts` 与 `PRAGMA user_version` 为准，交接文档不再手写具体迁移号。
 > 当前补充：2026-07-10（**v0.33.0，决议 #208/#209 优先修复批次**）：完成 TCP 帧严格白名单与失败隔离、自更新一次性请求授权 / 精确包名 / 512 MiB 上限、版本 / tag / artifact CI 一致性门禁、文件供流资源预算、会话导航竞态防护、截图工具条视口定位和截图窗口导航拦截；用户按改动规模将最终发布版本调整为 0.33.0，专项 109 测试与常规五连验证均通过。
+> 当前补充：2026-07-10（**v0.33.1，决议 #210 第二批优化已完成**）：四个渲染根组件已按 hash 动态加载；renderer OCR 结果缓存限制为 16 项 LRU，服务初始化失败后可重试；构建已增加 manifest、四入口独立可达与 200 KiB 公共启动闭包门禁。实测公共启动闭包 75,853 字节，专项 26 测试与常规五连验证均通过。消息虚拟列表继续暂缓。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #209）→ [protocol.md](protocol.md)（主协议 v0.40）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #210）→ [protocol.md](protocol.md)（主协议 v0.40）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.33.0**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.33.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
@@ -33,6 +34,7 @@
 | v0.31.3 已交付 | 密码组群管理入口（决议 #193）：移除群成员面板里的原生 prompt / alert 依赖，改为面板内密码输入框 + 行内失败提示；`group:update` 成功返回后立即刷新本地组视图 |
 | v0.32.x 已交付 | 全局刷新二次确认（#197）、群成员上限 200（#198）；发布 v0.32.3 |
 | v0.33.0 已交付 | 决议 #208/#209 七项优先修复：TCP 入站与资源预算、自更新请求授权、版本一致性 CI、会话竞态、截图工具条定位与截图窗口导航安全 |
+| v0.33.1 已交付 | 决议 #210 第二批优化：四窗口根组件动态加载、OCR 16 项 LRU 与初始化失败重试、renderer bundle 200 KiB 构建门禁 |
 | 内网通兼容 · **暂缓** | 决议 #194/#195/#196 设计已落档，**#199 明确暂不实现**（调研周期长）；代码零落地；详见 [nwt-compat-design.md](nwt-compat-design.md)，需要时再启动 |
 | 内置截图 | 全局快捷键 Ctrl/Cmd+Alt+A、框选窗、剪贴板+直发会话、截图隐藏主窗（可配）|
 | 撤回 | 自己文本/群文本/PK 消息 5 分钟内可撤（决议 #63/#139，右键菜单实时倒计时 mm:ss、超时变灰）；`msg.kind:"recall"` 可靠投递 + 离线补发；本地/对端隐藏原消息并插系统提示，撤回 PK 不级联影响别人之后另发的 PK |
@@ -75,7 +77,7 @@ main/
   windows/ tray settings-window capture-window tray-icon(base64内嵌)
   index.ts 装配+IPC handlers+通知+截图编排+pantry-img/pantry-sticker 协议
 preload/   contextBridge 唯一入口（window.pantry，类型=shared/ipc.ts 的 PantryApi）
-renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进程投影)；components
+renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 App/#settings/#capture/#image-viewer；stores(pinia=主进程投影)；components
 ```
 
 关键不变量：net/ 与 services/ **零 Electron 依赖**（vitest 可直接实例化）；renderer 一切经 `window.pantry`；消息 id=信封 id=去重锚点；群消息同一信封 id 发全员。
@@ -83,7 +85,7 @@ renderer/  main.ts 哈希三入口(App/#settings/#capture)；stores(pinia=主进
 ## 4. 下一步
 
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
-2. **代码优化待办（决议 #200）**：按 [optimization-plan.md](optimization-plan.md) 批次 A→E 逐项执行（先 P0 四个真 bug），一项一 commit、完成回写状态行。
+2. **代码优化状态（决议 #200/#210）**：[optimization-plan.md](optimization-plan.md) 的 18 项首批优化与 #210 第二批渲染性能优化均已完成；下一批开始前先按用户确认的范围新增决议与设计记录。
 3. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
 4. **v1.0 打磨项**：macOS universal 包专项、Win7 / UOS 真实平台复测（本地 SVG emoji/头像、软渲染、SHA-2 KB 提示文案）；自更新闭环（备包 / 校验 / 安装重启）。
 5. **内网通兼容（决议 #199 · 暂缓，勿当下一步）**：设计见 [nwt-compat-design.md](nwt-compat-design.md)；未完成 VM 链路与产品取舍前**不写代码、不排期**。

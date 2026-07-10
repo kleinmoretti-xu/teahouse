@@ -89,15 +89,23 @@ src/
 │  └─ util/                # logger / paths / sanitize（文件名清洗）/ atomic-write / self-package（deb 自重打包·nsis 定位自留包）/ apply-update（替换重启）
 ├─ preload/index.ts        # contextBridge 暴露 window.pantry（按 shared/ipc.ts 类型）
 └─ renderer/
-   ├─ app/                 # 三栏壳、路由（chat / contacts / 空状态）
-   ├─ views/               # ChatView / ContactsView / SettingsApp（设置窗复用同包不同入口）/ CaptureApp
+   ├─ main.ts              # 公共轻量 bootstrap：解析 hash 后异步加载根组件
+   ├─ renderer-entry.ts    # main / settings / capture / image-viewer 动态入口映射
+   ├─ App.vue              # 主窗口三栏壳
+   ├─ SettingsApp.vue      # 设置窗口根组件
+   ├─ CaptureApp.vue       # 截图窗口根组件
+   ├─ ImageViewerApp.vue   # 图片查看窗口根组件
+   ├─ views/               # ChatView / ContactsView / SettingsView 等业务视图
    ├─ components/          # bubble/* file-card avatar tree search-panel emoji-panel virtual-list
    ├─ stores/              # pinia：peers / convs / messages / transfers / ui / settings
    ├─ ipc.ts               # window.pantry 的薄封装 + 事件订阅分发到 store
+   ├─ utils/               # 渲染层纯函数、OCR 适配与 16 项 LRU 结果缓存
    └─ styles/tokens.css    # ui-design §9 的 CSS 变量
 ```
 
 分层铁律：renderer 永不直接碰网络/磁盘/DB——一切经 IPC；main 的 `services/` 是用例编排层，`net/`、`store/` 互不感知，由 service 串联。
+
+渲染入口性能边界（决议 #210）：四类窗口继续共用单个 `index.html` 和 hash 路由，公共 bootstrap 只静态加载 Vue、Pinia、入口解析与基础 token；各根组件通过动态 import 形成独立 chunk，生产构建使用 esbuild 压缩。Vite manifest 进入构建产物，`scripts/check-renderer-bundles.mjs` 在每次 `npm run build` 后确认四个动态入口均可达且文件互异，并把入口及其静态依赖闭包限制在 200 KiB。OCR 结果缓存使用 16 项 LRU；PaddleOCR 服务初始化 Promise 失败后清空，后续识别可以重新初始化。
 
 远期预留（决议 #21）：将来的本地 AI 开放接口（`local-api/`，HTTP/WS 或 MCP 服务器）将作为与 `ipc/` **并列的第二个"前台"**，复用同一 `services/` 层——界面能做的（查消息、发消息、订阅事件），接口天然也能做，不需要改动业务层。当前版本不实现，但任何人不得把业务逻辑写进 `ipc/` 层（会堵死这个口子）。
 
@@ -390,3 +398,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-09 v1.07 决议 #200 / OPT-5：SQLite 追加 v10 迁移，新增 `idx_messages_seq` 与 `idx_messages_conv_seq`，让消息插入取号、会话内按 seq 分页 / 上下文窗口和会话预览走索引。版本 0.32.7 → 0.32.8。
 - 2026-07-09 v1.08 决议 #202：同步文档漂移修正记录。当前 OCR 架构以 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm 为准；迁移当前版本以 `src/main/store/migrations.ts` 和 `PRAGMA user_version` 为准，旧 OCR 引擎描述仅保留在历史决议记录中。
 - 2026-07-10 v1.09 决议 #208：传输层增加严格帧校验、失败隔离、读流 / 连接 / 超时预算；自更新增加一次性请求授权、精确包名与 512 MiB 上限；渲染层会话导航增加代次；CI 增加 package / lock / tag / artifact 版本一致性检查。版本 0.32.24 → **0.32.25**。
+- 2026-07-10 v1.10 决议 #210：渲染层四个根组件改为单 HTML 下的动态入口；OCR 结果缓存增加 16 项 LRU 边界，服务初始化失败后允许重试；构建启用 manifest，并增加四入口可达性、文件独立性与 200 KiB 公共启动闭包门禁。版本 0.33.0 → **0.33.1**。

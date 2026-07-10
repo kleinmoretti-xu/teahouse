@@ -1,0 +1,120 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { checkRendererBundles } from './check-renderer-bundles.mjs'
+
+const roots = []
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function createFixture(transform = (manifest) => manifest) {
+  const outDir = mkdtempSync(join(tmpdir(), 'pantry-renderer-bundles-'))
+  roots.push(outDir)
+  const manifest = transform({
+    'src/main.ts': {
+      file: 'assets/bootstrap.js',
+      src: 'src/main.ts',
+      isEntry: true,
+      imports: ['_vendor.js'],
+      dynamicImports: [
+        'src/App.vue',
+        'src/SettingsApp.vue',
+        'src/CaptureApp.vue',
+        'src/ImageViewerApp.vue'
+      ]
+    },
+    '_vendor.js': { file: 'assets/vendor.js' },
+    'src/App.vue': { file: 'assets/App.js', src: 'src/App.vue', isDynamicEntry: true },
+    'src/SettingsApp.vue': {
+      file: 'assets/SettingsApp.js',
+      src: 'src/SettingsApp.vue',
+      isDynamicEntry: true
+    },
+    'src/CaptureApp.vue': {
+      file: 'assets/CaptureApp.js',
+      src: 'src/CaptureApp.vue',
+      isDynamicEntry: true
+    },
+    'src/ImageViewerApp.vue': {
+      file: 'assets/ImageViewerApp.js',
+      src: 'src/ImageViewerApp.vue',
+      isDynamicEntry: true
+    }
+  })
+
+  mkdirSync(join(outDir, '.vite'), { recursive: true })
+  mkdirSync(join(outDir, 'assets'), { recursive: true })
+  writeFileSync(join(outDir, '.vite', 'manifest.json'), JSON.stringify(manifest))
+  for (const item of Object.values(manifest)) {
+    if (item.file) writeFileSync(join(outDir, item.file), 'x'.repeat(item.file.includes('vendor') ? 80 : 20))
+  }
+  return { outDir, manifest }
+}
+
+describe('checkRendererBundles', () => {
+  it('四个动态入口独立可达且公共启动闭包未超限时通过', () => {
+    const { outDir } = createFixture()
+
+    expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 })).toEqual({
+      errors: [],
+      bootstrapBytes: 100
+    })
+  })
+
+  it('报告缺失的根组件动态入口', () => {
+    const { outDir } = createFixture((manifest) => {
+      delete manifest['src/CaptureApp.vue']
+      return manifest
+    })
+
+    expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 }).errors.join('\n'))
+      .toContain('CaptureApp.vue')
+  })
+
+  it('报告多个根组件复用同一输出文件', () => {
+    const { outDir } = createFixture((manifest) => {
+      manifest['src/CaptureApp.vue'].file = 'assets/SettingsApp.js'
+      return manifest
+    })
+
+    expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 }).errors.join('\n'))
+      .toContain('输出文件必须互异')
+  })
+
+  it('报告从公共入口不可达的动态根组件', () => {
+    const { outDir } = createFixture((manifest) => {
+      manifest['src/main.ts'].dynamicImports = manifest['src/main.ts'].dynamicImports
+        .filter((key) => !key.endsWith('ImageViewerApp.vue'))
+      return manifest
+    })
+
+    expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 }).errors.join('\n'))
+      .toContain('ImageViewerApp.vue 动态入口从公共入口不可达')
+  })
+
+  it('报告公共启动静态依赖闭包超过预算', () => {
+    const { outDir } = createFixture()
+
+    const result = checkRendererBundles({ outDir, maxBootstrapBytes: 99 })
+    expect(result.bootstrapBytes).toBe(100)
+    expect(result.errors.join('\n')).toContain('超过 99 字节预算')
+  })
+
+  it('报告静态依赖闭包中的缺失文件', () => {
+    const { outDir } = createFixture()
+    rmSync(join(outDir, 'assets/vendor.js'))
+
+    expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 }).errors.join('\n'))
+      .toContain('assets/vendor.js 不存在')
+  })
+
+  it('报告 manifest 缺失', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'pantry-renderer-bundles-missing-'))
+    roots.push(outDir)
+
+    expect(checkRendererBundles({ outDir }).errors.join('\n')).toContain('manifest.json 不存在')
+  })
+})
