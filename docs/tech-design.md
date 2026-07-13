@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v1.06；内网通兼容设计已落档但 **#199 暂缓实现**；v0.32.3 已发布 |
-| 日期 | 2026-07-08 |
+| 状态 | v1.07；Windows ia32 发布线已落档；内网通兼容设计已落档但 **#199 暂缓实现**；v0.34.0 待发布 |
+| 日期 | 2026-07-13 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -19,7 +19,7 @@
 | 图片处理 | **渲染进程 canvas**（缩略图、表情包压缩 WebP） | Chromium 108 原生支持 `toBlob('image/webp')`；**不引 sharp** 等 native 库，避开老 glibc 等编译雷区 |
 | 日志 | 自写轻量 logger（分级、按天分文件、保留 7 天、可打包导出） | 几十行的事，不引依赖 |
 | 配置 | 自写 `config.json` 原子写（临时文件 + rename） | 同上；electron-store 新版本对 Node16 不友好 |
-| 打包 | **electron-builder 24.x** | 兼容 Electron 22；NSIS（x64）/ deb+AppImage / dmg+zip universal 一站式 |
+| 打包 | **electron-builder 24.x** | 兼容 Electron 22；NSIS+portable（Windows x64/ia32）/ deb+AppImage / dmg+zip 一站式 |
 | 单测 | **vitest**（跑在开发机 Node，测纯逻辑） | 协议编解码、补发队列、路径清洗、身份映射都是纯函数，最值得测 |
 | E2E | Playwright `_electron`（**实测验证**与 Electron 22 的配对版本；不通则退 WebdriverIO） | 三平台冒烟仍以手测清单为主 |
 | 开发机要求 | Node ≥ 18（仅工具链；产物运行时是 Electron 内置 Node 16.17，与开发机无关） | Vite 5 要求 |
@@ -252,10 +252,10 @@ media/stickers/...  # 自定义表情包媒体
 
 ## 10. 构建与 CI
 
-- electron-builder 要点：`electronVersion: 22.3.27`；win=`nsis`(x64，不出 32 位，决议 #20)+`portable`；linux=`deb`+`AppImage`（x64 + arm64，决议 #181；Debian 10 / UOS 20 基线）；mac=`dmg`+`zip`（**arm64 / Apple Silicon，决议 #69**；CI `macos-14` 原生打包，未签名/未公证内网自用；Intel x64 / universal 后续专项）；`asar: true` + `asarUnpack: **/better_sqlite3.node`；appId `com.pantry.app`。
+- electron-builder 要点：`electronVersion: 22.3.27`；win=`nsis`+`portable`（x64 + ia32，决议 #213）；linux=`deb`+`AppImage`（x64 + arm64，决议 #181；Debian 10 / UOS 20 基线）；mac=`dmg`+`zip`（**arm64 / Apple Silicon，决议 #69**；CI `macos-14` 原生打包，未签名/未公证内网自用；Intel x64 / universal 后续专项）；`asar: true` + `asarUnpack: **/better_sqlite3.node`；appId `com.pantry.app`。
 - **productName=`Teahouse`，安装路径全 ASCII（决议 #60）**：Linux 装 `/opt/Teahouse`、Windows 默认 `Teahouse` 目录；显示名经 Linux desktop `Name`、NSIS `shortcutName`、mac `extendInfo` 保持「茶话间」；主进程启动最早处 `app.setName('茶话间')` 固定 userData 与通知名（已有用户数据零迁移）。**Linux 打包必须 `USE_HARD_LINKS=false`**（dist:linux 与 CI 均已内置）：electron-builder 复制硬链接优化会让 deb 出现跨 `/usr`↔`/opt` 硬链接条目，UOS 深度安装器解包报"断开的管道"；窗口图标 extraResources 用独立物理文件 `build/icons/window-icon.png`，CI 解 deb data.tar 校验无硬链接条目、无中文路径。
 - 品牌资源：`build/icons/` 保存可审阅 SVG 源和生成后的 `.png` / `.ico` / `.icns` 打包图标；托盘运行态不依赖文件路径，仍使用内嵌 Data URL，保证开发、打包与 asar 场景一致。
-- GitHub Actions 矩阵：`.github/workflows/release.yml` 中启用 Windows / Linux x64 / Linux arm64 / macOS arm64 四条发布线（决议 #69/#86/#181/#182/#183/#184/#185/#186/#187）。Windows 用 `windows-2022` 构建 Win7 SP1 x64 兼容的 NSIS 安装包与 portable exe；Linux x64 用 `node:18-buster` / Debian 10 容器强制源码重建 better-sqlite3，electron-builder 关闭二次 `npmRebuild`，并检查最终包内 native 模块最高 GLIBC 符号不超过 `GLIBC_2.28`，输出 deb + AppImage，作为 Debian 10 / UOS 20 x64 产物；Linux arm64 用 GitHub 远程 `ubuntu-22.04-arm` runner 跑 `node:18-buster` Debian 10 arm64 容器，调用 `scripts/ci-linux-arm64.sh` 在目标架构内执行同样的 npm ci / native 重建 / 五连验证 / GLIBC 校验 / deb 归档校验。`dist:linux` / `dist:linux:arm64` 分别显式构建 `deb:x64 AppImage:x64` 与 `deb:arm64 AppImage:arm64`，避免 target 配置误打另一架构；arm64 deb job 通过系统 fpm 生成 deb，Debian 10 Ruby 2.5 下安装 `libffi-dev`，先安装 `ffi 1.15.5` 再安装 `fpm 1.9.3`；AppImage 不强制系统 mksquashfs，输出 `Teahouse-<version>-linux-arm64.deb` 与 `Teahouse-<version>-linux-arm64.AppImage`，容器结束后打印 `release/` 文件列表辅助定位路径问题；`.deb` 维护者元数据固定为 `Teahouse Maintainers <teahouse-maintainers@example.invalid>`；macOS 用 `macos-14` 原生 arm64 runner 构建 dmg + zip。push 到 `main` / 手动触发上传 artifact，推送 `v*` tag 时自动创建/更新 GitHub Release；目标平台真实桌面冒烟仍按 `docs/packaging-test.md` 执行。
+- GitHub Actions 矩阵：`.github/workflows/release.yml` 中启用 Windows x64 / Windows ia32 / Linux x64 / Linux arm64 / macOS arm64 五条发布线（决议 #69/#86/#181/#182/#183/#184/#185/#186/#187/#213）。两个 Windows job 均使用 `windows-2022`；ia32 job 在五连验证后显式把 better-sqlite3 重建为 x86，并以 PE machine 校验源码目录和最终包内 native 模块，再输出 Win7 SP1+ 32 位 NSIS 与 portable。Linux x64 用 `node:18-buster` / Debian 10 容器强制源码重建 better-sqlite3，electron-builder 关闭二次 `npmRebuild`，并检查最终包内 native 模块最高 GLIBC 符号不超过 `GLIBC_2.28`，输出 deb + AppImage，作为 Debian 10 / UOS 20 x64 产物；Linux arm64 用 GitHub 远程 `ubuntu-22.04-arm` runner 跑 `node:18-buster` Debian 10 arm64 容器执行同样的 npm ci / native 重建 / 五连验证 / GLIBC 校验 / deb 归档校验；macOS 用 `macos-14` 原生 arm64 runner 构建 dmg + zip。push 到 `main` / 手动触发上传 artifact，推送 `v*` tag 时自动创建/更新含 15 个资产的 GitHub Release；目标平台真实桌面冒烟仍按 `docs/packaging-test.md` 执行。
 - Release workflow 权限按最小化原则配置（决议 #132）：默认 `contents: read`；构建 job 的 checkout 不持久化 GitHub 凭证；只有发布 GitHub Release 的 job 显式授予 `contents: write`。
 - 版本号：`package.json` 单一来源；协议 `profile.ver` 随包版本注入（"内网有新版"提示的依据，见 protocol §3）。**每轮迭代（每个增量 commit）按决议 #73 递增版本号**：功能更新 minor +1 且 patch 归 0，bug 修复 / 微调 patch +1；deb/NSIS 按版本号判断升级，同版本号在 UOS 上会被 dpkg 以"已安装同样版本"拒装；artifactName 含 `${version}`，产物名随之区分。
 - 内网分发：产物 + SHA-256 校验清单一并产出。
@@ -399,3 +399,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-09 v1.08 决议 #202：同步文档漂移修正记录。当前 OCR 架构以 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm 为准；迁移当前版本以 `src/main/store/migrations.ts` 和 `PRAGMA user_version` 为准，旧 OCR 引擎描述仅保留在历史决议记录中。
 - 2026-07-10 v1.09 决议 #208：传输层增加严格帧校验、失败隔离、读流 / 连接 / 超时预算；自更新增加一次性请求授权、精确包名与 512 MiB 上限；渲染层会话导航增加代次；CI 增加 package / lock / tag / artifact 版本一致性检查。版本 0.32.24 → **0.32.25**。
 - 2026-07-10 v1.10 决议 #210：渲染层四个根组件改为单 HTML 下的动态入口；OCR 结果缓存增加 16 项 LRU 边界，服务初始化失败后允许重试；构建启用 manifest，并增加四入口可达性、文件独立性与 200 KiB 公共启动闭包门禁。版本 0.33.0 → **0.33.1**。
+- 2026-07-13 v1.11 决议 #213：Windows 发布矩阵新增 ia32。独立 job 在五连验证后重建 x86 better-sqlite3，以 PE machine 校验源码与包内 native 模块，输出 NSIS / portable / SHA-256 三项资产；自更新架构白名单加入 ia32。版本沿用 **0.34.0**，与 #212 合并发布。

@@ -150,10 +150,7 @@ const selfOrgPath = computed(() => {
     .filter((item): item is string => Boolean(item))
   return parts.length > 0 ? parts.join(' / ') : '未设置组织信息'
 })
-const selfPortText = computed(() => {
-  if (!settings.value) return '端口未加载'
-  return `端口 UDP ${settings.value.udpPort} / TCP ${settings.value.tcpPort}`
-})
+const selfIpText = computed(() => info.value?.localIp || '正在获取')
 const selfHostText = computed(() => settings.value?.host.trim() || '主机名未加载')
 const selfNodeShort = computed(() => info.value?.nodeId.slice(0, 8) ?? '加载中')
 const activeRailHint = ref<string | null>(null)
@@ -328,27 +325,27 @@ onUnmounted(() => {
             />
             <div class="self-card-title">
               <div class="self-card-name">{{ selfName }}</div>
-              <div class="self-card-subtitle">本机资料</div>
+              <div class="self-card-subtitle">本机账户</div>
             </div>
           </div>
           <div class="self-card-body">
-            <div class="self-card-row">
-              <span class="self-card-label">组织</span>
-              <span class="self-card-value">{{ selfOrgPath }}</span>
+            <div class="self-card-network">
+              <span class="self-card-network-label">本机 IP</span>
+              <span class="self-card-ip">{{ selfIpText }}</span>
             </div>
-            <div class="self-card-grid">
-              <div class="self-card-tile">
-                <span class="self-card-label">主机</span>
-                <span class="self-card-value">{{ selfHostText }}</span>
+            <dl class="self-card-details">
+              <div class="self-card-detail">
+                <dt>组织</dt>
+                <dd>{{ selfOrgPath }}</dd>
               </div>
-              <div class="self-card-tile">
-                <span class="self-card-label">节点</span>
-                <span class="self-card-value">ID {{ selfNodeShort }}</span>
+              <div class="self-card-detail">
+                <dt>设备</dt>
+                <dd>{{ selfHostText }}</dd>
               </div>
-            </div>
-            <div class="self-card-row">
-              <span class="self-card-label">端口</span>
-              <span class="self-card-value">{{ selfPortText }}</span>
+            </dl>
+            <div class="self-card-node">
+              <span>节点 ID</span>
+              <strong>{{ selfNodeShort }}</strong>
             </div>
           </div>
         </div>
@@ -595,8 +592,8 @@ onUnmounted(() => {
   left: 52px;
   top: -8px;
   z-index: 30;
-  width: 286px;
-  padding: 14px;
+  width: 304px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bubble-peer);
@@ -604,7 +601,6 @@ onUnmounted(() => {
   box-shadow: 0 18px 42px rgba(20, 28, 24, 0.14);
   display: flex;
   flex-direction: column;
-  gap: 12px;
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
@@ -623,12 +619,14 @@ onUnmounted(() => {
 .self-card-head {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 12px;
   min-width: 0;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--line);
 }
 .self-card-avatar {
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
 }
 .self-card-title {
@@ -637,64 +635,95 @@ onUnmounted(() => {
 }
 .self-card-name {
   color: var(--text-1);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .self-card-subtitle {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  margin-top: 5px;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: var(--primary-weak);
-  color: var(--primary);
-  font-size: 11px;
-  line-height: 1;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.3;
 }
 .self-card-body {
   display: grid;
-  gap: 8px;
+  gap: 12px;
+  padding: 12px 16px 14px;
 }
-.self-card-row,
-.self-card-tile {
+.self-card-network {
+  display: grid;
+  gap: 5px;
   min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
+  padding: 10px 12px;
   border-radius: 8px;
-  background: var(--bg-list);
+  background: var(--primary-weak);
 }
-.self-card-row {
-  display: grid;
-  gap: 5px;
-}
-.self-card-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(86px, 0.9fr);
-  gap: 8px;
-}
-.self-card-tile {
-  display: grid;
-  gap: 5px;
-}
-.self-card-label {
+.self-card-network-label {
   color: var(--text-3);
   font-size: 11px;
   line-height: 1;
 }
-.self-card-value {
+.self-card-ip {
   min-width: 0;
-  color: var(--text-1);
-  font-size: 12px;
+  overflow: hidden;
+  color: var(--primary);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.self-card-details {
+  display: grid;
+  gap: 9px;
+}
+.self-card-detail {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+.self-card-detail dt {
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.self-card-detail dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.self-card-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.self-card-node strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rail-btn {
   position: relative;

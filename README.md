@@ -65,7 +65,7 @@
 
 | 平台 | 支持范围 | 架构 | 安装包 | 真机实测 |
 |---|---|---|---|---|
-| Windows | 7 SP1 起（含 8 / 8.1 / 10 / 11），仅 64 位 | x64 | NSIS 安装包、便携版 | ✅ Windows 7 x64 |
+| Windows | 7 SP1 起（含 8 / 8.1 / 10 / 11） | x64 / 32 位（ia32） | NSIS 安装包、便携版 | ✅ Windows 7 x64；32 位构建支持 |
 | 统信 UOS（信创） | UOS 20 及以上，深度安装器 | x64 / arm64 | .deb | ✅ UOS 20 x64；arm64 构建支持 |
 | macOS | 12（Monterey）起 | Apple Silicon | .dmg、.zip | ✅ macOS 26 |
 | Debian / Ubuntu 等 | Debian 10（buster）起 | x64 / arm64 | .deb、AppImage | 构建支持 |
@@ -78,7 +78,7 @@
 
 前往 [**Releases**](https://github.com/skyjt/teahouse/releases) 下载对应平台的安装包。
 
-**Windows** — 运行 NSIS 安装包，或解压便携版直接使用。Windows 7 需为 **SP1 且 64 位**；若启用了代码签名，未打补丁的 Win7 需先安装系统更新 KB4474419。
+**Windows** — 根据系统架构选择 x64 或 ia32（32 位）NSIS 安装包，也可直接使用对应便携版。Windows 7 需安装 **SP1**；若启用了代码签名，未打补丁的 Win7 需先安装系统更新 KB4474419。
 
 **Linux** — `.deb` 适用于 Debian / Ubuntu / UOS 等；其他发行版可用 `AppImage`（`chmod +x` 后运行）。
 

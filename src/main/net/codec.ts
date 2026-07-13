@@ -73,8 +73,8 @@ function isCidr(x: unknown): x is string {
   return typeof x === 'string' && x.length <= 18 && normalizeCidr(x) !== null
 }
 
-function isRuntimeArch(x: unknown): x is 'x64' | 'arm64' {
-  return x === 'x64' || x === 'arm64'
+function isRuntimeArch(x: unknown): x is 'x64' | 'ia32' | 'arm64' {
+  return x === 'x64' || x === 'ia32' || x === 'arm64'
 }
 
 export function validateProfile(p: unknown): p is Profile {
@@ -316,7 +316,7 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
     }
     case MSG_TYPES.update: {
       // 自更新请求（§8.1，决议 #166/#181）：只认 op:'req' + 合法平台；
-      // arch 可选，存在时用于避免 Linux x64/arm64 包混用。
+      // arch 可选，存在时用于避免 Windows/Linux 多架构安装包混用。
       if (!isRecord(payload)) return false
       const u = payload as Partial<UpdateReqPayload>
       if (u.op !== 'req') return false

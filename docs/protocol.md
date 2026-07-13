@@ -245,7 +245,7 @@ sequenceDiagram
 
 复用上面的拉取式传输，新增一个请求方向与一个 `purpose`：
 
-1. B 经发现得知 A **同平台、`ver` 更高、`caps` 含 `upd1`、在线**；用户确认更新后，B → A 发 `update{op:"req", platform, arch}`（可靠投递 + ACK，UDP 失败可走 TCP 控制帧；`platform` 供 A 复核同平台、拒绝跨平台请求；`arch` 可选，当前只取 `x64|arm64`，用于 Linux x64/arm64 并存时筛选正确安装包）。
+1. B 经发现得知 A **同平台、`ver` 更高、`caps` 含 `upd1`、在线**；用户确认更新后，B → A 发 `update{op:"req", platform, arch}`（可靠投递 + ACK，UDP 失败可走 TCP 控制帧；`platform` 供 A 复核同平台、拒绝跨平台请求；`arch` 可选，取 `x64|ia32|arm64`，用于 Windows x64/ia32 与 Linux x64/arm64 并存时筛选正确安装包）。
 2. A 收到 `req` → 复核请求方在线、同平台且版本低于本机，再按请求架构备妥本平台安装包（**Windows**：安装时自留在数据目录的 nsis 安装器；**Linux**：运行态用 `dpkg-deb` 现场把自身重打包成 deb；当前实现先回传本地已有匹配版本和架构的包），随即向 B 发 `file-ctl{op:"offer", purpose:"update", files:[安装包]}`；A 暂时无法提供（找不到本地包、重打包失败、无对应架构包等）则不回 offer，B 端超时按"暂不可用"提示、可重试。
 3. B 发出可靠 `update{op:"req"}` 前登记一次性授权，绑定源节点 A、目标版本、平台与架构，有效期 **120 秒**；可靠发送失败时撤销同一次授权。B 收到 `purpose:"update"` 的 offer 后先校验：来源必须是 A；仅一个非目录文件；路径等于根文件名且不含分隔符；文件名精确匹配 `Teahouse-<version>-win-<arch>-setup.exe`、`Teahouse-<version>-linux-amd64.deb` 或 `Teahouse-<version>-linux-arm64.deb`；大小为正且不超过 **512 MiB**。校验通过后消费授权并由 updater 接管：自动 accept、TCP 拉取到**临时目录**（不入聊天、不落接收目录），沿用 `done` 帧的 SHA-256 校验完整性，再核对包内版本号 == A 声明的 `ver`。其余 offer 一律 decline。
 4. 校验通过 → 应用更新（nsis 静默装 / deb 经 pkexec 授权装）并重启；B 保留该包、自身改为声明 `upd1`，成为新的更新源（接力扩散）。
@@ -353,3 +353,4 @@ sequenceDiagram
 - 2026-07-09 v0.39 决议 #198：`GROUP_MAX_MEMBERS` 50 → **200**（§7.4 与常量表）；codec 对 `group.info.members` 与 `group-text.mentions` 上限同步。旧端仍按 50 拒绝超限元数据。
 - 2026-07-10 v0.40 决议 #208：TCP 控制帧启用逐类型精确白名单与失败终止态；发送端增加数据流 / 连接 / 超时资源预算；自更新请求增加 120 秒一次性授权、精确包名与 512 MiB 上限。版本 0.32.24 → **0.32.25**。
 - 2026-07-10 v0.41 决议 #211：§3 caps 新增 `tw1`；§8 TCP 帧型新增 `wait`（排队 / 哈希收尾保活，仅发给声明 `tw1` 的对端）；接收端新增 60 秒拉取空闲超时；取消语义修订为「接收方取消可恢复（发送方保留供流授权、`.part` 保留可断点重拉）、发送方取消才是终态」。§9 常量新增 PULL_WAIT_HEARTBEAT / PULL_IDLE_TIMEOUT。版本 0.33.1 → **0.33.2**。
+- 2026-07-13 v0.42 决议 #213：Windows 发布新增 ia32（32 位）安装版与便携版；`update{op:"req"}.arch` 白名单扩展为 `x64|ia32|arm64`，32 位 Windows 客户端按 `win-ia32-setup.exe` 精确索包，避免与 x64 包混用。版本仍为 **0.34.0**，与决议 #212 合并发布。

@@ -149,12 +149,14 @@ export function matchesUpdatePackageName(
     if (arch) return name === `Teahouse-${version}-win-${arch}-setup.exe`
     return (
       name === `Teahouse-${version}-win-x64-setup.exe` ||
+      name === `Teahouse-${version}-win-ia32-setup.exe` ||
       name === `Teahouse-${version}-win-arm64-setup.exe`
     )
   }
   if (platform === 'linux') {
     if (arch) {
-      const debArch = arch === 'x64' ? 'amd64' : 'arm64'
+      const debArch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : null
+      if (!debArch) return false
       return name === `Teahouse-${version}-linux-${debArch}.deb`
     }
     return (

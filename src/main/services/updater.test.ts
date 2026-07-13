@@ -102,6 +102,7 @@ describe('自更新请求复核与本地包查找', () => {
     writeFileSync(join(dir, 'Teahouse-0.28.0-win-x64-portable.exe'), 'portable')
     writeFileSync(join(dir, 'Teahouse-0.27.9-win-x64-setup.exe'), 'old')
     writeFileSync(join(dir, 'Teahouse-0.28.0-win-x64-setup.exe'), 'exe')
+    writeFileSync(join(dir, 'Teahouse-0.28.0-win-ia32-setup.exe'), 'ia32-exe')
 
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.28.0', platform: 'linux', arch: 'x64' })).toBe(
       join(dir, 'Teahouse-0.28.0-linux-amd64.deb')
@@ -112,13 +113,19 @@ describe('自更新请求复核与本地包查找', () => {
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.28.0', platform: 'win', arch: 'x64' })).toBe(
       join(dir, 'Teahouse-0.28.0-win-x64-setup.exe')
     )
+    expect(findLocalUpdatePackage({ dirs: [dir], version: '0.28.0', platform: 'win', arch: 'ia32' })).toBe(
+      join(dir, 'Teahouse-0.28.0-win-ia32-setup.exe')
+    )
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.28.0', platform: 'mac' })).toBeNull()
     expect(findLocalUpdatePackage({ dirs: [dir], version: '0.29.0', platform: 'linux', arch: 'x64' })).toBeNull()
   })
 
   it('安装包名必须精确匹配版本、平台与架构', () => {
     expect(matchesUpdatePackageName('Teahouse-0.28.0-win-x64-setup.exe', '0.28.0', 'win', 'x64')).toBe(true)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-win-ia32-setup.exe', '0.28.0', 'win', 'ia32')).toBe(true)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-win-x64-setup.exe', '0.28.0', 'win', 'ia32')).toBe(false)
     expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-amd64.deb', '0.28.0', 'linux', 'x64')).toBe(true)
+    expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-arm64.deb', '0.28.0', 'linux', 'ia32')).toBe(false)
     expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-arm64.deb', '0.28.0', 'linux', 'arm64')).toBe(true)
     expect(matchesUpdatePackageName('copy-Teahouse-0.28.0-linux-amd64.deb', '0.28.0', 'linux', 'x64')).toBe(false)
     expect(matchesUpdatePackageName('Teahouse-0.28.0-linux-amd64.deb.bak', '0.28.0', 'linux', 'x64')).toBe(false)

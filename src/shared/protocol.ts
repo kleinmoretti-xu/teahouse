@@ -94,7 +94,7 @@ export const LIMITS = {
 }
 
 export type Platform = 'win' | 'mac' | 'linux'
-export type RuntimeArch = 'x64' | 'arm64'
+export type RuntimeArch = 'x64' | 'ia32' | 'arm64'
 
 /** 节点资料（protocol §3），随 entry / alive / profile 报文携带 */
 export interface Profile {
@@ -317,7 +317,7 @@ export interface UpdateReqPayload {
   op: 'req'
   /** 请求方平台，供 A 复核同平台、拒绝跨平台请求 */
   platform: Platform
-  /** 请求方运行架构；新增 Linux arm64 产物后用于避免回传错架构安装包 */
+  /** 请求方运行架构；用于避免 Windows/Linux 多架构安装包混用 */
   arch?: RuntimeArch
 }
 export type UpdatePayload = UpdateReqPayload

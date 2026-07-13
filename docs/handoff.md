@@ -10,6 +10,7 @@
 > 当前补充：2026-07-10（**v0.33.0，决议 #208/#209 优先修复批次**）：完成 TCP 帧严格白名单与失败隔离、自更新一次性请求授权 / 精确包名 / 512 MiB 上限、版本 / tag / artifact CI 一致性门禁、文件供流资源预算、会话导航竞态防护、截图工具条视口定位和截图窗口导航拦截；用户按改动规模将最终发布版本调整为 0.33.0，专项 109 测试与常规五连验证均通过。
 > 当前补充：2026-07-10（**v0.33.1，决议 #210 第二批优化已完成**）：四个渲染根组件已按 hash 动态加载；renderer OCR 结果缓存限制为 16 项 LRU，服务初始化失败后可重试；构建已增加 manifest、四入口独立可达与 200 KiB 公共启动闭包门禁。实测公共启动闭包 75,853 字节，专项 26 测试与常规五连验证均通过。消息虚拟列表继续暂缓。
 > 当前补充：2026-07-10（**v0.33.2，决议 #211 群聊文件接收体验修复**）：TCP 新增 `wait` 帧（caps `tw1` 门控）——发送端并发预算满时接收端卡片显示「排队等待发送方」；接收端拉取增加 60 秒空闲超时，静默断网不再永久冻结；接收方取消改为可恢复（保留 `.part` 与供流授权，卡片提供「重新下载」断点续传），发送方主动取消才是终态。协议 protocol.md §8/§9 v0.41，专项 9 测试与常规五连验证均通过。
+> 当前补充：2026-07-13（**v0.34.0，决议 #212 左上角个人信息卡重设计**）：个人信息卡移除端口，新增本机 IPv4 展示；视觉改为头像 / 昵称主身份、本机 IP 重点区、组织 / 设备次级键值行、节点 ID 弱化页脚，减少卡内嵌套与等权信息。复用既有 `app:info`，协议与存储不变。
 
 ## 0. 必读顺序（15 分钟上手）
 
@@ -21,7 +22,7 @@
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.33.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.34.0**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
@@ -43,8 +44,8 @@
 | P1 消息交互 | 链接识别可点、消息转发（文本/图片/文件/表情可基于本地媒体转发）、~~多选群发~~（决议 #62 已取消，改用讨论组）、群内 @ 加强提醒、长文本 TCP 控制帧 |
 | P1 文件/数据 | `.part` 断点续传；传输记录；HTML/TXT 阅读导出；`.pantry-bak` 迁移备份包（消息、联系人、群、传输、表情、图片/表情媒体）+ 身份映射导入 |
 | P1 系统/设置 | 开机自启、关闭到托盘/退出、通知预览、系统提示音开关、托盘 / 菜单栏未读数字与闪烁兜底、深色主题、字体缩放、截图/显示隐藏快捷键、UDP/TCP 端口保存（重启生效）、局域网自更新发现提示、关于页主动检测与键值行索包请求 |
-| 打包链条 | `electron-builder@24.13.3` 精确锁；`dist:win`/`dist:linux`/`dist:mac` 本地脚本；Windows/Debian 真实打包测试留给目标平台 |
-| GitHub 发布 | 公开仓库：[skyjt/teahouse](https://github.com/skyjt/teahouse)；`.github/workflows/release.yml` 已配置 Windows 7 x64、Debian 10 / UOS 20 x64、Debian 10 / UOS 20 arm64、macOS arm64 四条发布线；Linux CI 在 Debian 10 容器内强制源码重建 better-sqlite3，electron-builder 关闭二次 `npmRebuild`，并检查源码重建产物与最终包内 `.node` 最高 GLIBC 符号不超过 2.28；arm64 使用 GitHub 远程 `ubuntu-22.04-arm` runner 跑 Debian 10 arm64 容器，安装系统 fpm / `libffi-dev`，先锁定 `ffi 1.15.5` 再安装 `fpm 1.9.3`，不强制系统 mksquashfs，并显式构建 `deb:arm64` / `AppImage:arm64`，产出 deb/AppImage 与独立 SHA 清单；push `main` / 手动触发上传 artifact，推送 `v*` tag 自动创建/更新 GitHub Release；目标平台真实桌面冒烟仍按 packaging-test 执行 |
+| 打包链条 | `electron-builder@24.13.3` 精确锁；`dist:win`/`dist:win:ia32`/`dist:linux`/`dist:mac` 本地脚本；Windows/Debian 真实打包测试留给目标平台 |
+| GitHub 发布 | 公开仓库：[skyjt/teahouse](https://github.com/skyjt/teahouse)；`.github/workflows/release.yml` 已配置 Windows 7 x64、Windows 7 ia32、Debian 10 / UOS 20 x64、Debian 10 / UOS 20 arm64、macOS arm64 五条发布线；ia32 在五连验证后重建并校验 x86 better-sqlite3，产出 NSIS / portable / SHA 清单；Linux CI 在 Debian 10 容器内强制源码重建 better-sqlite3 并校验 GLIBC 2.28 基线；push `main` / 手动触发上传 artifact，推送 `v*` tag 自动创建/更新含 15 个资产的 GitHub Release；目标平台真实桌面冒烟仍按 packaging-test 执行 |
 | UI | **沉浸式无标题栏主窗/设置窗（决议 #49/#51/#52：mac 红绿灯置列表栏顶部 x=68、Win/Linux 右上自绘控制按钮、顶部 32px 隐形拖拽带——mac/Win 走 CSS 拖拽区，Linux 因 CSS 拖拽区吞点击改 Pointer Capture + 主进程光标跟随 JS 拖拽，`WindowDragStrip` 组件分流）**、三栏主窗、左侧 68px 浅灰导航（聊天/通讯录主图标 25px，刷新全局用户按钮位于设置上方并带细进度条，设置图标 21px；导航按钮在鼠标真实移动后延迟显示单体中文 tooltip，自己头像仅鼠标悬停显示分组个人信息卡）、三级通讯录树（公司▸部门▸团队，单击右侧资料页、双击直达单聊）、联系人完整资料页+本地备注、私聊头部资料弹窗+备注编辑、私聊顶部完整 IP 副标题、全局搜索（FTS 按字）、发起讨论组两步搜索选人+设置、自绘 SVG 系统图标、明确齿轮设置入口、20 个 Twemoji 本地 SVG 动物头像 + 背景色模板、设置页头像编辑器（决议 #50：大预览 + 图标/昵称首字分段切换 + 图标网格 + 色板）、内置 emoji 子集 Twemoji 本地 SVG 兼容渲染（面板 / 输入框编辑态 / 消息正文；输入框镜像按实际字体 DOM 探针逐字符测宽，与光标逐像素对齐）、系统通知 emoji 文本降级与真实应用图标（决议 #108）、茶杯气泡品牌 logo 三件套（菜单栏单色缩小留边、彩色小标、大图标/空状态）、输入区图标中文延迟提示、输入框 placeholder 独立浅 hint 色、输入区最右侧会话内历史搜索（设置页尺度弹窗，默认显示最近记录，关键词/图片/文件/连续日期筛选，图片结果显示缩略图）、独立图片查看窗口（标题栏文件名、初始 70% 屏幕阈值缩放、底部半透明菜单、缩放/适应窗口/原始大小/旋转/拖拽平移、双击以鼠标位置锚点放大、OCR 独立文本结果窗与缓存、另存为/快捷键，不遮挡主聊天窗）、消息内容级右键菜单与边缘避让、历史滚动加载、会话滚动位置按会话恢复且后台/通知直达默认最新（决议 #111）、设置独立小窗（桌面软件式分组面板）、首启向导、托盘+通知直达会话 |
 | 存储 | SQLite WAL，迁移版本以 `src/main/store/migrations.ts` 与 `PRAGMA user_version` 为准（**只追加永不改旧迁移**）|
 
@@ -100,6 +101,7 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
 - npm 11 对 `.npmrc` 自定义键（electron_mirror/runtime 等）打 deprecation 警告——npm 12 需改用环境变量，暂可忽略。
 - Linux arm64 产物已进入 Release workflow；真实 UOS / Debian arm64 桌面冒烟仍需目标机器按 packaging-test 执行。
 - 局域网 P2P 自更新已完成发现提示、主动检测 / 索包请求、`update req` 可靠投递、已有本地安装包的隐藏 `purpose:"update"` 回传与隔离接收；仍缺 A 侧备包（nsis 自留 / deb 自重打包）、B 侧包格式与版本核对、安装重启、进度呈现与失败重试闭环。
+- Windows ia32（32 位）已进入 GitHub Release workflow；CI 会校验 better-sqlite3 的 x86 PE 架构，真实 Win7 SP1 32 位桌面冒烟仍需目标机器按 packaging-test 执行。
 - **内网通兼容（长期待办 / #199 暂缓）**：设计已落档，**代码零实现**；调研与 VM 复测周期长，日常迭代不要启动。恢复时从 nwt-compat-design §15 与决议 #196 阻塞项接着做。
 - 图片 OCR 当前使用内置 PaddleOCR PP-OCRv6 tiny + onnxruntime-web 本地 wasm，不落库、不做全文索引、不做“大爆炸”分词面板；图片上不再叠加 OCR 选择层，不做逐字拖选。识别结果按 `transferId:naturalSize` 缓存在主进程会话级内存中，图片窗口加载后先查缓存，命中后底部按钮可直接打开文本结果窗，用户在原生 textarea 中选择 / 复制文字；小图自动 OCR 不自动弹窗，大图仍手动触发。后续扩展模型或字典必须继续走本地静态资源复制并评估包体与启动后首次识别耗时。
 

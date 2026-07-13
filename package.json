@@ -1,7 +1,7 @@
 {
   "name": "pantry",
   "productName": "茶话间",
-  "version": "0.33.3",
+  "version": "0.34.0",
   "description": "茶话间（Teahouse）—— 纯内网、基于 IP 的局域网即时通讯与文件传输工具",
   "private": true,
   "main": "./out/main/index.js",
@@ -31,6 +31,7 @@
     "test:db": "esbuild src/main/store/db-selftest.ts --bundle --platform=node --target=node16 --external:better-sqlite3 --outfile=out/db-selftest.cjs --log-level=warning && cross-env ELECTRON_RUN_AS_NODE=1 electron out/db-selftest.cjs",
     "smoke": "npm run build && cross-env PANTRY_SMOKE=1 electron .",
     "dist:win": "npm run build && cross-env NO_UPDATE_NOTIFIER=1 electron-builder --win --x64 --publish never",
+    "dist:win:ia32": "npm run build && cross-env NO_UPDATE_NOTIFIER=1 electron-builder --win --ia32 --publish never",
     "dist:linux": "npm run build && cross-env NO_UPDATE_NOTIFIER=1 USE_HARD_LINKS=false electron-builder --linux deb:x64 AppImage:x64 --publish never",
     "dist:linux:arm64": "npm run build && cross-env NO_UPDATE_NOTIFIER=1 USE_HARD_LINKS=false electron-builder --linux deb:arm64 AppImage:arm64 --publish never",
     "dist:mac": "npm run build && cross-env NO_UPDATE_NOTIFIER=1 electron-builder --mac --publish never"
@@ -58,13 +59,15 @@
         {
           "target": "nsis",
           "arch": [
-            "x64"
+            "x64",
+            "ia32"
           ]
         },
         {
           "target": "portable",
           "arch": [
-            "x64"
+            "x64",
+            "ia32"
           ]
         }
       ]

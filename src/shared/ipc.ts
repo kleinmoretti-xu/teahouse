@@ -129,6 +129,8 @@ export interface AppInfo {
   platform: string
   /** 本机节点 ID（群成员面板等需区分"我"） */
   nodeId: string
+  /** 当前用于局域网身份展示的本机 IPv4。 */
+  localIp: string
 }
 
 /** 通讯录条目（renderer 视图模型，由主进程的 PeerRecord 投影而来） */

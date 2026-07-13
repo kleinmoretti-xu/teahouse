@@ -252,6 +252,98 @@ jobs:
             release/Teahouse-*-win-x64-portable.exe
             release/SHA256SUMS-win7-x64.txt
 
+  windows7-ia32:
+    name: Windows 7 ia32（32 位）
+    runs-on: windows-2022
+    steps:
+      - name: 拉取源码
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+
+      - name: 校验版本与 tag 一致性
+        run: npm run check:version
+
+      - name: 安装 npm 依赖
+        run: npm ci
+
+      - name: 五连验证
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Checked {
+            param([string]$Command, [string[]]$Arguments)
+            & $Command @Arguments
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+          Invoke-Checked npm @('test')
+          Invoke-Checked npm @('run', 'test:db')
+          Invoke-Checked npm @('run', 'typecheck')
+          Invoke-Checked npm @('run', 'build')
+          Invoke-Checked npm @('run', 'smoke')
+
+      # npm ci 的 postinstall 先生成 runner 可执行的 x64 native 模块，五连验证完成后
+      # 再明确重建为 ia32；electron-builder 已关闭 npmRebuild，打包时会原样带入该模块。
+      - name: 重建并校验 ia32 native 模块
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run rebuild:electron -- --arch=ia32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/check-native-win-arch.cjs node_modules/better-sqlite3/build/Release/better_sqlite3.node ia32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 构建 Win7 ia32 产物
+        run: npm run dist:win:ia32
+
+      - name: 校验打包后的 ia32 native 模块
+        shell: pwsh
+        run: |
+          $native = Get-ChildItem release -Recurse -Filter better_sqlite3.node | Where-Object {
+            $_.FullName -like '*win-ia32-unpacked*'
+          } | Select-Object -First 1
+          if (-not $native) {
+            Get-ChildItem release -Recurse | Select-Object FullName
+            throw "未找到 Win32 ia32 解包产物中的 better_sqlite3.node。"
+          }
+          node scripts/check-native-win-arch.cjs $native.FullName ia32
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 生成 SHA-256 清单
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release -File | Where-Object {
+            $_.Name -like 'Teahouse-*-win-ia32-setup.exe' -or $_.Name -like 'Teahouse-*-win-ia32-portable.exe'
+          }
+          if ($files.Count -lt 2) {
+            Get-ChildItem release -File | Format-Table Name, Length
+            throw "Windows ia32 产物数量不足，期望 setup 与 portable 两个 exe。"
+          }
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content release/SHA256SUMS-win7-ia32.txt -Encoding ascii
+
+      - name: 上传 Windows ia32 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: pantry-win7-ia32
+          if-no-files-found: error
+          path: |
+            release/Teahouse-*-win-ia32-setup.exe
+            release/Teahouse-*-win-ia32-portable.exe
+            release/SHA256SUMS-win7-ia32.txt
+
   macos-arm64:
     name: macOS arm64（Apple Silicon）
     runs-on: macos-14
@@ -319,6 +411,7 @@ jobs:
       - linux-debian10-uos20-x64
       - linux-debian10-uos20-arm64
       - windows7-x64
+      - windows7-ia32
       - macos-arm64
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -419,6 +512,8 @@ jobs:
             echo "|---|---|---|"
             echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-setup.exe\` | NSIS 安装包 |"
             echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-portable.exe\` | 便携版（免安装） |"
+            echo "| Windows 7 SP1+ 32 位 | \`Teahouse-${VERSION}-win-ia32-setup.exe\` | NSIS 安装包 |"
+            echo "| Windows 7 SP1+ 32 位 | \`Teahouse-${VERSION}-win-ia32-portable.exe\` | 便携版（免安装） |"
             echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-amd64.deb\` | dpkg 安装包（含信创） |"
             echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-x86_64.AppImage\` | 通用 AppImage |"
             echo "| Debian 10 / UOS 20 arm64 | \`Teahouse-${VERSION}-linux-arm64.deb\` | dpkg 安装包（含信创） |"

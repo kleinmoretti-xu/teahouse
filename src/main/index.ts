@@ -683,7 +683,9 @@ if (!gotLock) {
   }
 
   function currentRuntimeArch(): RuntimeArch {
-    return process.arch === 'arm64' ? 'arm64' : 'x64'
+    if (process.arch === 'arm64') return 'arm64'
+    if (process.arch === 'ia32') return 'ia32'
+    return 'x64'
   }
 
   function updatePackagePath(version: string, platform: Platform, arch = currentRuntimeArch()): string | null {
@@ -1285,7 +1287,8 @@ if (!gotLock) {
       chrome: process.versions.chrome,
       node: process.versions.node,
       platform: process.platform,
-      nodeId: appState?.nodeId ?? ''
+      nodeId: appState?.nodeId ?? '',
+      localIp: currentLocalIpv4()
     }
   })
 
