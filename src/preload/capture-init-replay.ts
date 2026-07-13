@@ -1,8 +1,7 @@
-export type CaptureInitListener = (dataUrl: string, scaleFactor: number) => void
+export type CaptureInitListener = (pngBytes: ArrayBuffer) => void
 
 interface CaptureInitPayload {
-  dataUrl: string
-  scaleFactor: number
+  pngBytes: ArrayBuffer
 }
 
 /**
@@ -17,13 +16,13 @@ export function createCaptureInitReplay(): {
   const listeners = new Set<CaptureInitListener>()
 
   return {
-    publish(dataUrl, scaleFactor): void {
-      latest = { dataUrl, scaleFactor }
-      for (const listener of listeners) listener(dataUrl, scaleFactor)
+    publish(pngBytes): void {
+      latest = { pngBytes }
+      for (const listener of listeners) listener(pngBytes)
     },
     subscribe(listener): () => void {
       listeners.add(listener)
-      if (latest) listener(latest.dataUrl, latest.scaleFactor)
+      if (latest) listener(latest.pngBytes)
       return () => listeners.delete(listener)
     }
   }

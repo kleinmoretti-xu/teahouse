@@ -93,9 +93,11 @@ const naiveThemeOverrides = computed(() =>
   settings.value?.theme === 'dark' ? teahouseDarkThemeOverrides : teahouseLightThemeOverrides
 )
 const showWizard = ref(false)
+const settingsWindowOpen = ref(false)
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
 let stopSettings: (() => void) | null = null
+let stopSettingsWindowState: (() => void) | null = null
 let stopScanProgress: (() => void) | null = null
 let scanProgressHideTimer: ReturnType<typeof setTimeout> | null = null
 let railHintTimer: ReturnType<typeof setTimeout> | null = null
@@ -281,6 +283,10 @@ function onScanConfirmKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(async () => {
+  // 先订阅再等待初始化 IPC，避免用户启动后立即点设置时错过遮罩状态。
+  stopSettingsWindowState = window.pantry.onSettingsWindowState((open) => {
+    settingsWindowOpen.value = open
+  })
   void peersStore.init()
   void chatStore.init()
   void groupsStore.init()
@@ -305,6 +311,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   document.removeEventListener('keydown', onScanConfirmKeydown)
   stopSettings?.()
+  stopSettingsWindowState?.()
   stopScanProgress?.()
   clearScanProgressHideTimer()
   hideRailHint()
@@ -324,6 +331,9 @@ onUnmounted(() => {
   <!-- 沉浸式无标题栏（决议 #49/#52）：顶部 32px 隐形拖拽带 + Win/Linux 自绘窗口控制按钮 -->
   <WindowDragStrip />
   <WindowControls />
+  <Transition name="settings-scrim">
+    <div v-if="settingsWindowOpen" class="settings-scrim" aria-hidden="true"></div>
+  </Transition>
   <div class="shell">
     <nav class="rail">
       <div class="avatar-wrap" aria-label="我的信息">
@@ -581,6 +591,25 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(18, 31, 25, 0.24);
+  pointer-events: auto;
+  opacity: 1;
+  transition: opacity 140ms ease-out;
+}
+
+:global(html[data-theme='dark']) .settings-scrim {
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.settings-scrim-enter-from,
+.settings-scrim-leave-to {
+  opacity: 0;
+}
+
 .shell {
   display: flex;
   height: 100%;
@@ -1022,6 +1051,9 @@ onUnmounted(() => {
   flex: 1;
 }
 @media (prefers-reduced-motion: reduce) {
+  .settings-scrim {
+    transition: none;
+  }
   .rail-hint::after,
   .rail-btn,
   .self-card,

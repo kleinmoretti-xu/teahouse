@@ -9,6 +9,7 @@ import type {
   TableTextMeta
 } from '../../../shared/ipc'
 import type { PkGame } from '../../../shared/pk'
+import { isWindowAttended } from '../utils/window-attention'
 
 // 主进程聊天数据的投影 + 乐观更新（tech-design §7 状态流）
 let nudgeClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -128,7 +129,18 @@ export const useChatStore = defineStore('chat', {
       })
       window.pantry.onMsgNew((msg) => {
         if (this.messages[msg.convId]) this.appendConversationMessage(msg.convId, msg)
-        if (msg.convId === this.activeConvId) void window.pantry.markRead(msg.convId)
+        // 只有窗口可见且聚焦才把当前会话新消息即时置读；最小化 / 托盘 / 失焦时
+        // 保留未读，托盘闪烁与角标才能被感知（决议 #220）
+        if (msg.convId === this.activeConvId && isWindowAttended()) {
+          void window.pantry.markRead(msg.convId)
+        }
+      })
+      // 回到窗口时补置读当前会话攒下的未读，托盘闪烁与角标同步停止（决议 #220）
+      window.addEventListener('focus', () => {
+        const convId = this.activeConvId
+        if (convId && this.convs.some((c) => c.id === convId && c.unread > 0)) {
+          void window.pantry.markRead(convId)
+        }
       })
       window.pantry.onMsgStatus((event) => {
         this.updateConversationMessageStatus(event.convId, event.id, event.status)

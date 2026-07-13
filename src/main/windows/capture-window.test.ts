@@ -37,7 +37,7 @@ describe('capture window 导航安全', () => {
 
   it('拦截截图窗口内的所有 will-navigate', async () => {
     const { openCaptureWindow } = await import('./capture-window')
-    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, 'data:image/png;base64,AA==', 1, vi.fn())
+    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, new ArrayBuffer(8), vi.fn())
 
     const instance = electronMock.instances[0]
     const handler = instance.webContents.handlers.get('will-navigate')
@@ -50,8 +50,27 @@ describe('capture window 导航安全', () => {
 
   it('动态入口挂载前使用黑色加载底，避免透出应用背景', async () => {
     const { openCaptureWindow } = await import('./capture-window')
-    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, 'data:image/png;base64,AA==', 1, vi.fn())
+    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, new ArrayBuffer(8), vi.fn())
 
     expect(electronMock.instances[0].options.backgroundColor).toBe('#000000')
+  })
+
+  it('隐藏窗口完成位图首帧后才显示，并关闭后台节流', async () => {
+    const { openCaptureWindow, showCaptureWindow } = await import('./capture-window')
+    const bytes = new Uint8Array([1, 2, 3]).buffer
+    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, bytes, vi.fn())
+
+    const instance = electronMock.instances[0]
+    const loaded = instance.webContents.handlers.get('did-finish-load')
+    loaded()
+
+    expect(instance.options.show).toBe(false)
+    expect(instance.options.webPreferences.backgroundThrottling).toBe(false)
+    expect(instance.webContents.send).toHaveBeenCalledWith('capture:init', bytes)
+    expect(instance.show).not.toHaveBeenCalled()
+
+    showCaptureWindow(instance.webContents)
+    expect(instance.show).toHaveBeenCalledTimes(1)
+    expect(instance.focus).toHaveBeenCalledTimes(1)
   })
 })

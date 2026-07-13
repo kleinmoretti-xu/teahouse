@@ -69,7 +69,12 @@ import {
 } from './store/app-state'
 import { setupTray, stopTrayUnreadFlash, updateTrayUnread } from './windows/tray'
 import { openSettingsWindow } from './windows/settings-window'
-import { closeCaptureWindow, openCaptureWindow } from './windows/capture-window'
+import {
+  closeCaptureWindow,
+  openCaptureWindow,
+  showCaptureWindow
+} from './windows/capture-window'
+import { planCaptureGeometry } from './windows/capture-geometry'
 import { openImageViewerWindow } from './windows/image-viewer-window'
 import { fitImageViewerContent } from './windows/image-viewer-sizing'
 import { showWindowForeground } from './windows/foreground'
@@ -1153,7 +1158,31 @@ if (!gotLock) {
         if (wasVisible) showMainWindow({ forceForeground: true })
         return
       }
-      openCaptureWindow(display.bounds, source.thumbnail.toDataURL(), display.scaleFactor, () => {
+      const sourceSize = source.thumbnail.getSize()
+      const geometry = planCaptureGeometry(
+        process.platform,
+        display.bounds,
+        display.workArea,
+        sourceSize
+      )
+      const crop = geometry.imageCrop
+      const needsCrop =
+        crop.x !== 0 ||
+        crop.y !== 0 ||
+        crop.width !== sourceSize.width ||
+        crop.height !== sourceSize.height
+      const captureImage = needsCrop ? source.thumbnail.crop(crop) : source.thumbnail
+      if (captureImage.isEmpty()) {
+        capturing = false
+        if (wasVisible) showMainWindow({ forceForeground: true })
+        return
+      }
+      const png = captureImage.toPNG()
+      const pngBytes = png.buffer.slice(
+        png.byteOffset,
+        png.byteOffset + png.byteLength
+      ) as ArrayBuffer
+      openCaptureWindow(geometry.windowBounds, pngBytes, () => {
         capturing = false
         if (wasVisible) showMainWindow({ forceForeground: true })
       })
@@ -1942,6 +1971,10 @@ if (!gotLock) {
   })
 
   ipcMain.handle(IpcChannels.captureStart, () => startCapture())
+
+  ipcMain.handle(IpcChannels.captureReady, (event) => {
+    showCaptureWindow(event.sender)
+  })
 
   ipcMain.handle(IpcChannels.captureDone, (_event, bytes: unknown, send: unknown) => {
     closeCaptureWindow()

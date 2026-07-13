@@ -6,8 +6,6 @@ import {
   NButton,
   NConfigProvider,
   NInput,
-  NRadioButton,
-  NRadioGroup,
   NSelect,
   NSwitch,
   zhCN
@@ -179,6 +177,10 @@ const avatarSummary = computed(() => {
   return avatar.value === -1 ? `昵称首字 · ${colorName}` : `图标 · ${colorName}`
 })
 const currentSection = computed(() => sections.find((item) => item.id === section.value) ?? sections[0])
+const isMacPlatform = computed(() => info.value?.platform === 'darwin')
+const modifiedSendKeyLabel = computed(() =>
+  isMacPlatform.value ? 'Command + Enter 发送' : 'Control + Enter 发送'
+)
 const activeNotice = computed(() => (section.value === 'network' ? scanTip.value : ''))
 const hasManualPeers = computed(() => (settings.value?.manualPeers.length ?? 0) > 0)
 const hasScanRanges = computed(() => (settings.value?.scanRangeItems.length ?? 0) > 0)
@@ -353,12 +355,12 @@ async function changeSound(value: string | number | null): Promise<void> {
   }
 }
 
-async function changeTheme(value: string | number | boolean): Promise<void> {
-  if (value === 'light' || value === 'dark') await saveApp({ theme: value })
+async function changeTheme(value: 'light' | 'dark'): Promise<void> {
+  await saveApp({ theme: value })
 }
 
-async function changeSendKey(value: string | number | boolean): Promise<void> {
-  if (value === 'enter' || value === 'ctrlEnter') await saveApp({ sendKey: value })
+async function changeSendKey(value: 'enter' | 'ctrlEnter'): Promise<void> {
+  await saveApp({ sendKey: value })
 }
 
 async function resetAppSettings(): Promise<void> {
@@ -680,15 +682,28 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <span class="avatar-current">{{ avatarSummary }}</span>
               </div>
               <div class="avatar-mode-block">
-                <div class="avatar-mode" role="radiogroup" aria-label="头像样式">
+                <div
+                  class="preference-segment avatar-mode"
+                  role="radiogroup"
+                  aria-label="头像样式"
+                  :data-second="avatar === -1"
+                >
                   <button
                     type="button"
+                    role="radio"
                     :class="{ on: avatar >= 0 }"
+                    :aria-checked="avatar >= 0"
                     @click="chooseAvatarEmoji(selectedAvatarEmoji >= 0 ? selectedAvatarEmoji : 0)"
                   >
                     图标头像
                   </button>
-                  <button type="button" :class="{ on: avatar === -1 }" @click="chooseInitialAvatar">
+                  <button
+                    type="button"
+                    role="radio"
+                    :class="{ on: avatar === -1 }"
+                    :aria-checked="avatar === -1"
+                    @click="chooseInitialAvatar"
+                  >
                     昵称首字
                   </button>
                 </div>
@@ -805,16 +820,33 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>主题</strong>
                 <small>深色主题适合弱光环境。</small>
               </div>
-              <NRadioGroup
-                class="teahouse-radio-group"
-                size="small"
-                :value="settings.theme"
+              <div
+                class="preference-segment theme-segment"
+                role="radiogroup"
                 aria-label="主题"
-                @update:value="changeTheme"
+                :data-second="settings.theme === 'dark'"
               >
-                <NRadioButton value="light">浅色</NRadioButton>
-                <NRadioButton value="dark">深色</NRadioButton>
-              </NRadioGroup>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="浅色主题"
+                  :aria-checked="settings.theme === 'light'"
+                  :class="{ on: settings.theme === 'light' }"
+                  @click="changeTheme('light')"
+                >
+                  <PantryIcon name="sun" :size="16" />
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="深色主题"
+                  :aria-checked="settings.theme === 'dark'"
+                  :class="{ on: settings.theme === 'dark' }"
+                  @click="changeTheme('dark')"
+                >
+                  <PantryIcon name="moon" :size="16" />
+                </button>
+              </div>
             </div>
             <label class="setting-line">
               <div>
@@ -904,16 +936,41 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>发送键</strong>
                 <small>另一组组合键用于换行。</small>
               </div>
-              <NRadioGroup
-                class="teahouse-radio-group"
-                size="small"
-                :value="settings.sendKey"
+              <div
+                class="preference-segment send-key-segment"
+                role="radiogroup"
                 aria-label="发送键"
-                @update:value="changeSendKey"
+                :data-second="settings.sendKey === 'ctrlEnter'"
               >
-                <NRadioButton value="enter">Enter</NRadioButton>
-                <NRadioButton value="ctrlEnter">Ctrl/Cmd+Enter</NRadioButton>
-              </NRadioGroup>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="Enter 发送"
+                  :aria-checked="settings.sendKey === 'enter'"
+                  :class="{ on: settings.sendKey === 'enter' }"
+                  @click="changeSendKey('enter')"
+                >
+                  <span class="key-chord" aria-hidden="true">
+                    <span class="keycap"><PantryIcon name="key-enter" :size="14" /></span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  :aria-label="modifiedSendKeyLabel"
+                  :aria-checked="settings.sendKey === 'ctrlEnter'"
+                  :class="{ on: settings.sendKey === 'ctrlEnter' }"
+                  @click="changeSendKey('ctrlEnter')"
+                >
+                  <span class="key-chord" aria-hidden="true">
+                    <span class="keycap">
+                      <PantryIcon :name="isMacPlatform ? 'key-command' : 'key-control'" :size="14" />
+                    </span>
+                    <span class="key-plus">+</span>
+                    <span class="keycap"><PantryIcon name="key-enter" :size="14" /></span>
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1250,10 +1307,25 @@ async function confirmRemove(cidr: string): Promise<void> {
   --fs-body: 13px;
   --fs-aux: 12px;
   display: flex;
+  position: relative;
+  isolation: isolate;
   height: 100vh;
   min-width: 620px;
   background: var(--bg-chat);
   color: var(--text-1);
+}
+
+.settings::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(33, 59, 46, 0.26);
+}
+
+:global(html[data-theme='dark']) .settings::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
 .sidebar {
@@ -1494,9 +1566,116 @@ async function confirmRemove(cidr: string): Promise<void> {
   min-width: 0;
 }
 
-.teahouse-radio-group {
+.preference-segment {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   flex: 0 0 auto;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-list);
+  isolation: isolate;
+}
+
+.preference-segment::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 6px;
+  background: var(--bg-window);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  transform: translateX(0);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.preference-segment[data-second='true']::before {
+  transform: translateX(100%);
+}
+
+.preference-segment button {
+  position: relative;
+  z-index: 1;
+  height: 28px;
+  min-width: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 140ms ease,
+    transform 90ms ease-out;
+}
+
+.preference-segment button.on {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.preference-segment button:focus-visible {
+  outline: 2px solid rgba(61, 139, 107, 0.55);
+  outline-offset: -2px;
+}
+
+.preference-segment button:active {
+  transform: scale(0.96);
+}
+
+.theme-segment {
+  width: 86px;
+}
+
+.send-key-segment {
+  width: 134px;
+}
+
+.key-chord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.keycap {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--material-strong);
+  box-shadow: inset 0 -1px 0 rgba(24, 50, 37, 0.08);
+}
+
+.preference-segment button.on .keycap {
+  border-color: rgba(61, 139, 107, 0.38);
+}
+
+.key-plus {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preference-segment::before,
+  .preference-segment button {
+    transition: none;
+  }
+
+  .preference-segment button:active {
+    transform: none;
+  }
 }
 
 .field-grid {
@@ -1613,11 +1792,7 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 .avatar-mode {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--bg-list);
+  width: 184px;
   margin-bottom: 8px;
 }
 
@@ -1625,24 +1800,6 @@ async function confirmRemove(cidr: string): Promise<void> {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-3);
-}
-
-.avatar-mode button {
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  padding: 0 14px;
-  cursor: pointer;
-}
-
-.avatar-mode button.on {
-  background: var(--bg-window);
-  color: var(--primary);
-  font-weight: 600;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .avatar-label {

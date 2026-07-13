@@ -1,4 +1,4 @@
-import { app, BrowserWindow, type Rectangle } from 'electron'
+import { app, BrowserWindow, type Rectangle, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { resolveDevRendererUrl } from '../util/renderer-url'
 
@@ -6,15 +6,34 @@ import { resolveDevRendererUrl } from '../util/renderer-url'
 // 截屏图像在窗口加载完成后经 IPC 注入（dataURL）。
 
 let win: BrowserWindow | null = null
+let readyFallbackTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearReadyFallback(): void {
+  if (!readyFallbackTimer) return
+  clearTimeout(readyFallbackTimer)
+  readyFallbackTimer = null
+}
+
+function revealCaptureWindow(target: BrowserWindow): void {
+  if (target.isDestroyed()) return
+  clearReadyFallback()
+  target.show()
+  target.focus()
+}
+
+/** 只接受当前截图窗的就绪回执，其他 renderer 无法借此操作窗口。 */
+export function showCaptureWindow(sender: WebContents): void {
+  if (!win || win.isDestroyed() || win.webContents !== sender) return
+  revealCaptureWindow(win)
+}
 
 export function openCaptureWindow(
   bounds: Rectangle,
-  dataUrl: string,
-  scaleFactor: number,
+  pngBytes: ArrayBuffer,
   onClosed: () => void
 ): void {
   closeCaptureWindow()
-  win = new BrowserWindow({
+  const captureWin = new BrowserWindow({
     ...bounds,
     frame: false,
     transparent: false,
@@ -30,20 +49,25 @@ export function openCaptureWindow(
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       sandbox: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // 隐藏期间仍要及时完成 PNG 解码与首帧，Win7 上避免显示后才开始卡顿加载。
+      backgroundThrottling: false
     }
   })
-  win.setAlwaysOnTop(true, 'screen-saver')
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  win.webContents.on('will-navigate', (event) => event.preventDefault())
-  win.on('closed', () => {
-    win = null
+  win = captureWin
+  captureWin.setAlwaysOnTop(true, 'screen-saver')
+  captureWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  captureWin.webContents.on('will-navigate', (event) => event.preventDefault())
+  captureWin.on('closed', () => {
+    clearReadyFallback()
+    if (win === captureWin) win = null
     onClosed()
   })
-  win.webContents.on('did-finish-load', () => {
-    win?.webContents.send('capture:init', dataUrl, scaleFactor)
-    win?.show()
-    win?.focus()
+  captureWin.webContents.on('did-finish-load', () => {
+    captureWin.webContents.send('capture:init', pngBytes)
+    // renderer 正常会在首帧后立即回执；超时兜底保证解码异常时仍可按 Esc 退出。
+    clearReadyFallback()
+    readyFallbackTimer = setTimeout(() => revealCaptureWindow(captureWin), 2500)
   })
 
   const rendererUrl = resolveDevRendererUrl(
@@ -52,13 +76,14 @@ export function openCaptureWindow(
     app.isPackaged
   )
   if (rendererUrl) {
-    void win.loadURL(rendererUrl)
+    void captureWin.loadURL(rendererUrl)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/capture' })
+    void captureWin.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/capture' })
   }
 }
 
 export function closeCaptureWindow(): void {
+  clearReadyFallback()
   if (win && !win.isDestroyed()) win.close()
   win = null
 }

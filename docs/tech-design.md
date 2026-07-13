@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.17；backdrop-filter 收敛到浮层已落档（决议 #219）；内网通兼容设计已落档但 **#199 暂缓实现**；v0.36.3 开发中 |
+| 状态 | v1.21；发送键平台化图标约束已落档（决议 #224）；内网通兼容设计已落档但 **#199 暂缓实现**；v0.36.8 开发中 |
 | 日期 | 2026-07-13 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -40,6 +40,8 @@ Naive UI 接入约束（决议 #215）：
 - token 增加 `material-*`、`surface-hover`、`surface-selected` 与 shadow 语义，浅色 / 深色同时定义；组件不得直接复制另一套灰阶。
 - 主窗口、设置窗口仍是独立动态根，Provider 随各自根加载。不得把 Naive UI 放进 renderer 公共启动闭包。
 - 主窗口 Provider 使用 Naive UI `abstract` 模式，避免额外 DOM 根节点打断 `.shell` 的百分比高度包含块。若后续取消 `abstract`，新增根节点必须显式保持完整高度链。任何根级 Provider / Portal 改动都要在真实 Electron 窗口验证默认尺寸、最小尺寸和最大化 / 还原。
+- 设置页二选一偏好（决议 #223）统一使用 `SettingsApp.vue` 自绘双段滑块，头像样式、主题与发送键共享相同 DOM / CSS 契约；选中块只用 `transform` 位移，太阳 / 月亮复用本地 `PantryIcon`，不引入 xicons。Naive UI RadioGroup / RadioButton 不再进入设置动态闭包，其余标准表单控件继续使用 Naive UI。
+- 发送键滑块（决议 #224）根据已加载的 `AppInfo.platform` 选择修饰键图标：`darwin` 使用 `key-command`，其他平台使用 `key-control`，并与 `key-enter` 组合。平台信息仅影响展示与 `aria-label`，设置值继续使用 `enter | ctrlEnter`，ChatPane 的 `ctrlKey || metaKey` 判定不变。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 
 ## 2. 进程与窗口模型
@@ -62,6 +64,8 @@ Naive UI 接入约束（决议 #215）：
 - `app.requestSingleInstanceLock()`：二开实例 → 唤起已有主窗。
 - 主窗 `show: false` + `ready-to-show` 再显示，避免白屏闪烁。
 - **沉浸式无标题栏**（决议 #49/#51/#52）：macOS `titleBarStyle: 'hiddenInset'`（主窗 `trafficLightPosition` x=68 置于列表栏顶部，56px 导航栏放不下三钮；设置窗 x=12）；Windows / Linux `frame: false`（Windows 保留默认 `thickFrame`，边缘缩放与 Aero Snap 不受影响）。拖拽带（顶部 32px）分平台实现：macOS / Windows 用 `-webkit-app-region: drag`；**Linux 禁用 CSS 拖拽区**——Electron 在 Linux 上的 drag region 命中计算不可靠（受桌面环境/缩放影响，UOS 实测会吞掉客户区点击，决议 #52），改为渲染层 Pointer Capture + 主进程 `win:begin-drag` / `win:end-drag`（`screen.getCursorScreenPoint()` 间隔 16ms 跟随移窗，窗口销毁/二次 begin 自动清理），双击走 `win:toggle-maximize`。Windows / Linux 的最小化 / 最大化 / 关闭经 IPC `win:minimize` / `win:toggle-maximize` / `win:close`（`BrowserWindow.fromWebContents` 定位窗口）；最大化状态经事件 `win:maximized-changed` 推送图标切换。**渲染层严禁用 DOM `window.close()` 关窗**（决议 #59）：Electron 对渲染层发起的关闭走 `CloseImmediately`，绕过主进程 `close` 事件，"关闭进托盘"拦截会失效直接退出——必须走 `win:close` 由主进程 `BrowserWindow.close()` 标准流程。不使用透明窗口，Win7 软渲染下安全。若 UOS 复测仍异常，预案：Linux 回退 `frame: true`。
+
+**设置窗模态层级（决议 #222）**：Windows / Linux 的 `settings-window.ts` 在有可用父窗时设置 `modal:true` 与 `hasShadow:true`；创建后通过 `ui:settings-window-state` 向父窗发送 `true`，关闭时发送 `false`。主窗口 `App.vue` 订阅状态并显示固定定位 scrim，层级高于窗口控制、主内容与普通浮层，使用单一 rgba 背景和短 opacity 过渡，`pointer-events` 拦截所有主窗操作；不使用 `backdrop-filter`、透明 BrowserWindow 或逐帧效果。设置根 `.settings` 用顶层伪元素 inset box-shadow 提供 1px 平台无关边界，弥补 Win7 无 DWM / UOS 弱阴影。macOS 不发送状态事件、不设 modal，继续使用原生阴影与父子窗口关系。窗口重复打开仍维持 true；父窗或 webContents 已销毁时安全跳过事件发送。
 - 安全基线（README 红线落点）：`contextIsolation: true`、`sandbox: true`、`nodeIntegration: false`；严格 CSP（`default-src 'self'`）；`will-navigate` 全拦截、`setWindowOpenHandler` 一律 deny；渲染进程只加载本地资源。
 - **日志脱敏**（决议 #22）：logger 永不记录消息正文/文件内容，只记元数据（消息 ID、类型、长度、对端 nodeId）——"导出诊断日志"不等于泄聊天。
 - 通知：用 Electron `Notification`（Win7 下 Electron 自带仿原生降级实现；macOS 26 未签名场景列入冒烟清单）。通知正文走 `main/notifications.ts` 生成系统安全摘要，emoji 降级为 `[表情]`，避免 UOS / Win7 系统通知缺字方框；Linux / Windows 显式传入本地应用图标路径（开发态 `build/icons/window-icon.png`，打包态 `resources/icons/pantry.png`），不依赖桌面环境反查 `.desktop` 图标。
@@ -123,7 +127,9 @@ src/
 
 渲染入口性能边界（决议 #210）：四类窗口继续共用单个 `index.html` 和 hash 路由，公共 bootstrap 只静态加载 Vue、Pinia、入口解析与基础 token；各根组件通过动态 import 形成独立 chunk，生产构建使用 esbuild 压缩。Vite manifest 进入构建产物，`scripts/check-renderer-bundles.mjs` 在每次 `npm run build` 后确认四个动态入口均可达且文件互异，并把入口及其静态依赖闭包限制在 200 KiB。OCR 结果缓存使用 16 项 LRU；PaddleOCR 服务初始化 Promise 失败后清空，后续识别可以重新初始化。
 
-截图初始化时序（决议 #218）：截图窗 preload 在页面脚本和动态根组件之前订阅 `capture:init`，以窗口生命周期内存缓存最近一次 `{ dataUrl, scaleFactor }`；`CaptureApp` 挂载后通过 `window.pantry.onCaptureInit` 订阅时同步回放，覆盖主进程 `did-finish-load` 已发送、renderer 动态 import 尚未完成的竞态。缓存只存在截图窗口进程内，不落盘、不写日志、不跨窗口共享；BrowserWindow 加载底色固定为黑色，防止动态根挂载前显示应用全局茶青背景。
+截图初始化时序（决议 #218/#221）：截图窗 preload 在页面脚本和动态根组件之前订阅 `capture:init`，以窗口生命周期内存缓存最近一次 PNG `ArrayBuffer`；`CaptureApp` 挂载后通过 `window.pantry.onCaptureInit` 订阅时同步回放，覆盖主进程 `did-finish-load` 已发送、renderer 动态 import 尚未完成的竞态。缓存只存在截图窗口进程内，不落盘、不写日志、不跨窗口共享；PNG 字节通过本地 Blob URL 解码，避免 data URL 的 base64 体积与字符串复制开销。BrowserWindow 加载底色固定为黑色，防止截图根挂载前显示应用全局茶青背景。
+
+截图几何与渲染性能（决议 #221）：`capture-geometry.ts` 以 `display.bounds`、`display.workArea` 与 `desktopCapturer` 返回的实际 `thumbnail.getSize()` 计算窗口边界和物理像素裁剪矩形。Windows 使用工作区边界，兼容底部、顶部、左侧或右侧任务栏及 125% 等 DPI；其他平台保持整屏边界。主进程先裁剪 `NativeImage` 再注入截图窗，截图窗收到 `capture:ready` 前保持隐藏，renderer 完成图片解码与首帧布局后才显示 / 聚焦；`backgroundThrottling=false` 只用于保证隐藏截图窗及时完成该准备阶段。`CaptureApp` 只渲染一份 `<img>` 桌面层，选区高亮通过四块纯色遮罩形成，`mousemove` 以 `requestAnimationFrame` 合并；最终裁剪使用 `naturalWidth / viewportWidth` 与 `naturalHeight / viewportHeight` 两个独立比例，标注坐标同步按 X/Y 映射。该链路不引入透明窗口、实时 backdrop blur 或远程资源，继续适配 Win7 禁硬件加速基线。
 
 远期预留（决议 #21）：将来的本地 AI 开放接口（`local-api/`，HTTP/WS 或 MCP 服务器）将作为与 `ipc/` **并列的第二个"前台"**，复用同一 `services/` 层——界面能做的（查消息、发消息、订阅事件），接口天然也能做，不需要改动业务层。当前版本不实现，但任何人不得把业务逻辑写进 `ipc/` 层（会堵死这个口子）。
 
@@ -424,3 +430,7 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-13 v1.15 决议 #217：修复 `NConfigProvider` 根节点打断主窗口百分比高度链的回归。Provider 改用 `abstract` 模式，新增源码测试锁定无布局根节点契约，并将真实 Electron 默认尺寸、最小尺寸与最大化 / 还原列入 UI 回归验收。版本 0.36.0 → **0.36.1**。
 - 2026-07-13 v1.16 决议 #218：preload 增加 `capture:init` 窗口内存回放，覆盖截图动态根晚订阅竞态；截图窗加载底色固定为黑色；设置 toast 改为窗口整体居中。补初始化先后顺序、退订与 BrowserWindow 选项测试。版本 0.36.1 → **0.36.2**。
 - 2026-07-13 v1.17 决议 #219：`backdrop-filter` 收敛到浮层。移除主窗口 rail / list、聊天 head / input-area、设置 sidebar / panel 上对纯色背景无效的 blur，保留半透明背景与阴影层级；落档 `prefers-reduced-transparency` 在 Chrome 108 上不生效的事实。版本 0.36.2 → **0.36.3**。
+- 2026-07-13 v1.18 决议 #221：Windows 截图几何改用 `display.workArea`，按桌面源实际像素裁掉任务栏；截图窗等待 renderer 解码和首帧就绪后显示，框选渲染改为单桌面图、四块遮罩和 RAF 合帧，最终裁剪按 X/Y 自然尺寸比例换算。版本 0.36.4 → **0.36.5**。
+- 2026-07-13 v1.19 决议 #222：Windows / Linux 设置窗改为 modal 子窗，主窗通过 `ui:settings-window-state` 显示静态 scrim 并拦截交互；设置窗顶层伪元素提供 1px 平台无关边界。macOS 保持原生阴影与父子窗口行为。版本 0.36.5 → **0.36.6**。
+- 2026-07-13 v1.20 决议 #223：设置页头像样式、主题和发送键共享自绘双段滑块，选中块只做 transform 位移；主题太阳 / 月亮复用本地 `PantryIcon`，移除设置动态闭包内不再使用的 Naive UI RadioGroup / RadioButton。版本 0.36.6 → **0.36.7**。
+- 2026-07-13 v1.21 决议 #224：发送键滑块读取 `AppInfo.platform`，macOS 组合 Command + 回车图标，Windows / Linux 组合 Control + 回车图标；只改展示与无障碍名称，设置值和输入判定不变。版本 0.36.7 → **0.36.8**。
