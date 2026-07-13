@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage } from 'electron'
 import { TRAY_ICON_COLOR_DATAURL, TRAY_ICON_MONO_DATAURL } from './tray-icon'
 import {
+  createLinuxTrayAttentionIconDataURL,
   createUnreadOverlayIconDataURL,
   createUnreadTrayIconDataURL,
   trayUnreadToolTip,
@@ -35,6 +36,9 @@ function createTrayBaseIcon(): ReturnType<typeof nativeImage.createFromDataURL> 
 
 let flashTimer: ReturnType<typeof setInterval> | null = null
 let flashOn = false
+let flashTray: Tray | null = null
+let flashBaseDataURL = ''
+let flashUnreadDataURL = ''
 
 /**
  * 托盘常驻（F-SYS-1）。个别 Linux 桌面环境没有托盘协议 —— 创建失败不致命，
@@ -91,20 +95,62 @@ export function stopTrayUnreadFlash(tray?: Tray | null): void {
     flashTimer = null
   }
   flashOn = false
+  flashTray = null
+  flashBaseDataURL = ''
+  flashUnreadDataURL = ''
   if (tray && process.platform !== 'darwin') {
-    tray.setImage(nativeImage.createFromDataURL(trayBaseDataURL()))
+    setTrayImage(tray, trayBaseDataURL())
   }
 }
 
 function startTrayUnreadFlash(tray: Tray, count: number): void {
-  const baseIcon = nativeImage.createFromDataURL(trayBaseDataURL())
-  const unreadIcon = nativeImage.createFromDataURL(createUnreadTrayIconDataURL(count))
-  tray.setImage(unreadIcon)
+  const baseDataURL = trayBaseDataURL()
+  const unreadDataURL =
+    process.platform === 'linux' ? createLinuxTrayAttentionIconDataURL() : createUnreadTrayIconDataURL(count)
+
+  if (flashTimer && flashTray === tray) {
+    const unreadFrameChanged = flashUnreadDataURL !== unreadDataURL
+    flashBaseDataURL = baseDataURL
+    flashUnreadDataURL = unreadDataURL
+    // 未读数更新不重启周期；Windows 当前在注意帧时只替换新的数字图。
+    if (flashOn && unreadFrameChanged && !setTrayImage(tray, unreadDataURL)) {
+      stopTrayUnreadFlash()
+    }
+    return
+  }
+
+  if (flashTimer || flashTray) stopTrayUnreadFlash(flashTray)
+
+  flashTray = tray
+  flashBaseDataURL = baseDataURL
+  flashUnreadDataURL = unreadDataURL
   flashOn = true
-  if (flashTimer) clearInterval(flashTimer)
+  if (!setTrayImage(tray, unreadDataURL)) {
+    stopTrayUnreadFlash()
+    return
+  }
+
   flashTimer = setInterval(() => {
+    const activeTray = flashTray
+    if (!activeTray) {
+      stopTrayUnreadFlash()
+      return
+    }
     flashOn = !flashOn
-    tray.setImage(flashOn ? unreadIcon : baseIcon)
+    const nextDataURL = flashOn ? flashUnreadDataURL : flashBaseDataURL
+    // Linux 每次新建 NativeImage，促使 Electron 22 重新序列化 D-Bus IconPixmap。
+    if (!setTrayImage(activeTray, nextDataURL)) stopTrayUnreadFlash()
   }, 800)
   flashTimer.unref?.()
+}
+
+function setTrayImage(tray: Tray, dataURL: string): boolean {
+  if (tray.isDestroyed()) return false
+  try {
+    tray.setImage(nativeImage.createFromDataURL(dataURL))
+    return true
+  } catch (err) {
+    console.warn('[tray] 更新托盘图标失败，已停止未读闪烁：', err)
+    return false
+  }
 }

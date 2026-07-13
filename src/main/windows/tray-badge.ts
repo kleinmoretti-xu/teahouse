@@ -7,6 +7,7 @@ const BADGE_COLOR = [0xfa, 0x51, 0x51] as const
 const WHITE = [0xff, 0xff, 0xff] as const
 const aa = 1.25
 const BASE_COLOR_RGBA = Buffer.from(TRAY_ICON_COLOR_RGBA_BASE64, 'base64')
+let linuxTrayAttentionDataURL: string | null = null
 
 const DIGITS: Record<string, string[]> = {
   '0': ['111', '101', '101', '101', '111'],
@@ -38,6 +39,14 @@ export function createUnreadTrayIconDataURL(count: number): string {
 
 export function createUnreadOverlayIconDataURL(count: number): string {
   return `data:image/png;base64,${encodePng(renderOverlayBitmap(count)).toString('base64')}`
+}
+
+/** Linux 小尺寸托盘的高对比注意帧（决议 #214）：红底白叹号，避免数字角标缩小后不可感知。 */
+export function createLinuxTrayAttentionIconDataURL(): string {
+  if (!linuxTrayAttentionDataURL) {
+    linuxTrayAttentionDataURL = `data:image/png;base64,${encodePng(renderLinuxAttentionBitmap()).toString('base64')}`
+  }
+  return linuxTrayAttentionDataURL
 }
 
 function clamp(v: number, min = 0, max = 1): number {
@@ -75,6 +84,14 @@ function renderOverlayBitmap(count: number): { size: number; raw: Buffer } {
   return { size: OVERLAY_SIZE, raw }
 }
 
+function renderLinuxAttentionBitmap(): { size: number; raw: Buffer } {
+  const raw = emptyRaw(SIZE)
+  drawRoundedRect(raw, SIZE, 3, 3, 26, 26, 8, BADGE_COLOR)
+  drawRoundedRect(raw, SIZE, 14, 8, 4, 12, 2, WHITE)
+  drawRoundedRect(raw, SIZE, 14, 23, 4, 4, 2, WHITE)
+  return { size: SIZE, raw }
+}
+
 function emptyRaw(size: number): Buffer {
   const raw = Buffer.alloc(size * (1 + size * 4))
   for (let y = 0; y < size; y++) raw[y * (1 + size * 4)] = 0
@@ -104,6 +121,25 @@ function drawBadge(raw: Buffer, size: number, text: string): void {
   const textX = Math.round(x + (badgeW - textWidth) / 2)
   const textY = Math.round(y + (badgeH - textHeight) / 2)
   drawBitmapText(raw, size, text, textX, textY, scale)
+}
+
+function drawRoundedRect(
+  raw: Buffer,
+  size: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  color: readonly number[]
+): void {
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const alpha = fillAlpha(roundedRectSdf(px + 0.5, py + 0.5, x, y, width, height, radius))
+      if (alpha <= 0) continue
+      paintOver(raw, size, px, py, color, Math.round(alpha * 255))
+    }
+  }
 }
 
 function drawBitmapText(raw: Buffer, size: number, text: string, x: number, y: number, scale: number): void {

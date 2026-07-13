@@ -9,6 +9,7 @@ interface FakeNativeImage {
 
 interface FakeTray {
   icon?: FakeNativeImage
+  isDestroyed: MockFn
   setToolTip: MockFn
   setContextMenu: MockFn
   on: MockFn
@@ -77,6 +78,7 @@ function installElectronDefaults(): void {
   electronMock.Tray.mockReset()
   electronMock.Tray.mockImplementation(function (this: FakeTray, icon: FakeNativeImage): void {
     this.icon = icon
+    this.isDestroyed = vi.fn(() => false)
     this.setToolTip = vi.fn()
     this.setContextMenu = vi.fn()
     this.on = vi.fn()
@@ -96,6 +98,7 @@ async function loadTrayModule(platform: NodeJS.Platform): Promise<typeof import(
 
 function makeTray(): FakeTray {
   return {
+    isDestroyed: vi.fn(() => false),
     setToolTip: vi.fn(),
     setContextMenu: vi.fn(),
     on: vi.fn(),
@@ -200,6 +203,95 @@ describe('tray unread integration', () => {
     expect(win.setOverlayIcon).not.toHaveBeenCalled()
     expect(tray.setToolTip).toHaveBeenCalledWith('茶话间（5 条未读）')
     expect(tray.setImage).toHaveBeenCalledTimes(1)
+    const attentionIcon = tray.setImage.mock.calls[0][0] as FakeNativeImage
+
+    vi.advanceTimersByTime(800)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(2)
+    const baseIcon = tray.setImage.mock.calls[1][0] as FakeNativeImage
+    expect(baseIcon.dataURL).not.toBe(attentionIcon.dataURL)
+
+    vi.advanceTimersByTime(800)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(3)
+    const nextAttentionIcon = tray.setImage.mock.calls[2][0] as FakeNativeImage
+    expect(nextAttentionIcon.dataURL).toBe(attentionIcon.dataURL)
+    expect(nextAttentionIcon).not.toBe(attentionIcon)
+  })
+
+  it('Linux 未读数更新时保持原闪烁周期，不重新停在注意帧', async () => {
+    vi.useFakeTimers()
+    const { updateTrayUnread } = await loadTrayModule('linux')
+    const tray = makeTray()
+
+    updateTrayUnread(tray as never, null, 1)
+    vi.advanceTimersByTime(400)
+    updateTrayUnread(tray as never, null, 2)
+    vi.advanceTimersByTime(400)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(2)
+    const attentionIcon = tray.setImage.mock.calls[0][0] as FakeNativeImage
+    const baseIcon = tray.setImage.mock.calls[1][0] as FakeNativeImage
+    expect(baseIcon.dataURL).not.toBe(attentionIcon.dataURL)
+
+    vi.advanceTimersByTime(800)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(3)
+    expect((tray.setImage.mock.calls[2][0] as FakeNativeImage).dataURL).toBe(attentionIcon.dataURL)
+  })
+
+  it('Linux 托盘销毁后安全停止闪烁', async () => {
+    vi.useFakeTimers()
+    const { updateTrayUnread } = await loadTrayModule('linux')
+    const tray = makeTray()
+
+    updateTrayUnread(tray as never, null, 1)
+    tray.isDestroyed.mockReturnValue(true)
+    vi.advanceTimersByTime(800)
+    const callCountAfterDestroy = tray.setImage.mock.calls.length
+
+    vi.advanceTimersByTime(1600)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(callCountAfterDestroy)
+    expect(callCountAfterDestroy).toBe(1)
+  })
+
+  it('Linux 写入托盘图标失败后安全停止闪烁', async () => {
+    vi.useFakeTimers()
+    const { updateTrayUnread } = await loadTrayModule('linux')
+    const tray = makeTray()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    tray.setImage.mockImplementationOnce(() => {
+      throw new Error('dbus icon update failed')
+    })
+
+    updateTrayUnread(tray as never, null, 1)
+    vi.advanceTimersByTime(1600)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      '[tray] 更新托盘图标失败，已停止未读闪烁：',
+      expect.any(Error)
+    )
+
+    warn.mockRestore()
+  })
+
+  it('Linux 未读清零后恢复常规图标并停止闪烁', async () => {
+    vi.useFakeTimers()
+    const { updateTrayUnread } = await loadTrayModule('linux')
+    const tray = makeTray()
+
+    updateTrayUnread(tray as never, null, 3)
+    updateTrayUnread(tray as never, null, 0)
+    const callCountAfterClear = tray.setImage.mock.calls.length
+    const restoredIcon = tray.setImage.mock.calls[callCountAfterClear - 1][0] as FakeNativeImage
+
+    vi.advanceTimersByTime(1600)
+
+    expect(tray.setImage).toHaveBeenCalledTimes(callCountAfterClear)
+    expect(restoredIcon.dataURL).toContain('data:image/png;base64,')
+    expect(tray.setToolTip).toHaveBeenLastCalledWith('茶话间')
   })
 
   it('创建托盘时 macOS 使用 template image 并挂载菜单和点击入口', async () => {

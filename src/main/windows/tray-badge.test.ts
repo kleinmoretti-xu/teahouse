@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createLinuxTrayAttentionIconDataURL,
   createUnreadOverlayIconDataURL,
   createUnreadTrayIconDataURL,
   trayUnreadToolTip,
@@ -25,9 +26,13 @@ describe('tray unread badge', () => {
   it('生成可解码的 PNG DataURL', () => {
     const tray = decodePng(createUnreadTrayIconDataURL(7))
     const overlay = decodePng(createUnreadOverlayIconDataURL(7))
+    const linuxAttention = decodePng(createLinuxTrayAttentionIconDataURL())
     expect(tray.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
     expect(overlay.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+    expect(linuxAttention.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
     expect(tray.length).toBeGreaterThan(100)
     expect(overlay.length).toBeGreaterThan(80)
+    expect(linuxAttention.length).toBeGreaterThan(100)
+    expect(linuxAttention.equals(tray)).toBe(false)
   })
 })
