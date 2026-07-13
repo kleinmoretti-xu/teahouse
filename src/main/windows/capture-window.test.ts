@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const electronMock = vi.hoisted(() => {
   const instances: Array<Record<string, any>> = []
-  const BrowserWindow = vi.fn(function (this: Record<string, any>) {
+  const BrowserWindow = vi.fn(function (this: Record<string, any>, options: Record<string, any>) {
     const handlers = new Map<string, (...args: any[]) => void>()
+    this.options = options
     this.webContents = {
       handlers,
       setWindowOpenHandler: vi.fn(),
@@ -45,5 +46,12 @@ describe('capture window 导航安全', () => {
     expect(handler).toBeTypeOf('function')
     handler(event, 'https://example.invalid/')
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('动态入口挂载前使用黑色加载底，避免透出应用背景', async () => {
+    const { openCaptureWindow } = await import('./capture-window')
+    openCaptureWindow({ x: 0, y: 0, width: 800, height: 600 }, 'data:image/png;base64,AA==', 1, vi.fn())
+
+    expect(electronMock.instances[0].options.backgroundColor).toBe('#000000')
   })
 })

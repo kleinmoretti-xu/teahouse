@@ -5,6 +5,7 @@ import './styles/tokens.css'
 
 async function bootstrap(): Promise<void> {
   const entry = resolveRendererEntry(location.hash)
+  if (entry === 'capture') document.documentElement.dataset.window = 'capture'
   const root = await loadRendererRoot(entry)
   createApp(root.default).use(createPinia()).mount('#app')
 }

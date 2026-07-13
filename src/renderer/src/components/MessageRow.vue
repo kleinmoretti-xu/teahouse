@@ -159,20 +159,20 @@ function openTextLink(url: string): void {
   text-align: center;
   font-size: 12px;
   color: var(--text-3);
-  margin: 8px 0;
+  margin: 10px 0;
 }
 .row {
   display: flex;
   align-items: flex-end;
   gap: 6px;
-  margin: 4px 0;
+  margin: 6px 0;
 }
 .row.mine {
   flex-direction: row-reverse;
 }
 .row.highlight {
   animation: hl 2.4s ease;
-  border-radius: 8px;
+  border-radius: 14px;
 }
 @keyframes hl {
   0%,
@@ -195,7 +195,7 @@ function openTextLink(url: string): void {
   margin-top: 18px;
 }
 .message-stack {
-  max-width: 64%;
+  max-width: 68%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -215,8 +215,9 @@ function openTextLink(url: string): void {
 }
 .bubble {
   max-width: 100%;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 14px;
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
@@ -225,9 +226,13 @@ function openTextLink(url: string): void {
 }
 .row.peer .bubble {
   background: var(--bubble-peer);
+  border-color: var(--line);
+  box-shadow: var(--highlight-edge), 0 5px 16px rgba(24, 50, 37, 0.055);
 }
 .row.mine .bubble {
   background: var(--bubble-mine);
+  border-color: rgba(61, 139, 107, 0.1);
+  box-shadow: var(--highlight-edge);
 }
 .text-link {
   border: none;
@@ -281,5 +286,11 @@ function openTextLink(url: string): void {
 }
 .hint.failed {
   color: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .row.highlight,
+  .spin {
+    animation: none;
+  }
 }
 </style>

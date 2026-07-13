@@ -166,11 +166,17 @@ function displayName(peer: PeerView): string {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  padding-bottom: 8px;
 }
 .list-head {
-  padding: 4px 12px 8px;
+  height: 38px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
   font-size: 12px;
-  color: var(--text-3);
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.01em;
 }
 .placeholder {
   color: var(--text-3);
@@ -182,19 +188,29 @@ function displayName(peer: PeerView): string {
   list-style: none;
   overflow-y: auto;
   flex: 1;
+  padding: 0 8px 10px;
 }
 .tree li {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-  padding-right: 12px;
+  min-height: 38px;
+  margin: 1px 0;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  padding-right: 10px;
+  border-radius: 10px;
   cursor: pointer;
   font-size: 13px;
+  transition:
+    background 150ms ease,
+    transform 90ms ease-out;
 }
 .tree li:hover {
-  background: var(--line);
+  background: var(--surface-hover);
+}
+.tree li:active {
+  transform: scale(0.988);
 }
 .arrow {
   font-size: 10px;
@@ -202,15 +218,16 @@ function displayName(peer: PeerView): string {
   width: 12px;
 }
 .g-label {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--text-2);
 }
 .g-count {
   font-size: 11px;
   color: var(--text-3);
 }
 .peer-avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: var(--primary);
   color: #fff;
@@ -227,8 +244,11 @@ function displayName(peer: PeerView): string {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 .peer-name {
+  color: var(--text-1);
+  font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -256,5 +276,13 @@ function displayName(peer: PeerView): string {
 }
 .dot.off {
   background: var(--offline);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree li {
+    transition: none;
+  }
+  .tree li:active {
+    transform: none;
+  }
 }
 </style>

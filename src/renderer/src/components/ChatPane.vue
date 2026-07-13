@@ -1904,6 +1904,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   background: var(--bg-chat);
   position: relative;
   overflow: hidden;
+  isolation: isolate;
 }
 .drop-mask {
   position: absolute;
@@ -1921,7 +1922,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-bottom: 4px;
+  padding-bottom: 6px;
   position: relative;
 }
 .toolbar-spacer {
@@ -1947,15 +1948,17 @@ async function onDrop(event: DragEvent): Promise<void> {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg-window);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+  border-radius: 14px;
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   z-index: 28;
 }
 .pk-popover button {
   padding: 8px 6px 7px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-1);
   display: flex;
@@ -1965,7 +1968,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 140ms ease, transform 120ms ease;
+  transition: background 150ms ease, transform 100ms ease-out;
 }
 /* 玩法卡的图标小窗：与 PkBubble 开奖窗同底（--bg-chat）、同茶青语义，让浮层与气泡视觉呼应 */
 .pk-pop-window {
@@ -1980,15 +1983,14 @@ async function onDrop(event: DragEvent): Promise<void> {
   transition: border-color 140ms ease, background 140ms ease;
 }
 .pk-popover button:hover:not(:disabled) {
-  background: var(--primary-weak);
-  transform: translateY(-1px);
+  background: var(--surface-hover);
 }
 .pk-popover button:hover:not(:disabled) .pk-pop-window {
   border-color: var(--primary);
   background: var(--bg-window);
 }
 .pk-popover button:active:not(:disabled) {
-  transform: translateY(0);
+  transform: scale(0.97);
 }
 .pk-popover button:focus-visible {
   outline: 2px solid rgba(61, 139, 107, 0.35);
@@ -2011,11 +2013,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   width: 220px;
   max-height: 180px;
   overflow-y: auto;
-  background: var(--bg-window);
+  background: var(--material-strong);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  padding: 4px;
+  border-radius: 12px;
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  padding: 5px;
   z-index: 4;
 }
 .mention-picker button {
@@ -2025,12 +2027,12 @@ async function onDrop(event: DragEvent): Promise<void> {
   color: var(--text-1);
   text-align: left;
   padding: 7px 10px;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 13px;
   cursor: pointer;
 }
 .mention-picker button:hover {
-  background: var(--line);
+  background: var(--surface-hover);
 }
 /* "回到最新"悬浮圆按钮（决议 #134）：贴消息区右下角，白底 + 茶青箭头 + 柔和阴影 */
 .jump-latest {
@@ -2041,17 +2043,18 @@ async function onDrop(event: DragEvent): Promise<void> {
   height: 36px;
   border-radius: 50%;
   border: 1px solid var(--line);
-  background: var(--bg-window);
+  background: var(--material-strong);
   color: var(--primary);
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--highlight-edge), var(--shadow-soft);
   z-index: 6;
   transition: box-shadow 140ms ease, border-color 140ms ease;
 }
 .jump-latest:active {
-  background: var(--bg-list);
+  background: var(--surface-pressed);
+  transform: scale(0.96);
 }
 /* 进出场：淡入 + 自下方 8px 上移，缓动复用项目既有曲线 */
 .jump-latest-enter-active,
@@ -2075,9 +2078,9 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 /* hover 只做高亮：茶青描边 + 阴影略增，保持白底，不加半透明、不浮动（决议 #135） */
 .jump-latest:hover {
-  background: var(--bg-window);
+  background: var(--material-strong);
   border-color: var(--primary);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.07);
+  box-shadow: var(--highlight-edge), 0 8px 24px rgba(24, 50, 37, 0.14);
   opacity: 1;
 }
 .tool {
@@ -2085,13 +2088,17 @@ async function onDrop(event: DragEvent): Promise<void> {
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  width: 30px;
-  height: 28px;
+  width: 32px;
+  height: 30px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
   position: relative;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 90ms ease-out;
 }
 .tool-wrap {
   position: relative;
@@ -2122,13 +2129,13 @@ async function onDrop(event: DragEvent): Promise<void> {
   min-width: max-content;
   max-width: 120px;
   padding: 4px 7px;
-  border-radius: 4px;
+  border-radius: 7px;
   background: rgba(35, 35, 35, 0.94);
   color: #fff;
   font-size: 11px;
   line-height: 1.3;
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-soft);
 }
 .tool-wrap:hover::before,
 .tool-wrap:hover::after,
@@ -2139,10 +2146,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   transition-delay: 0.45s;
 }
 .tool:hover:not(:disabled) {
-  background: var(--line);
+  background: var(--surface-hover);
+  color: var(--text-1);
 }
 .tool:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.96);
 }
 .tool:focus-visible {
   outline: 2px solid rgba(61, 139, 107, 0.35);
@@ -2150,7 +2158,8 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .tool.active {
   color: var(--primary);
-  background: rgba(61, 139, 107, 0.1);
+  background: var(--surface-selected);
+  box-shadow: var(--highlight-edge);
 }
 .tool:disabled {
   opacity: 0.35;
@@ -2566,13 +2575,17 @@ async function onDrop(event: DragEvent): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 32px 16px 0;
-  background: var(--bg-window);
+  padding: 32px 20px 0;
+  background: var(--material-bar);
   border-bottom: 1px solid var(--line);
+  box-shadow: var(--highlight-edge), 0 12px 30px rgba(24, 50, 37, 0.035);
+  position: relative;
+  z-index: 4;
 }
 .title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 .title-block {
   min-width: 0;
@@ -2601,8 +2614,8 @@ async function onDrop(event: DragEvent): Promise<void> {
   border: none;
   background: transparent;
   color: inherit;
-  border-radius: 6px;
-  padding: 4px 8px 4px 4px;
+  border-radius: 11px;
+  padding: 5px 10px 5px 5px;
   margin-left: -4px;
   display: flex;
   flex-direction: row;
@@ -2610,6 +2623,15 @@ async function onDrop(event: DragEvent): Promise<void> {
   gap: 10px;
   text-align: left;
   cursor: pointer;
+  transition:
+    background 150ms ease,
+    transform 90ms ease-out;
+}
+.title-button:hover {
+  background: var(--surface-hover);
+}
+.title-button:active {
+  transform: scale(0.988);
 }
 .head-avatar {
   width: 40px;
@@ -2655,9 +2677,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   z-index: 22;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-window);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.18);
+  border-radius: 16px;
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
 }
 .peer-profile-popover::before {
   content: '';
@@ -2666,7 +2690,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   top: -6px;
   width: 10px;
   height: 10px;
-  background: var(--bg-window);
+  background: var(--material-strong);
   border-left: 1px solid var(--line);
   border-top: 1px solid var(--line);
   transform: rotate(45deg);
@@ -2772,8 +2796,8 @@ async function onDrop(event: DragEvent): Promise<void> {
   min-width: 0;
   height: 32px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--bg-list);
+  border-radius: 9px;
+  background: var(--material-panel);
   color: var(--text-1);
   font: inherit;
   font-size: 13px;
@@ -2801,11 +2825,15 @@ async function onDrop(event: DragEvent): Promise<void> {
   min-width: 76px;
   height: 30px;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--primary);
   color: #fff;
   font-size: 12px;
   cursor: pointer;
+  transition: transform 90ms ease-out, filter 150ms ease;
+}
+.profile-save:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .profile-save:disabled {
   opacity: 0.55;
@@ -2830,7 +2858,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 20px clamp(20px, 3vw, 42px) 24px;
 }
 .msgs-content {
   /* ResizeObserver 观察目标：跟随图片 / 文件卡片异步撑高贴底（决议 #133）；
@@ -2845,15 +2873,23 @@ async function onDrop(event: DragEvent): Promise<void> {
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  width: 30px;
-  height: 28px;
+  width: 34px;
+  height: 32px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 90ms ease-out;
 }
 .head-btn:hover {
-  background: var(--line);
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+.head-btn:active {
+  transform: scale(0.96);
 }
 .sep {
   text-align: center;
@@ -2864,11 +2900,13 @@ async function onDrop(event: DragEvent): Promise<void> {
 .msg-menu {
   position: fixed;
   min-width: 96px;
-  background: var(--bg-window);
+  background: var(--material-strong);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  padding: 4px;
+  border-radius: 10px;
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  padding: 5px;
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   z-index: 20;
 }
 .msg-menu button {
@@ -2880,11 +2918,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   text-align: left;
   font-size: 13px;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
 }
 .msg-menu button:hover {
-  background: var(--line);
+  background: var(--surface-hover);
 }
 .msg-menu button.danger {
   color: var(--danger);
@@ -2898,15 +2936,20 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .input-area {
   flex: 0 0 auto;
-  background: var(--bg-window);
-  border-top: 1px solid var(--line);
-  padding: 8px 12px 10px;
+  margin: 0 14px 14px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-soft);
+  position: relative;
+  z-index: 3;
 }
 /* 输入框高度拖拽手柄（决议 #127）：铺满顶部、压在消息/输入分隔线上；
    默认细灰 grip 提示可拖，hover 变深，ns-resize 光标 */
 .input-resizer {
   height: 8px;
-  margin: -8px -12px 2px;
+  margin: -9px -12px 3px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2926,6 +2969,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .input-shell {
   position: relative;
+  border-radius: 10px;
 }
 .input {
   position: absolute;
@@ -3009,6 +3053,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
+  margin-top: 6px;
 }
 .counter {
   font-size: 11px;
@@ -3022,12 +3067,55 @@ async function onDrop(event: DragEvent): Promise<void> {
   background: var(--primary);
   color: #fff;
   font-size: 13px;
-  padding: 6px 22px;
-  border-radius: 4px;
+  min-width: 72px;
+  height: 32px;
+  padding: 0 20px;
+  border-radius: 9px;
+  font-weight: 600;
   cursor: pointer;
+  box-shadow: 0 4px 12px rgba(44, 104, 78, 0.16);
+  transition:
+    filter 150ms ease,
+    transform 90ms ease-out,
+    box-shadow 150ms ease;
+}
+.send:hover:not(:disabled) {
+  filter: brightness(1.04);
+  box-shadow: 0 6px 16px rgba(44, 104, 78, 0.22);
+}
+.send:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .send:disabled {
   opacity: 0.4;
   cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool,
+  .pk-popover button,
+  .title-button,
+  .head-btn,
+  .profile-save,
+  .send,
+  .jump-latest {
+    transition: none;
+  }
+  .tool:active:not(:disabled),
+  .pk-popover button:active:not(:disabled),
+  .title-button:active,
+  .head-btn:active,
+  .profile-save:active:not(:disabled),
+  .send:active:not(:disabled),
+  .jump-latest:active {
+    transform: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .pk-popover,
+  .peer-profile-popover,
+  .msg-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 </style>

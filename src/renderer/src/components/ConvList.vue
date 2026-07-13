@@ -82,6 +82,10 @@ function confirmRemove(): void {
 
 <template>
   <div class="pane" @click="menu = null">
+    <div class="list-summary">
+      <span>最近会话</span>
+      <span>{{ chatStore.visibleConvs.length }}</span>
+    </div>
     <div v-if="chatStore.visibleConvs.length === 0" class="placeholder">
       还没有会话<br />去「通讯录」找个人开聊
     </div>
@@ -160,6 +164,23 @@ function confirmRemove(): void {
   flex: 1;
   min-height: 0;
   position: relative;
+  padding-bottom: 8px;
+}
+.list-summary {
+  height: 38px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.list-summary span:last-child {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
 }
 .placeholder {
   color: var(--text-3);
@@ -172,50 +193,56 @@ function confirmRemove(): void {
   list-style: none;
   overflow-y: auto;
   flex: 1;
+  padding: 0 8px 10px;
 }
 .conv {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  min-height: 60px;
+  margin: 2px 0;
+  padding: 10px;
+  border-radius: 12px;
   cursor: pointer;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 90ms ease-out;
 }
 /* 置顶会话淡灰底（决议 #126）：与普通会话区分；hover / 选中态在其后定义，仍能覆盖 */
 .conv.pinned {
   background: var(--bg-pinned);
 }
 .conv:hover {
-  background: var(--line);
+  background: var(--surface-hover);
 }
-/* 选中当前会话：实心茶青 + 白字（决议 #71，微信式），一眼看清在哪个会话 */
+/* 决议 #216：弱茶青材质 + 左侧强调线，保留文字层级。 */
 .conv.active,
 .conv.active:hover {
-  background: var(--primary);
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 0 var(--primary), var(--highlight-edge);
 }
 .conv.active .conv-name {
-  color: #fff;
+  color: var(--text-1);
+  font-weight: 650;
 }
 .conv.active .conv-time,
 .conv.active .conv-preview {
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--text-2);
 }
 .conv.active .mention {
-  color: #fff;
+  color: var(--badge);
 }
 .conv.active .flag {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.7);
+  color: var(--primary);
+  border-color: rgba(61, 139, 107, 0.35);
 }
 .conv.active .flag.muted {
-  color: rgba(255, 255, 255, 0.82);
-  border-color: rgba(255, 255, 255, 0.55);
-}
-.conv.active .badge {
-  background: #fff;
-  color: var(--primary);
-}
-.conv.active .badge.muted {
   color: var(--text-2);
+  border-color: var(--line);
+}
+.conv:active {
+  transform: scale(0.985);
 }
 .conv-avatar {
   width: 38px;
@@ -229,7 +256,9 @@ function confirmRemove(): void {
   flex-shrink: 0;
 }
 .conv-avatar.grp {
-  background: #6b8e9e; /* 群会话用区分色 */
+  background: var(--primary-weak);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(61, 139, 107, 0.14);
 }
 .conv-main {
   flex: 1;
@@ -247,6 +276,7 @@ function confirmRemove(): void {
 }
 .conv-name {
   font-size: 14px;
+  font-weight: 550;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -255,7 +285,7 @@ function confirmRemove(): void {
   font-style: normal;
   color: var(--primary);
   border: 1px solid var(--primary);
-  border-radius: 3px;
+  border-radius: 5px;
   font-size: 10px;
   padding: 0 3px;
   margin-right: 3px;
@@ -301,11 +331,13 @@ function confirmRemove(): void {
 .conv-menu {
   position: fixed;
   min-width: 110px;
-  background: var(--bg-window);
+  background: var(--material-strong);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  padding: 4px;
+  border-radius: 10px;
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  padding: 5px;
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   z-index: 20;
 }
 .conv-menu button {
@@ -317,11 +349,11 @@ function confirmRemove(): void {
   text-align: left;
   font-size: 13px;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
 }
 .conv-menu button:hover {
-  background: var(--line);
+  background: var(--surface-hover);
 }
 .conv-menu button.danger {
   color: var(--danger);
@@ -331,16 +363,19 @@ function confirmRemove(): void {
 .confirm-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(20, 28, 24, 0.26);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
   z-index: 40;
 }
 .confirm-card {
   width: 320px;
-  background: var(--bg-window);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  background: var(--material-strong);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--highlight-edge), var(--shadow-float);
   padding: 20px 20px 16px;
 }
 .confirm-card h3 {
@@ -363,9 +398,17 @@ function confirmRemove(): void {
 .confirm-actions button {
   height: 32px;
   padding: 0 16px;
-  border-radius: 6px;
+  border-radius: 9px;
   font-size: 13px;
   cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 90ms ease-out;
+}
+.confirm-actions button:active {
+  transform: scale(0.97);
 }
 .confirm-actions .cancel {
   border: 1px solid var(--line);
@@ -383,5 +426,15 @@ function confirmRemove(): void {
 }
 .confirm-actions .danger-btn:hover {
   filter: brightness(0.96);
+}
+@media (prefers-reduced-motion: reduce) {
+  .conv,
+  .confirm-actions button {
+    transition: none;
+  }
+  .conv:active,
+  .confirm-actions button:active {
+    transform: none;
+  }
 }
 </style>

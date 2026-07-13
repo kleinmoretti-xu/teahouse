@@ -139,7 +139,7 @@ xattr -dr com.apple.quarantine /Applications/Teahouse.app
 
 ## 第三方资源
 
-内置头像与 emoji 兼容渲染使用 [Twemoji](https://github.com/jdecked/twemoji) SVG 图形子集（本地打包，CC-BY 4.0）。完整声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+渲染层的标准表单、搜索与常规操作组件使用 [Naive UI](https://github.com/tusen-ai/naive-ui) 2.43.2（本地构建，MIT）；内置头像与 emoji 兼容渲染使用 [Twemoji](https://github.com/jdecked/twemoji) SVG 图形子集（本地打包，CC-BY 4.0）。完整声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## License
 

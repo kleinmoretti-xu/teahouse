@@ -24,6 +24,7 @@ export function openCaptureWindow(
     skipTaskbar: true,
     alwaysOnTop: true,
     show: false,
+    backgroundColor: '#000000',
     enableLargerThanScreen: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

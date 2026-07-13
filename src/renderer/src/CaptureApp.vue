@@ -317,6 +317,7 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
 .stage {
   position: fixed;
   inset: 0;
+  background-color: #000;
   background-size: 100% 100%;
   cursor: crosshair;
   user-select: none;
