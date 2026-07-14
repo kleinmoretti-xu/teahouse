@@ -127,7 +127,9 @@ export const CAPS = {
   /** 支持表格图片消息在图片 / 原始 TSV 文本视图间本地切换。 */
   tableText: 'tbl1',
   /** 支持 TCP wait 排队帧；作为发送方时对端取消后保留供流授权，允许断点重拉（决议 #211）。 */
-  transferWait: 'tw1'
+  transferWait: 'tw1',
+  /** 支持讨论组群主/管理员角色、普通成员邀请与角色权限校验（决议 #241）。 */
+  groupRoles: 'gr1'
 } as const
 
 /** 报文信封（protocol §4） */
@@ -238,6 +240,10 @@ export interface GroupMeta {
   creatorIp: string
   /** 建群者 nodeId；v0.16.3 起用于多网卡环境下的无密码群管理校验 */
   creatorId: string
+  /** 当前群主 nodeId；v0.43 起随 group.info 同步，旧包可缺省 */
+  ownerId: string
+  /** 管理员 nodeId 列表；必须属于 members 且不含 ownerId，旧包可缺省 */
+  adminIds: string[]
   /** 管理密码摘要；空串表示无密码，密码明文不入库、不入协议 */
   adminSecretHash: string
   /** 管理密码提示；仅用于 UI 展示，不参与鉴权 */

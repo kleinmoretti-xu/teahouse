@@ -160,6 +160,12 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   `
   CREATE INDEX idx_messages_seq ON messages(seq);
   CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
+  `,
+
+  // v11：讨论组显式群主/管理员角色（决议 #241）
+  `
+  ALTER TABLE groups ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE groups ADD COLUMN admin_ids TEXT NOT NULL DEFAULT '[]';
   `
 ]
 

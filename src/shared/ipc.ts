@@ -365,6 +365,8 @@ export interface DataImportResult {
 }
 
 /** 讨论组视图（F-MSG-4）：amMember=false 表示已退出/被移出（历史保留、禁发） */
+export type GroupRole = 'owner' | 'admin' | 'member' | 'left'
+
 export interface GroupView {
   groupId: string
   name: string
@@ -372,19 +374,21 @@ export interface GroupView {
   rev: number
   amMember: boolean
   creatorIp: string
+  ownerId: string
+  adminIds: string[]
+  selfRole: GroupRole
   hasAdminPassword: boolean
   adminHint: string
-  /** 当前本机是否可不输入密码直接管理（无密码组的创建者/IP 兼容规则） */
+  /** 当前本机是否可不输入密码直接执行改名/踢人（群主或管理员） */
   canManage: boolean
 }
 
-export interface GroupPatch {
-  name?: string
-  add?: string[]
-  remove?: string[]
-  /** 有管理密码的组执行改名/增删成员时传入；不持久化 */
-  adminPassword?: string
-}
+/** 讨论组单操作变更；一次 IPC 只允许一种行为，防邀请权限与管理权限混用。 */
+export type GroupPatch =
+  | { kind: 'rename'; name: string; adminPassword?: string }
+  | { kind: 'invite'; memberIds: string[] }
+  | { kind: 'remove'; memberIds: string[]; adminPassword?: string }
+  | { kind: 'set-admin'; memberId: string; enabled: boolean }
 
 /** 全局搜索（ui-design §6）：联系人 / 聊天记录（按会话聚合）/ 文件 */
 export interface MessageGroupHit {
@@ -639,7 +643,7 @@ export interface PantryApi {
     adminPassword?: string,
     adminHint?: string
   ): Promise<GroupView | null>
-  /** 改名/增删成员；按创建 IP 或管理密码校验 */
+  /** 改名/邀请/移出/任免管理员；主进程按单操作权限矩阵校验 */
   updateGroup(groupId: string, patch: GroupPatch): Promise<GroupView | null>
   leaveGroup(groupId: string): Promise<void>
   getGroup(groupId: string): Promise<GroupView | null>

@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { GroupView } from '../../../shared/ipc'
-import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
+import type { GroupPatch, GroupView } from '../../../shared/ipc'
+import { CAPS, GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
 import { useGroupsStore } from '../stores/groups'
-import { prepareGroupAdminPatch, type GroupAdminAction } from '../utils/group-admin'
+import {
+  canRemoveGroupMember,
+  canRenameGroup,
+  canSetGroupAdmin,
+  prepareGroupAdminPatch,
+  type GroupAdminAction
+} from '../utils/group-admin'
 import PantryIcon from './PantryIcon.vue'
 import AvatarMark from './AvatarMark.vue'
 
-// 群成员面板（ui-design §5）：成员列表 / 移除 / 添加 / 改名 / 退出。
-// 改名/增删人按决议 #27 走管理密码或创建 IP 校验；退出始终允许本人操作。
+// 群成员面板（ui-design §5）：角色徽标 / 任免管理员 / 移除 / 开放邀请 / 改名 / 退出。
+// 角色权限与管理密码兼容规则统一遵循决议 #241。
 
 const props = defineProps<{ group: GroupView; selfId: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -30,18 +36,22 @@ const atMemberCap = computed(() => props.group.members.length >= GROUP_MAX_MEMBE
 const addable = computed(() =>
   atMemberCap.value ? [] : peersStore.peers.filter((p) => !memberIds.value.has(p.nodeId))
 )
-const canShowAdmin = computed(
-  () => props.group.amMember && (props.group.canManage || props.group.hasAdminPassword)
+const canShowAdmin = computed(() => canRenameGroup(props.group))
+const hasLegacyMembers = computed(() =>
+  props.group.members.some(
+    (id) => id !== props.selfId && !(peersStore.byId(id)?.caps ?? []).includes(CAPS.groupRoles)
+  )
 )
 const adminTip = computed(() => {
   if (!props.group.amMember) return ''
+  if (props.group.selfRole === 'owner') return '你是群主，可任免管理员并管理全部成员'
+  if (props.group.selfRole === 'admin') return '你是管理员，可修改群名并移出普通成员'
   if (props.group.hasAdminPassword) {
     return props.group.adminHint
       ? `群管理需要管理密码；提示：${props.group.adminHint}`
       : '群管理需要管理密码'
   }
-  if (props.group.canManage) return '当前 IP 可管理此群'
-  return `仅创建者或创建 IP ${props.group.creatorIp || '未知'} 可管理此群`
+  return '所有成员均可邀请联系人加入群聊'
 })
 
 function nameOf(id: string): string {
@@ -61,18 +71,27 @@ async function rename(): Promise<void> {
     renaming.value = false
     return
   }
-  const ok = await updateAdmin({ name })
+  const ok = await updateAdmin({ kind: 'rename', name })
   if (ok) renaming.value = false
 }
 
 async function removeMember(id: string): Promise<void> {
   if (adminBusy.value) return
-  await updateAdmin({ remove: [id] })
+  await updateAdmin({ kind: 'remove', memberIds: [id] })
 }
 
 async function addMember(id: string): Promise<void> {
   if (adminBusy.value || atMemberCap.value) return
-  await updateAdmin({ add: [id] })
+  await runUpdate({ kind: 'invite', memberIds: [id] }, '邀请失败，请稍后重试')
+}
+
+async function toggleAdmin(id: string): Promise<void> {
+  if (adminBusy.value) return
+  const enabled = !props.group.adminIds.includes(id)
+  await runUpdate(
+    { kind: 'set-admin', memberId: id, enabled },
+    enabled ? '设置管理员失败' : '取消管理员失败'
+  )
 }
 
 async function leave(): Promise<void> {
@@ -88,13 +107,17 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
     return false
   }
 
+  return runUpdate(prepared.patch, props.group.hasAdminPassword ? '密码不正确，请重新输入' : '当前节点没有管理权限')
+}
+
+async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boolean> {
   adminFeedback.value = ''
   adminBusy.value = true
   try {
-    const updated = await window.pantry.updateGroup(props.group.groupId, prepared.patch)
+    const updated = await window.pantry.updateGroup(props.group.groupId, patch)
     if (!updated) {
-      if (props.group.hasAdminPassword) adminPassword.value = ''
-      adminFeedback.value = props.group.hasAdminPassword ? '密码不正确，请重新输入' : '当前 IP 没有管理权限'
+      if ('adminPassword' in patch) adminPassword.value = ''
+      adminFeedback.value = failureMessage
       return false
     }
     groupsStore.byId[updated.groupId] = updated
@@ -133,7 +156,8 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
 
     <div class="count">成员 {{ group.members.length }} / {{ GROUP_MAX_MEMBERS }}</div>
     <div v-if="adminTip" class="admin-tip">{{ adminTip }}</div>
-    <div v-if="group.amMember && group.hasAdminPassword" class="admin-password">
+    <div v-if="hasLegacyMembers" class="compat-tip">群内有旧版本成员，角色或邀请可能无法完整同步，请提醒升级</div>
+    <div v-if="group.selfRole === 'member' && group.hasAdminPassword" class="admin-password">
       <input
         v-model="adminPassword"
         type="password"
@@ -153,8 +177,20 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
           :presence="id === selfId ? undefined : ((peersStore.byId(id)?.online ?? false) ? 'online' : 'offline')"
         />
         <span class="nm">{{ nameOf(id) }}</span>
+        <span v-if="id === group.ownerId" class="role-badge owner">群主</span>
+        <span v-else-if="group.adminIds.includes(id)" class="role-badge">管理员</span>
         <button
-          v-if="canShowAdmin && id !== selfId"
+          v-if="canSetGroupAdmin(group, id)"
+          class="mini admin-toggle"
+          :class="{ active: group.adminIds.includes(id) }"
+          :title="group.adminIds.includes(id) ? '取消管理员' : '设为管理员'"
+          :disabled="adminBusy"
+          @click="toggleAdmin(id)"
+        >
+          <PantryIcon name="shield" :size="13" />
+        </button>
+        <button
+          v-if="canRemoveGroupMember(group, id, selfId)"
           class="mini danger"
           title="移出"
           :disabled="adminBusy"
@@ -167,7 +203,7 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
 
     <template v-if="group.amMember">
       <button
-        v-if="canShowAdmin"
+        v-if="group.amMember"
         class="add"
         :disabled="adminBusy || atMemberCap"
         :title="atMemberCap ? `最多 ${GROUP_MAX_MEMBERS} 人` : '添加成员'"
@@ -262,6 +298,15 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
   border-radius: 4px;
   background: var(--bg-list);
 }
+.compat-tip {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-2);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-list);
+}
 .admin-password input {
   width: 100%;
   height: 28px;
@@ -321,6 +366,24 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.role-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--primary-weak);
+  font-size: 10px;
+  line-height: 15px;
+}
+.role-badge.owner {
+  color: var(--text-2);
+  border-color: var(--line);
+  background: var(--bg-list);
+}
+.admin-toggle.active {
+  color: var(--primary);
 }
 .add {
   border: 1px dashed var(--line);

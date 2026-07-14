@@ -222,7 +222,7 @@ describe('codec', () => {
     })
   })
 
-  it('group.info 支持 creatorId，旧包缺 creatorId 仍兼容', () => {
+  it('group.info 校验群角色字段，旧包缺角色字段仍兼容', () => {
     const group = {
       groupId: 'group-1',
       name: '项目组',
@@ -232,6 +232,8 @@ describe('codec', () => {
       updatedTs: Date.now(),
       creatorIp: '10.0.0.1',
       creatorId: 'node-aaaa',
+      ownerId: 'node-aaaa',
+      adminIds: ['node-bbbb'],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -243,7 +245,7 @@ describe('codec', () => {
 
     const legacy = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
       op: 'info',
-      group: { ...group, creatorId: undefined }
+      group: { ...group, creatorId: undefined, ownerId: undefined, adminIds: undefined }
     })
     expect(decode(encode(legacy))).toMatchObject({ ok: true, known: true })
 
@@ -252,6 +254,51 @@ describe('codec', () => {
       group: { ...group, creatorId: 'x'.repeat(65) }
     })
     expect(decode(encode(badCreator))).toEqual({
+      ok: false,
+      reason: 'bad-payload:group'
+    })
+
+    for (const invalidGroup of [
+      { ...group, adminIds: undefined },
+      { ...group, adminIds: ['node-bbbb', 'node-bbbb'] },
+      { ...group, adminIds: ['node-missing'] },
+      { ...group, adminIds: ['node-aaaa'] },
+      { ...group, ownerId: 'node-missing' }
+    ]) {
+      const invalid = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
+        op: 'info',
+        group: invalidGroup
+      })
+      expect(decode(encode(invalid))).toEqual({
+        ok: false,
+        reason: 'bad-payload:group'
+      })
+    }
+
+    const members = Array.from({ length: GROUP_MAX_MEMBERS }, (_item, i) => `node-${i}`)
+    const maxGroup = makeEnvelope(MSG_TYPES.group, 'node-0', {
+      op: 'info',
+      group: {
+        ...group,
+        members,
+        ownerId: 'node-0',
+        adminIds: members.slice(1),
+        updatedBy: 'node-0'
+      }
+    })
+    expect(decodeTcpEnvelopeObject(maxGroup)).toMatchObject({ ok: true, known: true })
+
+    const overLimit = makeEnvelope(MSG_TYPES.group, 'node-0', {
+      op: 'info',
+      group: {
+        ...group,
+        members: [...members, 'node-over'],
+        ownerId: 'node-0',
+        adminIds: [],
+        updatedBy: 'node-0'
+      }
+    })
+    expect(decodeTcpEnvelopeObject(overLimit)).toEqual({
       ok: false,
       reason: 'bad-payload:group'
     })

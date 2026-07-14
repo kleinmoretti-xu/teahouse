@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v0.38，主协议保持自有 JSON；内网通兼容模式另见独立设计文档 |
-| 日期 | 2026-07-08 |
+| 状态 | v0.43，主协议保持自有 JSON；内网通兼容模式另见独立设计文档 |
+| 日期 | 2026-07-14 |
 | 关系 | 本文是**茶话间主协议**的唯一事实来源；功能取舍依据 [requirements.md](requirements.md)（决议 #5：借鉴 ipmsg/iptux 机制、主协议报文自有、不加密；决议 #194/#195：内网通兼容模式走独立适配器，并在适配器内评估文件 / 图片 / 震动能力） |
 
 ## 1. 设计原则
@@ -201,13 +201,14 @@ UI 概念，协议上不存在：对每个收件人各发一条独立 `msg`，�
 
 ### 7.4 讨论组（群聊）
 
-- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, adminSecretHash, adminHint}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 为创建者 nodeId，v0.16.3 起随 `group.info` 发送；旧版本缺该字段时接收方按兼容规则从无密码群的 `updatedBy` 回填。
+- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, ownerId?, adminIds?, adminSecretHash, adminHint}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 保留建群者身份；`ownerId` 表示当前群主，`adminIds` 表示管理员 nodeId 列表，二者为 v0.43 可兼容缺省字段。旧报文缺角色字段时，新端优先保留本地已知角色；首次接收旧群时按仍在群内的 `creatorId`、`updatedBy`、首位成员依次推导群主，管理员为空。
 - 群文本 = 向 members 逐个单播 `msg(kind:"group-text", groupId, groupRev)`，离线成员走 §7.2 补发。群 PK = 向当前在线 members 逐个单播 `msg(kind:"pk", groupId, groupRev)`，离线成员不入队、不补发。
 - 群图片/文件 = 向在线 members 逐个单播 `file-ctl{op:"offer", msgId, groupId, groupRev}`，每个收件人一条独立 transfer，但同一条群媒体消息复用同一 `msgId`；离线成员不入队（决议 #4/#32/#188）。发送端本地只插一条群消息，`fileRef.transferIds[]` 汇总各成员 transfer；收端按 `groupId` 插入群会话，若不认识该 groupId 或 rev 落后，复用 `group{op:"need"}` 向发送者索要元数据。群图片只有单图 ≤10MB 时允许携带 `purpose:"image"`，超限图片不带 purpose，按普通文件卡片展示与手动接收（决议 #33）。
 - 收端不认识该 groupId 或本地 rev 落后 → 向发送者发 `group{op:"need", groupId}`，对方回 `group{op:"info", …全量元数据}`。
-- 成员增删 = 修改元数据（rev+1）后向**新旧成员全集**发 `group{op:"info"}`（被移出者借此得知）。
-- 上限 **200 人/组**（决议 #198，原 50）；群管理指改名、添加成员、移出他人。建群时记录 `creatorIp` 与 `creatorId`，并可选管理密码：有密码的组同步 `adminSecretHash`（密码明文不入库、不入协议）与 `adminHint`（可空提示文案，供成员输入密码时展示），成员输入密码后可发起管理变更；无密码的组允许创建者管理，校验优先使用创建者 nodeId，保留创建 IP 作为旧版本兼容。成员自行退组不需要管理权限。
-- 收端合并远端 `group.info` 前先校验管理来源：本地已有该组且 `adminSecretHash` 非空时，远端元数据必须携带相同摘要；本地已有该组且无管理密码时，远端来源 IP 等于本地 `creatorIp` 可接受，或信封 `from` 等于本地 `creatorId` 且远端 `updatedBy` 也等于该创建者可接受。仅移除 `updatedBy` 自己的退组变更可例外接受。该 nodeId 回退用于宿主机多网卡/虚拟机网络下创建 IP 与实际源 IP 不一致的合法改名同步（决议 #113）。
+- 成员增删 = 修改元数据（rev+1）后向**新旧成员全集**发 `group{op:"info"}`（被移出者借此得知）。每次 `group:update` 只允许一种操作：`rename`、`invite`、`remove`、`set-admin`；任意现有成员可执行 `invite`，其他操作按角色/管理密码校验。
+- 上限 **200 人/组**（决议 #198，原 50）。群主可任免管理员、改名、移出管理员或普通成员；管理员可改名、移出普通成员；管理密码持有者可改名、移出普通成员；群主和管理员免密码。群主退出时按成员顺序优先选首位管理员，否则选首位剩余成员，新群主从 `adminIds` 移除。普通成员与管理员自行退出不需要管理权限，退出时同步清理管理员身份。
+- 收端合并远端 `group.info` 前按本地/远端元数据差异分类校验：纯新增成员要求 `updatedBy` 是原群成员；管理员列表变化要求 `updatedBy` 是原群主；改名与移出普通成员接受群主、管理员或保持相同管理密码摘要的合法变更；移出管理员只接受群主；自行退出只允许移除 `updatedBy` 自己；群主退出还必须满足确定性的自动转让结果。未知组合拒绝。角色字段缺省的旧报文不得清空本地已知角色。LWW 规则维持不变。
+- `profile.caps` 新增 `gr1`，表示理解群角色字段、普通成员邀请和新权限校验。新端发现群内旧成员未声明该能力时只做升级提示，仍投递兼容 `group.info`；旧端可能无法同步管理员发起的管理变更或普通成员发起的邀请。
 
 ## 8. 文件传输（TCP，拉取式）
 
@@ -354,3 +355,4 @@ sequenceDiagram
 - 2026-07-10 v0.40 决议 #208：TCP 控制帧启用逐类型精确白名单与失败终止态；发送端增加数据流 / 连接 / 超时资源预算；自更新请求增加 120 秒一次性授权、精确包名与 512 MiB 上限。版本 0.32.24 → **0.32.25**。
 - 2026-07-10 v0.41 决议 #211：§3 caps 新增 `tw1`；§8 TCP 帧型新增 `wait`（排队 / 哈希收尾保活，仅发给声明 `tw1` 的对端）；接收端新增 60 秒拉取空闲超时；取消语义修订为「接收方取消可恢复（发送方保留供流授权、`.part` 保留可断点重拉）、发送方取消才是终态」。§9 常量新增 PULL_WAIT_HEARTBEAT / PULL_IDLE_TIMEOUT。版本 0.33.1 → **0.33.2**。
 - 2026-07-13 v0.42 决议 #213：Windows 发布新增 ia32（32 位）安装版与便携版；`update{op:"req"}.arch` 白名单扩展为 `x64|ia32|arm64`，32 位 Windows 客户端按 `win-ia32-setup.exe` 精确索包，避免与 x64 包混用。版本仍为 **0.34.0**，与决议 #212 合并发布。
+- 2026-07-14 v0.43 决议 #241：群元数据新增可选 `ownerId/adminIds`，caps 新增 `gr1`；`group:update` 收敛为单操作，所有成员可直接邀请，群主/管理员/管理密码按权限矩阵执行改名、踢人与管理员任免；群主退出自动转让。全局信封版本仍为 `v:1`。版本 0.39.12 → **0.40.0**。

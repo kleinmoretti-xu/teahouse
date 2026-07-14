@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { GroupView } from '../../../shared/ipc'
-import { prepareGroupAdminPatch } from './group-admin'
+import {
+  canRemoveGroupMember,
+  canRenameGroup,
+  canSetGroupAdmin,
+  prepareGroupAdminPatch
+} from './group-admin'
 
 function group(overrides: Partial<GroupView> = {}): GroupView {
   return {
@@ -10,6 +15,9 @@ function group(overrides: Partial<GroupView> = {}): GroupView {
     rev: 1,
     amMember: true,
     creatorIp: '10.0.0.1',
+    ownerId: 'node-self',
+    adminIds: [],
+    selfRole: 'owner',
     hasAdminPassword: false,
     adminHint: '',
     canManage: true,
@@ -21,7 +29,7 @@ describe('group admin helpers', () => {
   it('密码组没有输入密码时阻止管理操作', () => {
     const result = prepareGroupAdminPatch(
       group({ hasAdminPassword: true, canManage: false }),
-      { name: '新群名' },
+      { kind: 'rename', name: '新群名' },
       '   '
     )
 
@@ -30,23 +38,58 @@ describe('group admin helpers', () => {
 
   it('密码组把显式输入的密码写入 group:update payload', () => {
     const result = prepareGroupAdminPatch(
-      group({ hasAdminPassword: true, canManage: false }),
-      { name: '新群名' },
+      group({ hasAdminPassword: true, canManage: false, selfRole: 'member' }),
+      { kind: 'rename', name: '新群名' },
       '  s3cret  '
     )
 
     expect(result).toEqual({
       ok: true,
-      patch: { name: '新群名', adminPassword: 's3cret' }
+      patch: { kind: 'rename', name: '新群名', adminPassword: 's3cret' }
     })
   })
 
-  it('无密码且当前节点有权限时不附带管理密码', () => {
-    const result = prepareGroupAdminPatch(group(), { remove: ['node-a'] }, '')
+  it('群主或管理员在密码组内管理时不附带密码', () => {
+    const result = prepareGroupAdminPatch(
+      group({ hasAdminPassword: true }),
+      { kind: 'remove', memberIds: ['node-a'] },
+      ''
+    )
 
     expect(result).toEqual({
       ok: true,
-      patch: { remove: ['node-a'] }
+      patch: { kind: 'remove', memberIds: ['node-a'] }
     })
+  })
+
+  it('管理员和密码持有者只能移出普通成员', () => {
+    const admin = group({
+      ownerId: 'node-owner',
+      adminIds: ['node-self', 'node-admin'],
+      selfRole: 'admin',
+      members: ['node-owner', 'node-self', 'node-admin', 'node-a']
+    })
+    expect(canRemoveGroupMember(admin, 'node-a', 'node-self')).toBe(true)
+    expect(canRemoveGroupMember(admin, 'node-owner', 'node-self')).toBe(false)
+    expect(canRemoveGroupMember(admin, 'node-admin', 'node-self')).toBe(false)
+
+    const passwordMember = group({
+      ownerId: 'node-owner',
+      adminIds: ['node-admin'],
+      selfRole: 'member',
+      canManage: false,
+      hasAdminPassword: true,
+      members: ['node-owner', 'node-admin', 'node-self', 'node-a']
+    })
+    expect(canRemoveGroupMember(passwordMember, 'node-a', 'node-self')).toBe(true)
+    expect(canRemoveGroupMember(passwordMember, 'node-admin', 'node-self')).toBe(false)
+  })
+
+  it('只有群主显示管理员任免入口，密码成员仍可显示改名入口', () => {
+    expect(canSetGroupAdmin(group(), 'node-a')).toBe(true)
+    expect(canSetGroupAdmin(group({ selfRole: 'admin' }), 'node-a')).toBe(false)
+    expect(
+      canRenameGroup(group({ selfRole: 'member', canManage: false, hasAdminPassword: true }))
+    ).toBe(true)
   })
 })

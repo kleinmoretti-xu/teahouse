@@ -6,7 +6,9 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { openDatabase } from './db'
+import { MIGRATIONS, applyMigrations } from './migrations'
 import { PeersRepo } from './peers-repo'
 import { ConvRepo } from './conv-repo'
 import { MsgRepo } from './msg-repo'
@@ -52,7 +54,7 @@ try {
   console.log(`[db-selftest] runtime node=${process.versions.node} abi=${process.versions.modules}`)
 
   // 1. 迁移就位
-  assert.equal(db.pragma('user_version', { simple: true }), 10, '迁移版本应为 10')
+  assert.equal(db.pragma('user_version', { simple: true }), 11, '迁移版本应为 11')
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal', '应为 WAL 模式')
   const messageIndexes = new Set(
     (
@@ -63,6 +65,34 @@ try {
   )
   assert.equal(messageIndexes.has('idx_messages_seq'), true, 'messages(seq) 索引应存在')
   assert.equal(messageIndexes.has('idx_messages_conv_seq'), true, 'messages(conv_id, seq) 索引应存在')
+
+  const legacyDbPath = join(dir, 'legacy-v10.db')
+  const legacyDb = new Database(legacyDbPath)
+  for (let index = 0; index < 10; index += 1) legacyDb.exec(MIGRATIONS[index])
+  legacyDb.pragma('user_version = 10')
+  legacyDb.prepare(
+    `INSERT INTO groups (
+       group_id, name, members, rev, updated_by, updated_ts,
+       creator_ip, creator_id, admin_secret_hash, admin_hint
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    'g-v10',
+    '旧群',
+    JSON.stringify(['node-member', 'node-creator']),
+    2,
+    'node-member',
+    1000,
+    '10.0.0.1',
+    'node-creator',
+    '',
+    ''
+  )
+  applyMigrations(legacyDb)
+  assert.equal(legacyDb.pragma('user_version', { simple: true }), 11, 'v10 数据库应迁移至 v11')
+  const migratedGroup = new GroupRepo(legacyDb).get('g-v10')
+  assert.equal(migratedGroup?.ownerId, 'node-creator', '旧群优先以仍在群内的创建者作为群主')
+  assert.deepEqual(migratedGroup?.adminIds, [], '旧群管理员默认应为空')
+  legacyDb.close()
 
   // 2. 联系人 upsert / 载入往返
   const repo = new PeersRepo(db)
@@ -378,6 +408,8 @@ try {
     updatedTs: 1000,
     creatorIp: '10.0.0.8',
     creatorId: 'node-self',
+    ownerId: 'node-self',
+    adminIds: ['node-bob'],
     adminSecretHash: 'a'.repeat(64),
     adminHint: '项目代号'
   }
@@ -392,6 +424,8 @@ try {
     updatedTs: 1002,
     creatorIp: '10.0.0.8',
     creatorId: 'node-self',
+    ownerId: 'node-self',
+    adminIds: [],
     adminSecretHash: '',
     adminHint: ''
   }
@@ -493,6 +527,8 @@ try {
     assert.equal(importedGroup?.name, '新名')
     assert.equal(importedGroup?.creatorIp, '10.0.0.8')
     assert.equal(importedGroup?.creatorId, 'node-new')
+    assert.equal(importedGroup?.ownerId, 'node-new')
+    assert.deepEqual(importedGroup?.adminIds, ['node-bob'])
     assert.equal(importedGroup?.adminSecretHash, 'a'.repeat(64))
     assert.equal(importedGroup?.adminHint, '项目代号')
     const importedLargeGroup = new GroupRepo(db2).get('g-large')
@@ -516,7 +552,7 @@ try {
           exportedAt: Date.now(),
           exportedBy: 'node-old',
           nick: '旧我',
-          counts: { conversations: 1, messages: 1, peers: 0, groups: 0, stickers: 1, transfers: 1, media: 0 }
+          counts: { conversations: 1, messages: 1, peers: 0, groups: 1, stickers: 1, transfers: 1, media: 0 }
         }),
         'utf8'
       )
@@ -542,7 +578,23 @@ try {
       ])
     },
     { name: 'peers.jsonl', data: badJsonl([]) },
-    { name: 'groups.jsonl', data: badJsonl([]) },
+    {
+      name: 'groups.jsonl',
+      data: badJsonl([
+        {
+          groupId: 'g-legacy-backup',
+          name: '旧备份群',
+          members: ['node-old', 'node-bob'],
+          rev: 1,
+          updatedBy: 'node-old',
+          updatedTs: 6000,
+          creatorId: 'node-old',
+          creatorIp: '10.0.0.8',
+          adminSecretHash: '',
+          adminHint: ''
+        }
+      ])
+    },
     {
       name: 'stickers.jsonl',
       data: badJsonl([{ id: 's-bad', path: externalPath, w: 64, h: 64, animated: 0, sort: 0, added: 6000 }])
@@ -573,6 +625,9 @@ try {
     assert.equal(JSON.parse(importedBadTransfer.files).savedPath, undefined, '无归档媒体时不得保留外部传输路径')
     const badSticker = db3.prepare('SELECT path FROM stickers WHERE id = ?').get('s-bad')
     assert.equal(badSticker, undefined, '无归档媒体时不得导入外部表情路径')
+    const importedLegacyGroup = new GroupRepo(db3).get('g-legacy-backup')
+    assert.equal(importedLegacyGroup?.ownerId, 'node-new', '旧备份缺角色字段时应映射并推导群主')
+    assert.deepEqual(importedLegacyGroup?.adminIds, [], '旧备份缺角色字段时管理员应为空')
   } finally {
     db3.close()
   }

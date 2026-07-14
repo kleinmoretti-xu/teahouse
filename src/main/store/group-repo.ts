@@ -12,18 +12,42 @@ interface GroupRow {
   updated_ts: number
   creator_ip?: string
   creator_id?: string
+  owner_id?: string
+  admin_ids?: string
   admin_secret_hash?: string
   admin_hint?: string
 }
 
-function rowToMeta(row: GroupRow): GroupMeta {
-  let members: string[] = []
+function parseMembers(raw: string | undefined): string[] {
+  if (!raw) return []
   try {
-    const parsed: unknown = JSON.parse(row.members)
-    if (Array.isArray(parsed)) members = parsed.filter((m): m is string => typeof m === 'string')
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed)
+      ? parsed.filter((m): m is string => typeof m === 'string' && m.length > 0)
+      : []
   } catch {
-    // 损坏置空，等远端 info 重新灌入
+    return []
   }
+}
+
+function inferOwnerId(
+  members: string[],
+  ownerId: string | undefined,
+  creatorId: string | undefined,
+  updatedBy: string | undefined
+): string {
+  for (const candidate of [ownerId, creatorId, updatedBy]) {
+    if (candidate && members.includes(candidate)) return candidate
+  }
+  return members[0] ?? ''
+}
+
+function rowToMeta(row: GroupRow): GroupMeta {
+  const members = [...new Set(parseMembers(row.members))]
+  const ownerId = inferOwnerId(members, row.owner_id, row.creator_id, row.updated_by)
+  const adminIds = [...new Set(parseMembers(row.admin_ids))].filter(
+    (id) => id !== ownerId && members.includes(id)
+  )
   return {
     groupId: row.group_id,
     name: row.name,
@@ -33,18 +57,26 @@ function rowToMeta(row: GroupRow): GroupMeta {
     updatedTs: row.updated_ts,
     creatorIp: row.creator_ip ?? '',
     creatorId: row.creator_id ?? '',
+    ownerId,
+    adminIds,
     adminSecretHash: row.admin_secret_hash ?? '',
     adminHint: row.admin_hint ?? ''
   }
 }
 
 function normalizeMeta(meta: GroupMeta): GroupMeta {
+  const members = [...new Set(meta.members)].filter((id) => id.length > 0)
+  const ownerId = inferOwnerId(members, meta.ownerId, meta.creatorId, meta.updatedBy)
   return {
     ...meta,
     name: meta.name.slice(0, 64),
-    members: [...new Set(meta.members)].filter((id) => id.length > 0),
+    members,
     creatorIp: meta.creatorIp ?? '',
     creatorId: meta.creatorId ?? '',
+    ownerId,
+    adminIds: [...new Set(meta.adminIds ?? [])].filter(
+      (id) => id !== ownerId && members.includes(id)
+    ),
     adminSecretHash: meta.adminSecretHash ?? '',
     adminHint: meta.adminSecretHash ? (meta.adminHint ?? '').slice(0, 40) : ''
   }
@@ -59,16 +91,17 @@ export class GroupRepo {
     this.upsertStmt = db.prepare(`
       INSERT INTO groups (
         group_id, name, members, rev, updated_by, updated_ts,
-        creator_ip, creator_id, admin_secret_hash, admin_hint
+        creator_ip, creator_id, owner_id, admin_ids, admin_secret_hash, admin_hint
       )
       VALUES (
         @groupId, @name, @members, @rev, @updatedBy, @updatedTs,
-        @creatorIp, @creatorId, @adminSecretHash, @adminHint
+        @creatorIp, @creatorId, @ownerId, @adminIds, @adminSecretHash, @adminHint
       )
       ON CONFLICT(group_id) DO UPDATE SET
         name = excluded.name, members = excluded.members, rev = excluded.rev,
         updated_by = excluded.updated_by, updated_ts = excluded.updated_ts,
         creator_ip = excluded.creator_ip, creator_id = excluded.creator_id,
+        owner_id = excluded.owner_id, admin_ids = excluded.admin_ids,
         admin_secret_hash = excluded.admin_secret_hash,
         admin_hint = excluded.admin_hint
     `)
@@ -78,7 +111,11 @@ export class GroupRepo {
 
   save(meta: GroupMeta): void {
     const normalized = normalizeMeta(meta)
-    this.upsertStmt.run({ ...normalized, members: JSON.stringify(normalized.members) })
+    this.upsertStmt.run({
+      ...normalized,
+      members: JSON.stringify(normalized.members),
+      adminIds: JSON.stringify(normalized.adminIds)
+    })
   }
 
   get(groupId: string): GroupMeta | undefined {

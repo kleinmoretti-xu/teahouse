@@ -1,6 +1,8 @@
 import type { GroupPatch, GroupView } from '../../../shared/ipc'
 
-export type GroupAdminAction = Pick<GroupPatch, 'name' | 'add' | 'remove'>
+export type GroupAdminAction =
+  | { kind: 'rename'; name: string }
+  | { kind: 'remove'; memberIds: string[] }
 
 export type GroupAdminPatchResult =
   | { ok: true; patch: GroupPatch }
@@ -11,13 +13,35 @@ export function prepareGroupAdminPatch(
   action: GroupAdminAction,
   rawPassword: string
 ): GroupAdminPatchResult {
-  if (!group.canManage && !group.hasAdminPassword) return { ok: false, reason: 'not-allowed' }
-
-  const patch: GroupPatch = { ...action }
-  if (!group.hasAdminPassword) return { ok: true, patch }
+  if (group.canManage) return { ok: true, patch: action }
+  if (!group.hasAdminPassword) return { ok: false, reason: 'not-allowed' }
 
   const adminPassword = rawPassword.trim()
   if (!adminPassword) return { ok: false, reason: 'missing-password' }
-  patch.adminPassword = adminPassword
-  return { ok: true, patch }
+  return { ok: true, patch: { ...action, adminPassword } }
+}
+
+export function canRenameGroup(group: GroupView): boolean {
+  return group.amMember && (group.canManage || group.hasAdminPassword)
+}
+
+export function canRemoveGroupMember(
+  group: GroupView,
+  memberId: string,
+  selfId: string
+): boolean {
+  if (!group.amMember || memberId === selfId || memberId === group.ownerId) return false
+  const targetIsAdmin = group.adminIds.includes(memberId)
+  if (group.selfRole === 'owner') return true
+  if (targetIsAdmin) return false
+  return group.selfRole === 'admin' || group.hasAdminPassword
+}
+
+export function canSetGroupAdmin(group: GroupView, memberId: string): boolean {
+  return (
+    group.amMember &&
+    group.selfRole === 'owner' &&
+    memberId !== group.ownerId &&
+    group.members.includes(memberId)
+  )
 }

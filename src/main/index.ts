@@ -30,6 +30,7 @@ import {
   type DataImportResult,
   type ExportFormat,
   type ForwardTarget,
+  type GroupPatch,
   type ImageOcrResult,
   type ImageOcrSource,
   type MessageView,
@@ -1978,17 +1979,51 @@ if (!gotLock) {
     if (typeof groupId !== 'string' || groupId.length > 64) return null
     if (typeof patch !== 'object' || patch === null) return null
     const p = patch as Record<string, unknown>
-    const clean: { name?: string; add?: string[]; remove?: string[]; adminPassword?: string } = {}
-    if (typeof p.name === 'string' && p.name.length <= 32) clean.name = p.name
-    if (typeof p.adminPassword === 'string' && p.adminPassword.length <= 64) {
-      clean.adminPassword = p.adminPassword
+    const password = (): string | undefined =>
+      p.adminPassword === undefined
+        ? undefined
+        : typeof p.adminPassword === 'string' && p.adminPassword.length <= 64
+          ? p.adminPassword
+          : undefined
+    const ids = (value: unknown): string[] | null =>
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.length <= GROUP_MAX_MEMBERS &&
+      value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 64)
+        ? (value as string[])
+        : null
+    const hasOnly = (keys: string[]): boolean => Object.keys(p).every((key) => keys.includes(key))
+    let clean: GroupPatch
+    if (
+      p.kind === 'rename' &&
+      hasOnly(['kind', 'name', 'adminPassword']) &&
+      typeof p.name === 'string' &&
+      p.name.length <= 32
+    ) {
+      const adminPassword = password()
+      if (p.adminPassword !== undefined && adminPassword === undefined) return null
+      clean = { kind: 'rename', name: p.name, ...(adminPassword ? { adminPassword } : {}) }
+    } else if (p.kind === 'invite' && hasOnly(['kind', 'memberIds'])) {
+      const memberIds = ids(p.memberIds)
+      if (!memberIds) return null
+      clean = { kind: 'invite', memberIds }
+    } else if (p.kind === 'remove' && hasOnly(['kind', 'memberIds', 'adminPassword'])) {
+      const memberIds = ids(p.memberIds)
+      const adminPassword = password()
+      if (!memberIds || (p.adminPassword !== undefined && adminPassword === undefined)) return null
+      clean = { kind: 'remove', memberIds, ...(adminPassword ? { adminPassword } : {}) }
+    } else if (
+      p.kind === 'set-admin' &&
+      hasOnly(['kind', 'memberId', 'enabled']) &&
+      typeof p.memberId === 'string' &&
+      p.memberId.length > 0 &&
+      p.memberId.length <= 64 &&
+      typeof p.enabled === 'boolean'
+    ) {
+      clean = { kind: 'set-admin', memberId: p.memberId, enabled: p.enabled }
+    } else {
+      return null
     }
-    const ids = (v: unknown): string[] | undefined =>
-      Array.isArray(v) && v.every((m) => typeof m === 'string' && m.length <= 64)
-        ? (v as string[]).slice(0, GROUP_MAX_MEMBERS)
-        : undefined
-    clean.add = ids(p.add)
-    clean.remove = ids(p.remove)
     return groups?.updateGroup(groupId, clean) ?? null
   })
 
@@ -2191,6 +2226,7 @@ if (!gotLock) {
       CAPS.fileDirect,
       CAPS.tableText,
       CAPS.transferWait,
+      CAPS.groupRoles,
       ...updateCaps
     ])
     udpPort = envUdpPort ?? appState.config.udpPort

@@ -172,11 +172,23 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
       if (meta.members.length > GROUP_MAX_MEMBERS) return false
       if (!meta.members.every((m2) => typeof m2 === 'string' && m2.length <= LIMITS.from))
         return false
+      const members = meta.members as string[]
       if (!isInt(meta.rev) || meta.rev < 1) return false
       if (!isStr(meta.updatedBy, LIMITS.from)) return false
       if (!isInt(meta.updatedTs) || meta.updatedTs <= 0) return false
       if (meta.creatorIp !== undefined && !isStrAllowEmpty(meta.creatorIp, LIMITS.ip)) return false
       if (meta.creatorId !== undefined && !isStrAllowEmpty(meta.creatorId, LIMITS.from)) return false
+      const hasOwnerId = meta.ownerId !== undefined
+      const hasAdminIds = meta.adminIds !== undefined
+      if (hasOwnerId !== hasAdminIds) return false
+      if (hasOwnerId) {
+        if (!isStr(meta.ownerId, LIMITS.from) || !members.includes(meta.ownerId)) return false
+        if (!Array.isArray(meta.adminIds) || meta.adminIds.length > GROUP_MAX_MEMBERS) return false
+        if (!meta.adminIds.every((id) => isStr(id, LIMITS.from))) return false
+        if (new Set(meta.adminIds).size !== meta.adminIds.length) return false
+        if (meta.adminIds.includes(meta.ownerId)) return false
+        if (!meta.adminIds.every((id) => members.includes(id))) return false
+      }
       if (
         meta.adminSecretHash !== undefined &&
         !(

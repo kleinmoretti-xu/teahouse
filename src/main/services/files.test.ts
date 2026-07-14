@@ -434,6 +434,8 @@ describe('FilesService 群聊媒体', () => {
       updatedTs: 1000,
       creatorIp: '127.0.0.1',
       creatorId: 'node-self',
+      ownerId: 'node-self',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -489,6 +491,8 @@ describe('FilesService 群聊媒体', () => {
       updatedTs: 1000,
       creatorIp: '127.0.0.1',
       creatorId: 'node-self',
+      ownerId: 'node-self',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -535,6 +539,8 @@ describe('FilesService 群聊媒体', () => {
       updatedTs: 1000,
       creatorIp: '127.0.0.1',
       creatorId: 'node-self',
+      ownerId: 'node-self',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -585,6 +591,8 @@ describe('FilesService 群聊媒体', () => {
       updatedTs: 1000,
       creatorIp: '127.0.0.1',
       creatorId: 'node-self',
+      ownerId: 'node-self',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -1426,6 +1434,8 @@ describe('FilesService 取消可恢复（决议 #211）', () => {
         updatedTs: 1,
         creatorIp: '127.0.0.1',
         creatorId: 'node-bob',
+        ownerId: 'node-bob',
+        adminIds: [],
         adminSecretHash: '',
         adminHint: ''
       }) as unknown as GroupRepo,

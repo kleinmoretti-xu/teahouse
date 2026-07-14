@@ -77,6 +77,8 @@ interface GroupDump {
   updatedTs: number
   creatorIp?: string
   creatorId?: string
+  ownerId?: string
+  adminIds?: string[]
   adminSecretHash?: string
   adminHint?: string
 }
@@ -267,12 +269,26 @@ export class PorterService {
         `SELECT group_id AS groupId, name, members, rev, updated_by AS updatedBy,
                 updated_ts AS updatedTs, creator_ip AS creatorIp,
                 creator_id AS creatorId,
+                owner_id AS ownerId, admin_ids AS adminIds,
                 admin_secret_hash AS adminSecretHash,
                 admin_hint AS adminHint
          FROM groups ORDER BY updated_ts ASC`
       )
-      .all() as Array<Omit<GroupDump, 'members'> & { members: string }>
-    return rows.map((row) => ({ ...row, members: parseStringArray(row.members) }))
+      .all() as Array<Omit<GroupDump, 'members' | 'adminIds'> & { members: string; adminIds: string }>
+    return rows.map((row) => {
+      const members = [...new Set(parseStringArray(row.members))]
+      const ownerId = [row.ownerId, row.creatorId, row.updatedBy].find(
+        (id): id is string => typeof id === 'string' && members.includes(id)
+      ) ?? members[0] ?? ''
+      return {
+        ...row,
+        members,
+        ownerId,
+        adminIds: [...new Set(parseStringArray(row.adminIds))].filter(
+          (id) => id !== ownerId && members.includes(id)
+        )
+      }
+    })
   }
 
   private stickers(): StickerDump[] {
@@ -344,9 +360,9 @@ export class PorterService {
       groupUpsert: this.db.prepare(
         `INSERT INTO groups (
            group_id, name, members, rev, updated_by, updated_ts,
-           creator_ip, creator_id, admin_secret_hash, admin_hint
+           creator_ip, creator_id, owner_id, admin_ids, admin_secret_hash, admin_hint
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(group_id) DO UPDATE SET
            name = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
@@ -365,6 +381,12 @@ export class PorterService {
            creator_id = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
              THEN excluded.creator_id ELSE groups.creator_id END,
+           owner_id = CASE
+             WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
+             THEN excluded.owner_id ELSE groups.owner_id END,
+           admin_ids = CASE
+             WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
+             THEN excluded.admin_ids ELSE groups.admin_ids END,
            admin_secret_hash = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
              THEN excluded.admin_secret_hash ELSE groups.admin_secret_hash END,
@@ -411,6 +433,14 @@ export class PorterService {
     const members = group.members.map((id) => (id === exportedBy ? this.selfId : id))
     const updatedBy = group.updatedBy === exportedBy ? this.selfId : group.updatedBy
     const creatorId = group.creatorId === exportedBy ? this.selfId : group.creatorId
+    const normalizedMembers = [...new Set(members)].filter((id) => id.length > 0).slice(0, GROUP_MAX_MEMBERS)
+    const importedOwnerId = group.ownerId === exportedBy ? this.selfId : group.ownerId
+    const ownerId = [importedOwnerId, creatorId, updatedBy].find(
+      (id): id is string => typeof id === 'string' && normalizedMembers.includes(id)
+    ) ?? normalizedMembers[0] ?? ''
+    const adminIds = [...new Set((group.adminIds ?? []).map((id) =>
+      id === exportedBy ? this.selfId : id
+    ))].filter((id) => id !== ownerId && normalizedMembers.includes(id))
     const adminSecretHash =
       typeof group.adminSecretHash === 'string' ? group.adminSecretHash.slice(0, 64) : ''
     const adminHint =
@@ -418,12 +448,14 @@ export class PorterService {
     statements.groupUpsert.run(
       group.groupId,
       group.name.slice(0, 64),
-      JSON.stringify([...new Set(members)].filter((id) => id.length > 0).slice(0, GROUP_MAX_MEMBERS)),
+      JSON.stringify(normalizedMembers),
       Number.isInteger(group.rev) ? group.rev : 1,
       updatedBy,
       Number.isInteger(group.updatedTs) ? group.updatedTs : Date.now(),
       typeof group.creatorIp === 'string' ? group.creatorIp.slice(0, 45) : '',
       typeof creatorId === 'string' ? creatorId.slice(0, 64) : updatedBy,
+      ownerId,
+      JSON.stringify(adminIds),
       adminSecretHash,
       adminHint
     )

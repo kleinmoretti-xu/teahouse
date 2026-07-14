@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.37；端口修改风险确认（决议 #240）；v0.39.12 开发中 |
+| 状态 | v1.38；群角色与开放邀请（决议 #241）；v0.40.0 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -184,7 +184,8 @@ messages(id TEXT PK,                            -- 协议 msgId，全局唯一
       status TEXT)                              -- sending|sent|queued|failed|recalled
 messages_fts(fts5: msg_id UNINDEXED, text)      -- 入库时中文按字空格预切；查询 phrase 匹配
 groups(group_id TEXT PK, name, members TEXT, rev INT, updated_by, updated_ts INT,
-      creator_ip TEXT, creator_id TEXT, admin_secret_hash TEXT, admin_hint TEXT)
+      creator_ip TEXT, creator_id TEXT, owner_id TEXT, admin_ids TEXT,
+      admin_secret_hash TEXT, admin_hint TEXT)
 transfers(transfer_id TEXT PK, msg_id, peer_id, direction, files TEXT,
       status, bytes_done INT, total INT, ts INT)
 send_queue(msg_id TEXT PK, peer_id, envelope TEXT, created INT, attempts INT)
@@ -194,8 +195,8 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 
 - 索引：`messages(conv_id, ts, seq)`、`messages(seq)`、`messages(conv_id, seq)`、`peers(last_seen)`、`send_queue(peer_id)`、`transfers(status)`。v10 追加两个 `seq` 索引（决议 #200 / OPT-5），用于全局 `MAX(seq)` 取号、会话内按 `seq` 分页 / 上下文窗口和会话预览，避免历史量增大后退化为全表或全会话扫描。
 - `remark` 为本地备注名（决议 #22/#37）：仅本机、不入协议；显示与搜索优先命中备注。通讯录资料卡与私聊头部资料弹窗都复用 `peers:set-remark` 写入 peers 表，主进程随后推送 `peers:updated` 刷新会话、通讯录与搜索显示名。
-- `groups.creator_ip/creator_id/admin_secret_hash/admin_hint` 为讨论组管理门槛（决议 #27/#30/#113）：密码明文不入库；提示仅用于成员输入密码时展示，不参与鉴权；无密码组优先以创建者 nodeId 接受管理变更，并保留创建 IP 作为旧版本兼容。v9 迁移把旧无密码群的 `updated_by` 回填为 `creator_id`，避免多网卡/虚拟机网络下创建 IP 与实际源 IP 不一致导致合法改名 `group.info` 被误拒。该机制服务于内网协作秩序，不替代加密/签名。
-- 群名变更提示（决议 #87）不新增协议字段、不新增迁移：`GroupsService` 在本机改名与远端 `group.info` 应用时，根据旧/新群名写入 `messages.kind='system'`，消息 ID 使用 `group:<groupId>:rename:<rev>` 保证重复 `info` 幂等；发送人显示名由主进程注入解析函数，优先本地备注，其次 registry 昵称。
+- `groups.creator_ip/creator_id/admin_secret_hash/admin_hint` 保留既有创建者与管理密码兼容语义；v11 新增 `owner_id/admin_ids`（决议 #241），分别保存当前群主与管理员 nodeId JSON。读取旧行时以仍在群内的 `creator_id`、`updated_by`、首位成员依次推导群主，管理员为空；保存前过滤非成员、重复管理员和群主。密码明文仍不入库。
+- 群变更系统提示由 `GroupsService` 比较更新前后元数据生成，覆盖改名、邀请、踢人、自行退群、任免管理员和群主自动转让；消息 ID 使用 `group:<groupId>:event:<rev>`，重复 `info` 不重复入库。首次收到 rev>1 且自己在成员中的群元数据时生成“某人邀请你加入群聊”。发送人显示名优先本地备注，其次 registry 昵称。
 - PK 消息（决议 #139）不新增 SQLite 表或列：`messages.kind='pk'`，`content` 写入不透结果的安全摘要（如「[PK] 骰子」「[PK] 猜拳」），用于会话预览、搜索、FTS 与通知；`file_ref` 复用为 `PkRef` JSON（`{game,result}`），用于气泡最终结果、导出 HTML/TXT 与失败重试复用同一结果，由 `kind` 区分其 JSON 形状。
 - 媒体撤回（决议 #188）不新增 SQLite 表或列：图片 / 文件仍分别写 `messages.kind='image'|'file'`，`file_ref` 保留 transfer 引用；变化是发送端先生成 `msgId` 并写入 `file-ctl offer.msgId`，接收端用同一 `msgId` 入库。`messages.status='recalled'` 和既有 FTS 清理逻辑继续表达撤回；文件是否可撤回由关联 `transfers.status` 与 `file_ref.transferIds[]` 计算，不把“已接收完成”另存成新列。
 - 表格图片消息（决议 #190）同样不新增 SQLite 表或列：仍写 `messages.kind='image'`，`content='[图片]'`，在 `file_ref` JSON 中可选保存 `tableText`（原始 TSV，最多 4096B UTF-8）与 `tableTextTruncated`（发送端截断时为 true）。这些字段不写 FTS、不参与会话预览；导出 HTML/TXT 时可在图片后附“表格文本”。旧记录没有该字段时按普通图片处理。
@@ -464,3 +465,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.35 决议 #238：`SettingsApp` 侧栏删除账号摘要；`App` 个人信息卡使用 120ms CSS 延迟、透明命中桥和显示态 pointer events 组成连续悬停范围。无新增响应状态、timer、IPC 或数据字段。版本 0.39.9 → **0.39.10**。
 - 2026-07-14 v1.36 决议 #239：新增设置动态入口专属 `SettingsNavIcon`，提供 7 组 24×24 线性 SVG 路径；导航改为 18px 图标与文字同一 flex 行，颜色继承现有 hover / 选中状态，公共 `PantryIcon` chunk 不增长。版本 0.39.10 → **0.39.11**。
 - 2026-07-14 v1.37 决议 #240：端口输入框默认 readonly；renderer 确认层以 `pendingPortEdit` / `unlockedPort` 管理单字段解锁，取消不改值，确认后聚焦全选，失焦复用原校验保存并重新锁定。版本 0.39.11 → **0.39.12**。
+- 2026-07-14 v1.38 决议 #241：groups v11 增加 `owner_id/admin_ids`；协议元数据、备份和 IPC 视图同步角色字段，服务层按单操作权限矩阵校验本地与远端变更，群主退出执行确定性转让，renderer 展示角色与兼容提示。版本 0.39.12 → **0.40.0**。

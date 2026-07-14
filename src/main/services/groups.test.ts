@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import { MSG_TYPES, type Envelope, type GroupMeta, type GroupPayload } from '../../shared/protocol'
-import type { ConversationView } from '../../shared/ipc'
+import type { ConversationView, GroupPatch } from '../../shared/ipc'
 import { makeEnvelope } from '../net/codec'
 import type { Messenger, SendOutcome } from '../net/messenger'
 import type { ConvRepo } from '../store/conv-repo'
@@ -147,19 +147,19 @@ describe('GroupsService 群管理权限', () => {
     expect(group?.hasAdminPassword).toBe(false)
     expect(group?.canManage).toBe(true)
 
-    expect(owner.updateGroup(group!.groupId, { name: '项目组-改名' })?.name).toBe('项目组-改名')
+    expect(owner.updateGroup(group!.groupId, { kind: 'rename', name: '项目组-改名' })?.name).toBe('项目组-改名')
 
     const movedIp = service({ selfIp: '10.0.0.2', groupRepo: repo })
-    expect(movedIp.updateGroup(group!.groupId, { name: '换 IP 后仍可改名' })?.name).toBe(
+    expect(movedIp.updateGroup(group!.groupId, { kind: 'rename', name: '换 IP 后仍可改名' })?.name).toBe(
       '换 IP 后仍可改名'
     )
 
     const otherMember = service({ selfId: 'node-bob', selfIp: '10.0.0.2', groupRepo: repo })
-    expect(otherMember.updateGroup(group!.groupId, { name: '不应改名' })).toBeNull()
+    expect(otherMember.updateGroup(group!.groupId, { kind: 'rename', name: '不应改名' })).toBeNull()
     expect(repo.get(group!.groupId)?.name).toBe('换 IP 后仍可改名')
   })
 
-  it('有密码组必须输入正确密码才能管理，且不保存明文', () => {
+  it('有密码组的群主免密码，普通成员需输入正确密码，且不保存明文', () => {
     const repo = new FakeGroupRepo()
     const groups = service({ selfIp: '10.0.0.1', groupRepo: repo })
     const group = groups.createGroup('加密管理组', ['node-bob'], 's3cret', '项目代号')
@@ -167,15 +167,156 @@ describe('GroupsService 群管理权限', () => {
 
     expect(group?.hasAdminPassword).toBe(true)
     expect(group?.adminHint).toBe('项目代号')
-    expect(group?.canManage).toBe(false)
+    expect(group?.canManage).toBe(true)
     expect(meta?.adminSecretHash).toMatch(/^[a-f0-9]{64}$/)
     expect(meta?.adminSecretHash.includes('s3cret')).toBe(false)
     expect(meta?.adminHint).toBe('项目代号')
 
-    expect(groups.updateGroup(group!.groupId, { name: '错误密码', adminPassword: 'bad' })).toBeNull()
-    expect(groups.updateGroup(group!.groupId, { name: '正确密码', adminPassword: 's3cret' })?.name).toBe(
+    expect(groups.updateGroup(group!.groupId, { kind: 'rename', name: '群主免密码' })?.name).toBe('群主免密码')
+
+    const member = service({ selfId: 'node-bob', selfIp: '10.0.0.2', groupRepo: repo })
+    expect(member.updateGroup(group!.groupId, { kind: 'rename', name: '错误密码', adminPassword: 'bad' })).toBeNull()
+    expect(member.updateGroup(group!.groupId, { kind: 'rename', name: '正确密码', adminPassword: 's3cret' })?.name).toBe(
       '正确密码'
     )
+  })
+
+  it('群主可任免管理员，管理员可改名并只能移出普通成员', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('项目组', ['node-admin', 'node-member', 'node-other'])!
+
+    const promoted = owner.updateGroup(group.groupId, {
+      kind: 'set-admin',
+      memberId: 'node-admin',
+      enabled: true
+    })
+    expect(promoted).toMatchObject({ ownerId: 'node-self', adminIds: ['node-admin'] })
+
+    const admin = service({ selfId: 'node-admin', selfIp: '10.0.0.2', groupRepo: repo })
+    expect(admin.get(group.groupId)?.selfRole).toBe('admin')
+    expect(admin.get(group.groupId)?.canManage).toBe(true)
+    expect(admin.updateGroup(group.groupId, { kind: 'rename', name: '管理员改名' })?.name).toBe(
+      '管理员改名'
+    )
+    expect(
+      admin.updateGroup(group.groupId, { kind: 'remove', memberIds: ['node-member'] })?.members
+    ).not.toContain('node-member')
+    expect(admin.updateGroup(group.groupId, { kind: 'remove', memberIds: ['node-self'] })).toBeNull()
+    expect(admin.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-other', enabled: true })).toBeNull()
+
+    const ownerAfter = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    expect(
+      ownerAfter.updateGroup(group.groupId, { kind: 'remove', memberIds: ['node-admin'] })?.members
+    ).not.toContain('node-admin')
+    expect(repo.get(group.groupId)?.adminIds).toEqual([])
+  })
+
+  it('普通成员可直接邀请，管理密码持有者仍不能移出群主或管理员', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup(
+      '密码组',
+      ['node-admin', 'node-member', 'node-other'],
+      's3cret'
+    )!
+    owner.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-admin', enabled: true })
+
+    const member = service({ selfId: 'node-member', selfIp: '10.0.0.3', groupRepo: repo })
+    expect(
+      member.updateGroup(group.groupId, { kind: 'invite', memberIds: ['node-new'] })?.members
+    ).toContain('node-new')
+    expect(member.updateGroup(group.groupId, { kind: 'rename', name: '无密码改名' })).toBeNull()
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'rename',
+        name: '密码成员改名',
+        adminPassword: 's3cret'
+      })?.name
+    ).toBe('密码成员改名')
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'remove',
+        memberIds: ['node-other'],
+        adminPassword: 's3cret'
+      })?.members
+    ).not.toContain('node-other')
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'remove',
+        memberIds: ['node-admin'],
+        adminPassword: 's3cret'
+      })
+    ).toBeNull()
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'remove',
+        memberIds: ['node-self'],
+        adminPassword: 's3cret'
+      })
+    ).toBeNull()
+    expect(
+      member.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-new', enabled: true })
+    ).toBeNull()
+  })
+
+  it('拒绝夹带其他操作字段的混合变更', () => {
+    const repo = new FakeGroupRepo()
+    const member = service({ selfId: 'node-member', selfIp: '10.0.0.2', groupRepo: repo })
+    repo.save({
+      groupId: 'g-mixed',
+      name: '原群名',
+      members: ['node-owner', 'node-member'],
+      rev: 1,
+      updatedBy: 'node-owner',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-owner',
+      ownerId: 'node-owner',
+      adminIds: [],
+      adminSecretHash: '',
+      adminHint: ''
+    })
+    const mixed = {
+      kind: 'invite',
+      memberIds: ['node-new'],
+      name: '夹带改名'
+    } as unknown as GroupPatch
+    expect(member.updateGroup('g-mixed', mixed)).toBeNull()
+    expect(repo.get('g-mixed')).toMatchObject({ name: '原群名', members: ['node-owner', 'node-member'] })
+  })
+
+  it('群主退出优先按成员顺序转让给管理员，并清理离群管理员', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('转让组', ['node-a', 'node-b', 'node-c'])!
+    owner.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-b', enabled: true })
+    owner.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-a', enabled: true })
+
+    owner.leaveGroup(group.groupId)
+    expect(repo.get(group.groupId)).toMatchObject({
+      members: ['node-a', 'node-b', 'node-c'],
+      ownerId: 'node-a',
+      adminIds: ['node-b']
+    })
+
+    const admin = service({ selfId: 'node-b', selfIp: '10.0.0.2', groupRepo: repo })
+    admin.leaveGroup(group.groupId)
+    expect(repo.get(group.groupId)?.adminIds).toEqual([])
+  })
+
+  it('群主退出且没有管理员时转让给首位剩余成员', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('普通组', ['node-a', 'node-b'])!
+
+    owner.leaveGroup(group.groupId)
+
+    expect(repo.get(group.groupId)).toMatchObject({
+      members: ['node-a', 'node-b'],
+      ownerId: 'node-a',
+      adminIds: []
+    })
   })
 
   it('建群支持 150 个成员并保留创建者', () => {
@@ -190,7 +331,7 @@ describe('GroupsService 群管理权限', () => {
     expect(group?.members).toEqual(['node-self', ...members])
   })
 
-  it('远端 group.info 按创建 IP 校验；退组变更例外放行', () => {
+  it('远端 group.info 按角色校验；成员自行退组放行', () => {
     const repo = new FakeGroupRepo()
     const messenger = new FakeMessenger()
     service({ selfIp: '10.0.0.8', groupRepo: repo, messenger })
@@ -203,6 +344,8 @@ describe('GroupsService 群管理权限', () => {
       updatedTs: 1000,
       creatorIp: '10.0.0.1',
       creatorId: 'node-self',
+      ownerId: 'node-self',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -242,6 +385,8 @@ describe('GroupsService 群管理权限', () => {
       updatedTs: 1000,
       creatorIp: '192.168.1.10',
       creatorId: 'node-a',
+      ownerId: 'node-a',
+      adminIds: [],
       adminSecretHash: '',
       adminHint: ''
     }
@@ -253,6 +398,181 @@ describe('GroupsService 群管理权限', () => {
     })
     messenger.emit('incoming', rename, { address: '172.16.56.1' })
     expect(repo.get('g-vm')?.name).toBe('新群名')
+  })
+
+  it('远端管理员可改名，普通成员可邀请', () => {
+    const repo = new FakeGroupRepo()
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-self', selfIp: '10.0.0.8', groupRepo: repo, messenger })
+    const local: GroupMeta = {
+      groupId: 'g-roles',
+      name: '项目组',
+      members: ['node-owner', 'node-admin', 'node-member', 'node-self'],
+      rev: 1,
+      updatedBy: 'node-owner',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-owner',
+      ownerId: 'node-owner',
+      adminIds: ['node-admin'],
+      adminSecretHash: '',
+      adminHint: ''
+    }
+    repo.save(local)
+
+    const adminRename = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-admin', {
+      op: 'info',
+      group: { ...local, name: '管理员改名', rev: 2, updatedBy: 'node-admin', updatedTs: 2000 }
+    })
+    messenger.emit('incoming', adminRename, { address: '10.0.0.2' })
+    expect(repo.get(local.groupId)?.name).toBe('管理员改名')
+
+    const afterRename = repo.get(local.groupId)!
+    const memberInvite = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-member', {
+      op: 'info',
+      group: {
+        ...afterRename,
+        members: [...afterRename.members, 'node-new'],
+        rev: 3,
+        updatedBy: 'node-member',
+        updatedTs: 3000
+      }
+    })
+    messenger.emit('incoming', memberInvite, { address: '10.0.0.3' })
+    expect(repo.get(local.groupId)?.members).toContain('node-new')
+  })
+
+  it('旧报文缺角色字段时保留本地角色，夹带邀请和改名的入站变更拒绝', () => {
+    const repo = new FakeGroupRepo()
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-self', selfIp: '10.0.0.8', groupRepo: repo, messenger })
+    const local: GroupMeta = {
+      groupId: 'g-legacy-role',
+      name: '项目组',
+      members: ['node-owner', 'node-admin', 'node-member', 'node-self'],
+      rev: 1,
+      updatedBy: 'node-owner',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-owner',
+      ownerId: 'node-owner',
+      adminIds: ['node-admin'],
+      adminSecretHash: '',
+      adminHint: ''
+    }
+    repo.save(local)
+
+    const legacyRenameGroup = {
+      ...local,
+      name: '旧报文改名',
+      rev: 2,
+      updatedBy: 'node-admin',
+      updatedTs: 2000,
+      ownerId: undefined,
+      adminIds: undefined
+    } as unknown as GroupMeta
+    messenger.emit(
+      'incoming',
+      makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-admin', { op: 'info', group: legacyRenameGroup }),
+      { address: '10.0.0.2' }
+    )
+    expect(repo.get(local.groupId)).toMatchObject({
+      name: '旧报文改名',
+      ownerId: 'node-owner',
+      adminIds: ['node-admin']
+    })
+
+    const current = repo.get(local.groupId)!
+    const mixed = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-member', {
+      op: 'info',
+      group: {
+        ...current,
+        name: '夹带改名',
+        members: [...current.members, 'node-new'],
+        rev: 3,
+        updatedBy: 'node-member',
+        updatedTs: 3000
+      }
+    })
+    messenger.emit('incoming', mixed, { address: '10.0.0.3' })
+    expect(repo.get(local.groupId)).toMatchObject({ name: '旧报文改名', rev: 2 })
+  })
+
+  it('入站管理员任免只接受群主，群主退出必须遵循确定性转让', () => {
+    const repo = new FakeGroupRepo()
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-self', selfIp: '10.0.0.8', groupRepo: repo, messenger })
+    const local: GroupMeta = {
+      groupId: 'g-inbound-roles',
+      name: '项目组',
+      members: ['node-owner', 'node-a', 'node-b', 'node-self'],
+      rev: 1,
+      updatedBy: 'node-owner',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-owner',
+      ownerId: 'node-owner',
+      adminIds: [],
+      adminSecretHash: '',
+      adminHint: ''
+    }
+    repo.save(local)
+
+    const unauthorizedAdmin = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-b', {
+      op: 'info',
+      group: {
+        ...local,
+        adminIds: ['node-a'],
+        rev: 2,
+        updatedBy: 'node-b',
+        updatedTs: 2000
+      }
+    })
+    messenger.emit('incoming', unauthorizedAdmin, { address: '10.0.0.3' })
+    expect(repo.get(local.groupId)?.adminIds).toEqual([])
+
+    const ownerPromotes = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-owner', {
+      op: 'info',
+      group: {
+        ...local,
+        adminIds: ['node-a'],
+        rev: 2,
+        updatedBy: 'node-owner',
+        updatedTs: 2100
+      }
+    })
+    messenger.emit('incoming', ownerPromotes, { address: '10.0.0.1' })
+    expect(repo.get(local.groupId)?.adminIds).toEqual(['node-a'])
+
+    const afterPromote = repo.get(local.groupId)!
+    const invalidTransfer = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-owner', {
+      op: 'info',
+      group: {
+        ...afterPromote,
+        members: ['node-a', 'node-b', 'node-self'],
+        ownerId: 'node-b',
+        rev: 3,
+        updatedBy: 'node-owner',
+        updatedTs: 3000
+      }
+    })
+    messenger.emit('incoming', invalidTransfer, { address: '10.0.0.1' })
+    expect(repo.get(local.groupId)?.ownerId).toBe('node-owner')
+
+    const validTransfer = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-owner', {
+      op: 'info',
+      group: {
+        ...afterPromote,
+        members: ['node-a', 'node-b', 'node-self'],
+        ownerId: 'node-a',
+        adminIds: [],
+        rev: 3,
+        updatedBy: 'node-owner',
+        updatedTs: 3100
+      }
+    })
+    messenger.emit('incoming', validTransfer, { address: '10.0.0.1' })
+    expect(repo.get(local.groupId)).toMatchObject({ ownerId: 'node-a', adminIds: [] })
   })
 })
 
@@ -298,26 +618,27 @@ function groupInfos(messenger: FakeMessenger): Envelope[] {
     .map((s) => s.env)
 }
 
-describe('GroupsService 群改名系统提示（决议 #87）', () => {
+describe('GroupsService 群变更系统提示（决议 #87/#241）', () => {
   function member(selfId: string, selfIp: string, displayName?: string) {
     const messenger = new FakeMessenger()
     const msgRepo = new FakeMsgRepo()
+    const groupRepo = new FakeGroupRepo()
     const svc = new GroupsService({
       selfId,
       messenger: messenger as unknown as Messenger,
       convRepo: new FakeConvRepo() as unknown as ConvRepo,
       msgRepo: msgRepo as unknown as MsgRepo,
-      groupRepo: new FakeGroupRepo() as unknown as GroupRepo,
+      groupRepo: groupRepo as unknown as GroupRepo,
       getSelfIp: () => selfIp,
       resolveDisplayName: displayName ? () => displayName : undefined
     })
-    return { svc, messenger, msgRepo }
+    return { svc, messenger, msgRepo, groupRepo }
   }
 
   it('改名人自己看到“你把群名…”系统提示', () => {
     const a = member('node-a', '10.0.0.1')
     const g = a.svc.createGroup('茶水间', ['node-b'])!
-    a.svc.updateGroup(g.groupId, { name: '午餐群' })
+    a.svc.updateGroup(g.groupId, { kind: 'rename', name: '午餐群' })
     const sys = a.msgRepo.inserted.filter((m) => m.kind === 'system')
     expect(sys).toHaveLength(1)
     expect(sys[0].content).toBe('你把群名「茶水间」改成了「午餐群」')
@@ -327,7 +648,7 @@ describe('GroupsService 群改名系统提示（决议 #87）', () => {
   it('远端成员收到改名 info 后本地生成系统提示并幂等', () => {
     const a = member('node-a', '10.0.0.1')
     const g = a.svc.createGroup('茶水间', ['node-b'])!
-    a.svc.updateGroup(g.groupId, { name: '午餐群' })
+    a.svc.updateGroup(g.groupId, { kind: 'rename', name: '午餐群' })
 
     const b = member('node-b', '10.0.0.2', '阿明')
     const infos = groupInfos(a.messenger)
@@ -354,5 +675,67 @@ describe('GroupsService 群改名系统提示（决议 #87）', () => {
       b.messenger.emit('incoming', env, { address: '10.0.0.1' })
     }
     expect(b.msgRepo.inserted.filter((m) => m.kind === 'system')).toHaveLength(0)
+  })
+
+  it('邀请与任免管理员生成可去重的系统提示', () => {
+    const a = member('node-a', '10.0.0.1', '阿明')
+    const g = a.svc.createGroup('研发组', ['node-b'])!
+
+    a.svc.updateGroup(g.groupId, { kind: 'invite', memberIds: ['node-c'] })
+    a.svc.updateGroup(g.groupId, { kind: 'set-admin', memberId: 'node-b', enabled: true })
+    a.svc.updateGroup(g.groupId, { kind: 'set-admin', memberId: 'node-b', enabled: false })
+    a.svc.updateGroup(g.groupId, { kind: 'remove', memberIds: ['node-b'] })
+
+    expect(a.msgRepo.inserted.filter((m) => m.kind === 'system').map((m) => m.content)).toEqual([
+      '你邀请阿明加入群聊',
+      '你将阿明设为管理员',
+      '你取消了阿明的管理员身份',
+      '你将阿明移出群聊'
+    ])
+  })
+
+  it('受邀成员首次收到高版本群信息时生成邀请提示并幂等', () => {
+    const a = member('node-a', '10.0.0.1')
+    const g = a.svc.createGroup('研发组', ['node-b'])!
+    a.svc.updateGroup(g.groupId, { kind: 'invite', memberIds: ['node-c'] })
+    const inviteInfo = a.messenger.sent.find(
+      (item) => item.peerId === 'node-c' && item.env.type === MSG_TYPES.group
+    )!.env
+
+    const c = member('node-c', '10.0.0.3', '阿明')
+    c.messenger.emit('incoming', inviteInfo, { address: '10.0.0.1' })
+    c.messenger.emit('incoming', inviteInfo, { address: '10.0.0.1' })
+
+    expect(c.msgRepo.inserted.filter((m) => m.kind === 'system').map((m) => m.content)).toEqual([
+      '阿明邀请你加入群聊'
+    ])
+  })
+
+  it('群主退出使用合并系统提示', () => {
+    const a = member('node-a', '10.0.0.1', '阿明')
+    const g = a.svc.createGroup('研发组', ['node-b', 'node-c'])!
+    a.svc.updateGroup(g.groupId, { kind: 'set-admin', memberId: 'node-c', enabled: true })
+
+    a.svc.leaveGroup(g.groupId)
+
+    expect(a.msgRepo.inserted.filter((m) => m.kind === 'system').at(-1)?.content).toBe(
+      '你退出群聊，阿明自动成为新群主'
+    )
+  })
+
+  it('普通成员自行退群生成系统提示', () => {
+    const a = member('node-a', '10.0.0.1')
+    a.svc.createGroup('研发组', ['node-b'])!
+    const b = member('node-b', '10.0.0.2')
+    for (const env of groupInfos(a.messenger)) {
+      b.messenger.emit('incoming', env, { address: '10.0.0.1' })
+    }
+    const groupId = b.groupRepo.list()[0].groupId
+
+    b.svc.leaveGroup(groupId)
+
+    expect(b.msgRepo.inserted.filter((m) => m.kind === 'system').map((m) => m.content)).toEqual([
+      '你退出了群聊'
+    ])
   })
 })
