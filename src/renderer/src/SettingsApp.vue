@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
   darkTheme,
   dateZhCN,
@@ -203,6 +203,13 @@ const exportTo = ref('')
 // 高级表单
 const udpPortInput = ref('')
 const tcpPortInput = ref('')
+type PortField = 'udp' | 'tcp'
+const pendingPortEdit = ref<PortField | null>(null)
+const unlockedPort = ref<PortField | null>(null)
+const udpPortElement = ref<HTMLInputElement | null>(null)
+const tcpPortElement = ref<HTMLInputElement | null>(null)
+const portWarningDialog = ref<HTMLElement | null>(null)
+const pendingPortLabel = computed(() => (pendingPortEdit.value === 'udp' ? 'UDP' : 'TCP'))
 // 快捷键表单
 const captureShortcut = ref('')
 const showHideShortcut = ref('')
@@ -529,6 +536,40 @@ async function autoSavePorts(): Promise<void> {
 function parsePort(value: string): number | null {
   const n = Number(value)
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
+}
+
+function requestPortEdit(field: PortField, event: FocusEvent): void {
+  if (unlockedPort.value === field || pendingPortEdit.value === field) return
+  if (event.currentTarget instanceof HTMLInputElement) event.currentTarget.blur()
+  pendingPortEdit.value = field
+  void nextTick(() => {
+    const cancelButton = portWarningDialog.value?.querySelector<HTMLButtonElement>(
+      '.port-warning-actions button'
+    )
+    cancelButton?.focus()
+  })
+}
+
+function cancelPortEdit(): void {
+  pendingPortEdit.value = null
+}
+
+function confirmPortEdit(): void {
+  const field = pendingPortEdit.value
+  if (!field) return
+  pendingPortEdit.value = null
+  unlockedPort.value = field
+  void nextTick(() => {
+    const target = field === 'udp' ? udpPortElement.value : tcpPortElement.value
+    target?.focus()
+    target?.select()
+  })
+}
+
+async function finishPortEdit(field: PortField): Promise<void> {
+  if (unlockedPort.value !== field) return
+  unlockedPort.value = null
+  await autoSavePorts()
 }
 
 async function exportData(format: 'backup' | 'html' | 'txt'): Promise<void> {
@@ -1137,11 +1178,33 @@ async function confirmRemove(cidr: string): Promise<void> {
             <div class="field-grid">
               <label class="field">
                 <span>UDP 端口</span>
-                <input v-model="udpPortInput" type="number" min="1" max="65535" @blur="autoSavePorts" />
+                <input
+                  ref="udpPortElement"
+                  v-model="udpPortInput"
+                  class="port-input"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  :readonly="unlockedPort !== 'udp'"
+                  aria-haspopup="dialog"
+                  @focus="requestPortEdit('udp', $event)"
+                  @blur="finishPortEdit('udp')"
+                />
               </label>
               <label class="field">
                 <span>TCP 端口</span>
-                <input v-model="tcpPortInput" type="number" min="1" max="65535" @blur="autoSavePorts" />
+                <input
+                  ref="tcpPortElement"
+                  v-model="tcpPortInput"
+                  class="port-input"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  :readonly="unlockedPort !== 'tcp'"
+                  aria-haspopup="dialog"
+                  @focus="requestPortEdit('tcp', $event)"
+                  @blur="finishPortEdit('tcp')"
+                />
               </label>
             </div>
           </div>
@@ -1310,6 +1373,39 @@ async function confirmRemove(cidr: string): Promise<void> {
         </section>
       </template>
     </main>
+    <Transition name="port-warning">
+      <div
+        v-if="pendingPortEdit"
+        class="port-warning-mask"
+        @mousedown.self="cancelPortEdit"
+      >
+        <section
+          ref="portWarningDialog"
+          class="port-warning-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="port-warning-title"
+          aria-describedby="port-warning-description port-warning-emphasis"
+          tabindex="-1"
+          @keydown.esc.prevent.stop="cancelPortEdit"
+        >
+          <div class="port-warning-icon">
+            <PantryIcon name="warning" :size="22" />
+          </div>
+          <h2 id="port-warning-title">确认修改 {{ pendingPortLabel }} 端口？</h2>
+          <p id="port-warning-description">
+            UDP/TCP 端口共同用于局域网发现、消息和文件传输。修改后需要重启应用，并确保相关客户端、防火墙及网络策略使用匹配配置；配置不一致可能导致联系人无法发现、消息或文件无法送达。
+          </p>
+          <p id="port-warning-emphasis" class="port-warning-emphasis">
+            只有在你明确了解当前网络部署，并已准备同步调整相关配置时，才建议继续。
+          </p>
+          <div class="port-warning-actions">
+            <NButton secondary @click="cancelPortEdit">取消</NButton>
+            <NButton type="error" @click="confirmPortEdit">确认修改</NButton>
+          </div>
+        </section>
+      </div>
+    </Transition>
     <Transition name="toast">
       <div v-if="toast" class="toast" role="status" aria-live="polite">
         <PantryIcon name="check" :size="15" />
@@ -1721,6 +1817,12 @@ async function confirmRemove(cidr: string): Promise<void> {
 .setting-line select:disabled {
   background: var(--bg-list);
   color: var(--text-3);
+}
+
+.port-input[readonly] {
+  background: var(--bg-list);
+  color: var(--text-2);
+  cursor: pointer;
 }
 
 .path {
@@ -2479,6 +2581,91 @@ async function confirmRemove(cidr: string): Promise<void> {
     visibility 0.14s ease;
 }
 
+/* 端口修改风险确认（决议 #240）：纯色遮罩 + 静态卡片，兼顾 Win7 / UOS 软渲染。 */
+.port-warning-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 31, 25, 0.28);
+}
+
+:global(html[data-theme='dark']) .port-warning-mask {
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.port-warning-dialog {
+  width: min(392px, 100%);
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  outline: none;
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+}
+
+.port-warning-icon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 14px;
+  border: 1px solid var(--danger);
+  border-radius: 50%;
+  color: var(--danger);
+  display: grid;
+  place-items: center;
+}
+
+.port-warning-dialog h2 {
+  margin: 0 0 10px;
+  color: var(--text-1);
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.port-warning-dialog p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.port-warning-dialog .port-warning-emphasis {
+  margin-top: 10px;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.port-warning-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.port-warning-enter-active,
+.port-warning-leave-active {
+  transition: opacity 140ms ease;
+}
+
+.port-warning-enter-active .port-warning-dialog,
+.port-warning-leave-active .port-warning-dialog {
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.port-warning-enter-from,
+.port-warning-leave-to {
+  opacity: 0;
+}
+
+.port-warning-enter-from .port-warning-dialog,
+.port-warning-leave-to .port-warning-dialog {
+  transform: translateY(6px) scale(0.985);
+}
+
 .about-update-help:hover .about-help-pop,
 .about-update-help:focus-within .about-help-pop {
   opacity: 1;
@@ -2653,12 +2840,20 @@ async function confirmRemove(cidr: string): Promise<void> {
     transform: none;
   }
   .toast-enter-active,
-  .toast-leave-active {
+  .toast-leave-active,
+  .port-warning-enter-active,
+  .port-warning-leave-active,
+  .port-warning-enter-active .port-warning-dialog,
+  .port-warning-leave-active .port-warning-dialog {
     transition: opacity 0.16s ease;
   }
   .toast-enter-from,
   .toast-leave-to {
     transform: translateX(-50%);
+  }
+  .port-warning-enter-from .port-warning-dialog,
+  .port-warning-leave-to .port-warning-dialog {
+    transform: none;
   }
 }
 </style>

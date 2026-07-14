@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.36；设置分组导航图标（决议 #239）；v0.39.11 开发中 |
+| 状态 | v1.37；端口修改风险确认（决议 #240）；v0.39.12 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -54,6 +54,7 @@ Naive UI 接入约束（决议 #215）：
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
 - 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
 - 设置分组图标（决议 #239）：新增 `SettingsNavIcon.vue` 作为设置动态入口专属叶组件，按既有 `Section` id 映射 7 组 24×24 viewBox 的线性 SVG path，继承 `PantryIcon` 的 `currentColor`、1.6px stroke 与圆角端点契约。专属组件避免设置路径进入多窗口共享 `PantryIcon` chunk；导航按钮改为 flex 横排，图标 18px、间距 9px，hover / active 颜色由按钮祖先继承。无单独图片请求、位图解码、组件实例状态、IPC 或依赖变化。
+- 端口编辑保护（决议 #240）：`SettingsApp.vue` 维护 `pendingPortEdit` 与 `unlockedPort` 两个纯 renderer 状态。原生 number input 以 `readonly` 作为默认门禁；focus 时立即 blur 并打开固定定位确认层，确认后在 `nextTick` 中只解除当前字段只读并调用原生 `focus()` / `select()`。输入框 blur 复用既有 `autoSavePorts()` 的 1–65535 校验与 `saveAppSettings`，完成后重新锁定。取消、遮罩和 Esc 只清理待确认状态，不改表单值。确认层沿用本地 `PantryIcon warning` 与已加载的 Naive `NButton`，危险操作使用 `type="error"`，不新增组件库模块、IPC、配置字段或定时器。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 - 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
@@ -462,3 +463,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.34 决议 #237：`GroupCreator` 联系人项改为姓名与组织路径同一 flex 行，组织字段本地组合并在剩余空间内省略；传输与数据层无变化。版本 0.39.8 → **0.39.9**。
 - 2026-07-14 v1.35 决议 #238：`SettingsApp` 侧栏删除账号摘要；`App` 个人信息卡使用 120ms CSS 延迟、透明命中桥和显示态 pointer events 组成连续悬停范围。无新增响应状态、timer、IPC 或数据字段。版本 0.39.9 → **0.39.10**。
 - 2026-07-14 v1.36 决议 #239：新增设置动态入口专属 `SettingsNavIcon`，提供 7 组 24×24 线性 SVG 路径；导航改为 18px 图标与文字同一 flex 行，颜色继承现有 hover / 选中状态，公共 `PantryIcon` chunk 不增长。版本 0.39.10 → **0.39.11**。
+- 2026-07-14 v1.37 决议 #240：端口输入框默认 readonly；renderer 确认层以 `pendingPortEdit` / `unlockedPort` 管理单字段解锁，取消不改值，确认后聚焦全选，失焦复用原校验保存并重新锁定。版本 0.39.11 → **0.39.12**。
