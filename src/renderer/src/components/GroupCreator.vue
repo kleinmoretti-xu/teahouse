@@ -34,24 +34,29 @@ const fallbackName = computed(() => {
   return names.length > 0 ? `${names.join('、')} 的讨论组` : '讨论组'
 })
 
-const filteredPeers = computed(() => {
+const filteredPeerRows = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  if (!keyword) return peersStore.peers
-  return peersStore.peers.filter((peer) =>
-    [
-      peer.remark,
-      peer.nick,
-      peer.company,
-      peer.dept,
-      peer.team,
-      peer.ip,
-      peer.host
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-      .includes(keyword)
-  )
+  const peers = keyword
+    ? peersStore.peers.filter((peer) =>
+        [
+          peer.remark,
+          peer.nick,
+          peer.company,
+          peer.dept,
+          peer.team,
+          peer.ip,
+          peer.host
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(keyword)
+      )
+    : peersStore.peers
+  return peers.map((peer) => ({
+    peer,
+    organization: [peer.company, peer.dept, peer.team].filter(Boolean).join(' · ')
+  }))
 })
 
 const passwordError = computed(() => {
@@ -136,7 +141,7 @@ async function create(): Promise<void> {
         />
         <div class="pick-list">
           <label
-            v-for="p in filteredPeers"
+            v-for="{ peer: p, organization } in filteredPeerRows"
             :key="p.nodeId"
             class="pick"
             :class="{ disabled: atPickCap && !picked.has(p.nodeId) }"
@@ -148,14 +153,16 @@ async function create(): Promise<void> {
               @change="toggle(p.nodeId)"
             />
             <span class="dot" :class="p.online ? 'on' : 'off'"></span>
-            <span class="person">
-              <span class="nm">{{ displayName(p) }}</span>
-              <span class="meta">{{ [p.company, p.dept, p.team].filter(Boolean).join(' / ') }}</span>
+            <span class="person" :class="{ 'has-meta': organization }">
+              <span class="nm" :title="displayName(p)">{{ displayName(p) }}</span>
+              <span v-if="organization" class="meta" :title="organization">
+                {{ organization }}
+              </span>
             </span>
             <em v-if="!p.online" class="off-tag">离线</em>
           </label>
           <p v-if="peersStore.peers.length === 0" class="empty">还没有发现任何节点</p>
-          <p v-else-if="filteredPeers.length === 0" class="empty">没有匹配的联系人</p>
+          <p v-else-if="filteredPeerRows.length === 0" class="empty">没有匹配的联系人</p>
         </div>
       </section>
 
@@ -311,9 +318,9 @@ h3 {
 .pick {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 6px 8px;
+  gap: 7px;
+  min-height: 34px;
+  padding: 3px 7px;
   font-size: 13px;
   cursor: pointer;
   border-radius: 4px;
@@ -344,8 +351,9 @@ h3 {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
 }
 .nm,
 .meta {
@@ -353,12 +361,23 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.nm {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 500;
+}
+.person.has-meta .nm {
+  max-width: 48%;
+}
 .meta {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-3);
-  min-height: 14px;
 }
 .off-tag {
+  flex-shrink: 0;
   font-style: normal;
   font-size: 11px;
   color: var(--text-3);

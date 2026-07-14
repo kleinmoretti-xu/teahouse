@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.33；文件主动取消终态保护（决议 #236）；v0.39.8 开发中 |
+| 状态 | v1.34；建群成员列表紧凑化（决议 #237）；v0.39.9 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -51,6 +51,7 @@ Naive UI 接入约束（决议 #215）：
 - 图片元数据与缓存边界（决议 #234）：`shared/image-metadata.ts` 以文件头白名单解析 PNG/JPEG/GIF/WebP/BMP 的真实格式、宽高和动画标记，不执行完整像素解码；主进程读取最多 2MiB 头部并按路径 size/mtime 缓存解析结果。内联条件固定为单边 ≤8192px、总像素 ≤3200 万；发送侧不合格内容降级为普通文件，所有 `pantry-img` / OCR / 复制 / 收藏入口复用校验。派生缩略图存入 `userData/data/image-thumbnails/`，文件名由 transferId 的 SHA-256 派生，写入前复核静态 WebP、最长边 ≤320px、字节 ≤1MiB；总量上限 128MiB，读取最多每小时触碰一次 mtime，写入后按 mtime 从旧到新清理。缓存可删除重建、不进 SQLite、不进备份；`pantry-thumb` 每次仍先校验 transfer 与原图授权，避免构造 ID 越权读取。
 - 图片选择授权（决议 #235）：`file:pick` 继续只服务普通文件 / 文件夹；`img:pick` 固定使用 `openFile + multiSelections` 和 PNG/JPG/JPEG/GIF/WebP/BMP 对话框过滤器。主进程收到对话框结果后再次通过 `IMAGE_FILE_EXTENSIONS` 白名单过滤，再写入 `PathGrantStore`；renderer 的发送图片按钮只调用 `pickImages -> img:offer-path`，不接入普通文件发送分支。实际文件内容继续由决议 #234 的暂存后元数据门禁复核。
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
+- 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 - 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
@@ -456,3 +457,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.31 决议 #234：新增文件头图片元数据白名单、8192px / 3200 万像素内联门禁，以及 320px WebP、128MB LRU 的受限派生缩略图缓存；聊天流近视口加载缩略图，独立看图读取校验后的原图。版本 0.39.5 → **0.39.6**。
 - 2026-07-14 v1.32 决议 #235：新增 `img:pick` 专用图片选择 IPC，对话框与主进程授权层双重限制支持扩展名；发送图片按钮取消普通文件发送分支。版本 0.39.6 → **0.39.7**。
 - 2026-07-14 v1.33 决议 #236：文件发送方主动取消时同步写入 `canceled` 消息终态，并在传输、消息状态两层拦截迟到失败覆盖；renderer 区分“发送取消”与“已取消”。版本 0.39.7 → **0.39.8**。
+- 2026-07-14 v1.34 决议 #237：`GroupCreator` 联系人项改为姓名与组织路径同一 flex 行，组织字段本地组合并在剩余空间内省略；传输与数据层无变化。版本 0.39.8 → **0.39.9**。

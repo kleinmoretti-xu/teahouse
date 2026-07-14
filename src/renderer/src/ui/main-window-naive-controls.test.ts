@@ -32,6 +32,18 @@ describe('主窗口 Naive UI 标准控件复用', () => {
     expect(groupCreatorSource).not.toContain('NCheckbox')
   })
 
+  it('讨论组成员姓名与组织路径使用紧凑单行布局', () => {
+    expect(groupCreatorSource).toContain(".filter(Boolean).join(' · ')")
+    expect(groupCreatorSource).toContain('v-for="{ peer: p, organization } in filteredPeerRows"')
+    expect(groupCreatorSource).toContain('v-if="organization"')
+    expect(groupCreatorSource).toContain(':title="organization"')
+    const pickRule = groupCreatorSource.match(/\.pick \{([^}]*)\}/)?.[1] ?? ''
+    const personRule = groupCreatorSource.match(/\.person \{([^}]*)\}/)?.[1] ?? ''
+    expect(pickRule).toContain('min-height: 34px')
+    expect(personRule).toContain('align-items: baseline')
+    expect(personRule).not.toContain('flex-direction: column')
+  })
+
   it('联系人备注与资料页操作复用现有 Input 和 Button', () => {
     expect(profileCardSource).toMatch(/import \{ NButton, NInput \} from 'naive-ui'/)
     expect(profileCardSource.match(/<NInput\b/g)).toHaveLength(1)
