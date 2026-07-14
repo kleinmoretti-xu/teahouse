@@ -854,12 +854,11 @@ async function confirmRemove(cidr: string): Promise<void> {
                       : '从下方挑一个图标，再配一个背景色。'
                   }}
                 </p>
-                <div class="avatar-picture-actions">
+                <div v-if="avatarHash" class="avatar-picture-actions">
                   <button type="button" :disabled="avatarSaving" @click="pickCustomAvatar">
-                    {{ avatarHash ? '更换图片' : '选择图片' }}
+                    更换图片
                   </button>
                   <button
-                    v-if="avatarHash"
                     type="button"
                     class="restore"
                     :disabled="avatarSaving"

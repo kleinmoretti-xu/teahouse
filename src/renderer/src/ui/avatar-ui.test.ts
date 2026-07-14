@@ -19,8 +19,14 @@ describe('自定义头像渲染入口', () => {
     expect(crop).toContain('returnFocus?.focus()')
   })
 
-  it('设置页支持图片选择、更换、恢复默认和失败保留裁剪状态', () => {
+  it('设置页仅保留一个初次图片入口，并支持更换、恢复和失败保留裁剪状态', () => {
     expect(settings).toContain('图片头像')
+    expect(settings).toContain('@click="pickCustomAvatar"')
+    expect(settings).toContain('<div v-if="avatarHash" class="avatar-picture-actions">')
+    expect(settings).not.toContain("avatarHash ? '更换图片' : '选择图片'")
+    expect(settings).not.toContain('选择图片')
+    expect(settings).toContain('更换图片')
+    expect(settings).toContain('恢复默认')
     expect(settings).toContain('pickAvatarSource')
     expect(settings).toContain("setProfileAvatar({ kind: 'custom', bytes })")
     expect(settings).toContain("setProfileAvatar({ kind: 'preset', avatar: avatar.value })")
