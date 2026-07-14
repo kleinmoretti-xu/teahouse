@@ -1,9 +1,9 @@
 // 生成托盘图标（32x32）并直接写入 src/main/windows/tray-icon.ts —— 内嵌 base64，
-// 不走文件路径，开发/打包/asar 场景行为一致。改图标：改 build/icons 源 SVG 后重新运行。
-// 两个版本（决议 #58/#107）：
+// 不走文件路径，开发/打包/asar 场景行为一致。改图标：替换彩色母版后重新运行。
+// 两个版本（决议 #58/#107/#226）：
 //   mono  —— macOS 菜单栏 template，由 build/icons/pantry-logo-mono.svg 渲染
-//   color —— Windows / Linux 彩色版，由 build/icons/pantry-logo-menu.svg 渲染
-// 依赖系统 rsvg-convert；运行态仍只使用内嵌 Data URL，不依赖外部文件。
+//   color —— Windows / Linux 彩色版，由 build/icons/pantry-logo-icon.png 缩放
+// 依赖系统 rsvg-convert 与 macOS sips；运行态仍只使用内嵌 Data URL，不依赖外部文件。
 // 用法：node scripts/gen-tray-icon.mjs
 import { execFileSync } from 'node:child_process'
 import { inflateSync } from 'node:zlib'
@@ -116,13 +116,24 @@ function renderSvg(svgPath, workDir) {
   return { png, rgba: decoded.rgba }
 }
 
+function renderPng(pngPath, workDir) {
+  const out = join(workDir, `${basename(pngPath)}-${SIZE}.png`)
+  execFileSync('sips', ['-z', String(SIZE), String(SIZE), pngPath, '--out', out], { stdio: 'pipe' })
+  const png = readFileSync(out)
+  const decoded = decodePngRgba(png)
+  if (decoded.width !== SIZE || decoded.height !== SIZE) {
+    throw new Error(`${basename(pngPath)} 缩放尺寸异常: ${decoded.width}x${decoded.height}`)
+  }
+  return { png, rgba: decoded.rgba }
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const iconDir = join(root, 'build/icons')
 const tmp = mkdtempSync(join(tmpdir(), 'pantry-tray-icon-'))
 
 try {
   const mono = renderSvg(join(iconDir, 'pantry-logo-mono.svg'), tmp)
-  const color = renderSvg(join(iconDir, 'pantry-logo-menu.svg'), tmp)
+  const color = renderPng(join(iconDir, 'pantry-logo-icon.png'), tmp)
   const monoUrl = `data:image/png;base64,${mono.png.toString('base64')}`
   const colorUrl = `data:image/png;base64,${color.png.toString('base64')}`
   const colorRgba = color.rgba.toString('base64')
@@ -130,8 +141,8 @@ try {
   const outFile = join(root, 'src/main/windows/tray-icon.ts')
   writeFileSync(
     outFile,
-    `// 托盘图标（32x32，决议 #58/#107）。由 scripts/gen-tray-icon.mjs 从 build/icons/*.svg 生成后内嵌。
-// 开发/打包/asar 场景行为一致。改图标：改源 SVG 后重新生成，不要手改本文件。
+    `// 托盘图标（32x32，决议 #58/#107/#226）。由 scripts/gen-tray-icon.mjs 从单色 SVG / 彩色 PNG 生成后内嵌。
+// 开发/打包/asar 场景行为一致。改图标：替换源资源后重新生成，不要手改本文件。
 /** macOS 菜单栏单色 template（按 alpha 自动着色） */
 export const TRAY_ICON_MONO_DATAURL =
   '${monoUrl}'

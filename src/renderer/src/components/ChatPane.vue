@@ -2600,6 +2600,9 @@ async function onDrop(event: DragEvent): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.title-button .title {
+  transition: color 150ms ease;
+}
 .peer-profile-scope {
   position: relative;
   min-width: 0;
@@ -2623,15 +2626,6 @@ async function onDrop(event: DragEvent): Promise<void> {
   gap: 10px;
   text-align: left;
   cursor: pointer;
-  transition:
-    background 150ms ease,
-    transform 90ms ease-out;
-}
-.title-button:hover {
-  background: var(--surface-hover);
-}
-.title-button:active {
-  transform: scale(0.988);
 }
 .head-avatar {
   width: 40px;
@@ -3093,7 +3087,7 @@ async function onDrop(event: DragEvent): Promise<void> {
 @media (prefers-reduced-motion: reduce) {
   .tool,
   .pk-popover button,
-  .title-button,
+  .title-button .title,
   .head-btn,
   .profile-save,
   .send,
@@ -3102,7 +3096,6 @@ async function onDrop(event: DragEvent): Promise<void> {
   }
   .tool:active:not(:disabled),
   .pk-popover button:active:not(:disabled),
-  .title-button:active,
   .head-btn:active,
   .profile-save:active:not(:disabled),
   .send:active:not(:disabled),

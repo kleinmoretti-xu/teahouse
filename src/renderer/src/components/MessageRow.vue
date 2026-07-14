@@ -227,12 +227,12 @@ function openTextLink(url: string): void {
 .row.peer .bubble {
   background: var(--bubble-peer);
   border-color: var(--line);
-  box-shadow: var(--highlight-edge), 0 5px 16px rgba(24, 50, 37, 0.055);
+  box-shadow: 0 5px 16px rgba(24, 50, 37, 0.055);
 }
 .row.mine .bubble {
   background: var(--bubble-mine);
   border-color: rgba(61, 139, 107, 0.1);
-  box-shadow: var(--highlight-edge);
+  box-shadow: none;
 }
 .text-link {
   border: none;

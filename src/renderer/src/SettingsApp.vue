@@ -1188,7 +1188,7 @@ async function confirmRemove(cidr: string): Promise<void> {
               </div>
             </div>
 
-            <!-- 默认只露版本 / 许可 / 源码 / 内网更新（决议 #90/#171）：面向普通用户的核心信息 -->
+            <!-- 默认只露版本 / 许可 / 源码 / 内网更新（决议 #90/#171/#225）：面向普通用户的核心信息 -->
             <dl class="about-rows">
               <div class="about-row">
                 <dt>版本</dt>
@@ -1196,7 +1196,7 @@ async function confirmRemove(cidr: string): Promise<void> {
               </div>
               <div class="about-row">
                 <dt>许可</dt>
-                <dd>MIT 许可证</dd>
+                <dd>GPL-3.0-only</dd>
               </div>
               <div class="about-row">
                 <dt>源码</dt>

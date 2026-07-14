@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="build/icons/pantry-logo-icon.svg" alt="茶话间 Logo" width="120" height="120" />
+<img src="build/icons/pantry-logo-icon.png" alt="茶话间 Logo" width="120" height="120" />
 
 <h1>茶话间 &nbsp;·&nbsp; Teahouse</h1>
 
@@ -11,7 +11,7 @@
     <img src="https://img.shields.io/github/v/release/skyjt/teahouse?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=3D8B6B&logo=github&logoColor=white" alt="最新版本" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-3D8B6B?style=flat-square" alt="MIT License" />
+    <img src="https://img.shields.io/badge/License-GPL--3.0--only-3D8B6B?style=flat-square" alt="GPL-3.0-only" />
   </a>
   <a href="https://github.com/skyjt/teahouse/releases">
     <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%207%2B%20%7C%20Linux%20%7C%20macOS-0366d6?style=flat-square" alt="平台" />
@@ -143,4 +143,6 @@ xattr -dr com.apple.quarantine /Applications/Teahouse.app
 
 ## License
 
-[MIT](LICENSE) © 2026 skyjt
+Copyright © 2026 skyjt。
+
+从 0.37.0 起，茶话间自身的源码与二进制分发采用 [GNU General Public License v3.0 only](LICENSE)（SPDX：`GPL-3.0-only`）。0.36.8 及更早版本已经授予的 MIT 权利继续有效。第三方组件与图形资源仍遵循 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 中列出的各自许可证。

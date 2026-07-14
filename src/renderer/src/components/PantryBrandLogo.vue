@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import standardLogoUrl from '../assets/brand/icon-standard-logo.svg?url'
-import smallLogoUrl from '../assets/brand/icon-small-16-64px.svg?url'
 import monoLogoUrl from '../assets/brand/icon-macos-menubar-outline.svg?url'
-import markLogoUrl from '../assets/brand/pantry-mark.svg?url'
+import appIconUrl from '../assets/brand/teahouse-app-icon.png?url'
 
-// 茶话间品牌 logo（决议 #107）：直接复用用户给定 SVG 套件，避免手写 path 走形。
+// 茶话间品牌 logo（决议 #107/#226）：界面彩色品牌位统一复用透明位图，
+// macOS 菜单栏等单色场景继续使用可由系统着色的轮廓 SVG。
 const props = withDefaults(
   defineProps<{
     variant?: 'icon' | 'color' | 'mono'
@@ -19,8 +18,7 @@ const props = withDefaults(
 
 const logoSrc = computed(() => {
   if (props.variant === 'mono') return monoLogoUrl
-  if (props.variant === 'color') return markLogoUrl
-  return props.size <= 64 ? smallLogoUrl : standardLogoUrl
+  return appIconUrl
 })
 </script>
 

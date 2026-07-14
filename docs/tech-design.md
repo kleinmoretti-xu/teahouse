@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v1.21；发送键平台化图标约束已落档（决议 #224）；内网通兼容设计已落档但 **#199 暂缓实现**；v0.36.8 开发中 |
-| 日期 | 2026-07-13 |
+| 状态 | v1.25；消息 / 文件气泡与文件类型位图 atlas 已统一（决议 #228）；v0.39.0 开发中 |
+| 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -42,6 +42,10 @@ Naive UI 接入约束（决议 #215）：
 - 主窗口 Provider 使用 Naive UI `abstract` 模式，避免额外 DOM 根节点打断 `.shell` 的百分比高度包含块。若后续取消 `abstract`，新增根节点必须显式保持完整高度链。任何根级 Provider / Portal 改动都要在真实 Electron 窗口验证默认尺寸、最小尺寸和最大化 / 还原。
 - 设置页二选一偏好（决议 #223）统一使用 `SettingsApp.vue` 自绘双段滑块，头像样式、主题与发送键共享相同 DOM / CSS 契约；选中块只用 `transform` 位移，太阳 / 月亮复用本地 `PantryIcon`，不引入 xicons。Naive UI RadioGroup / RadioButton 不再进入设置动态闭包，其余标准表单控件继续使用 Naive UI。
 - 发送键滑块（决议 #224）根据已加载的 `AppInfo.platform` 选择修饰键图标：`darwin` 使用 `key-command`，其他平台使用 `key-control`，并与 `key-enter` 组合。平台信息仅影响展示与 `aria-label`，设置值继续使用 `enter | ctrlEnter`，ChatPane 的 `ctrlKey || metaKey` 判定不变。
+- 分发许可（决议 #225）：0.37.0 起项目自身代码与二进制采用 `GPL-3.0-only`，根目录 `LICENSE` 为唯一许可正文；electron-builder 通过 `extraResources` 把该文件复制到应用资源目录。0.36.8 及更早版本的 MIT 授权继续有效，第三方代码与图形资源继续遵循 `THIRD_PARTY_NOTICES.md` 中各自的许可证。
+- 品牌位图管线（决议 #226）：`build/icons/pantry-logo-icon-master.png` 是彩色品牌唯一母版，固定 1024×1024 RGBA；`gen-app-icons.mjs` 不再渲染彩色 SVG，直接校验母版尺寸 / alpha 后生成 `pantry-logo-icon.png`、ICO、ICNS，并链式生成 Linux hicolor 与独立窗口图标。renderer 使用同源 512px PNG；Windows / Linux 托盘从母版生成 32px RGBA，macOS 菜单栏继续从 `pantry-logo-mono.svg` 生成 Template Image。旧彩色 SVG 只保留为历史资料，不进入彩色运行时链路。
+- 私聊头部交互（决议 #84/#227）：`ChatPane` 的 `.title-button` 保留完整点击热区与 `focus-visible` 轮廓，用于打开联系人资料浮层；pointer hover / 弹窗激活只修改内部 `.title` 的 `color`，不得给宽按钮增加背景、阴影或 transform 按压反馈。昵称颜色以 150ms 过渡，`prefers-reduced-motion` 下关闭。
+- 消息与文件表面（决议 #228）：`MessageRow` 文字气泡不再叠加 `--highlight-edge`，peer 只保留轻外阴影，mine 无阴影；`FileCard.card` 与文字 `.bubble` 均使用四角 14px。文件类型资源固定为 `renderer/assets/file-types/file-type-atlas.png`（1024×1024 RGBA、4×4 等分单元格），`FileTypeIcon` 只维护扩展名 → 类型 → atlas 坐标映射，并用 CSS background-position 缩放到请求尺寸。资源随 renderer 本地打包，不经网络、不新增运行时依赖；新增 PNG 头、类型覆盖和源码约束测试。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 
 ## 2. 进程与窗口模型
@@ -434,3 +438,7 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-13 v1.19 决议 #222：Windows / Linux 设置窗改为 modal 子窗，主窗通过 `ui:settings-window-state` 显示静态 scrim 并拦截交互；设置窗顶层伪元素提供 1px 平台无关边界。macOS 保持原生阴影与父子窗口行为。版本 0.36.5 → **0.36.6**。
 - 2026-07-13 v1.20 决议 #223：设置页头像样式、主题和发送键共享自绘双段滑块，选中块只做 transform 位移；主题太阳 / 月亮复用本地 `PantryIcon`，移除设置动态闭包内不再使用的 Naive UI RadioGroup / RadioButton。版本 0.36.6 → **0.36.7**。
 - 2026-07-13 v1.21 决议 #224：发送键滑块读取 `AppInfo.platform`，macOS 组合 Command + 回车图标，Windows / Linux 组合 Control + 回车图标；只改展示与无障碍名称，设置值和输入判定不变。版本 0.36.7 → **0.36.8**。
+- 2026-07-14 v1.22 决议 #225：项目主许可调整为 `GPL-3.0-only`，根 `LICENSE` 使用 GNU 官方 GPLv3 全文，构建通过 `extraResources` 随安装包携带许可文本；历史 MIT 授权与第三方许可证保持有效。版本 0.36.8 → **0.37.0**。
+- 2026-07-14 v1.23 决议 #226：彩色品牌源切换为生图方案 A 的 1024px RGBA 母版，平台图标、窗口图标、Windows / Linux 托盘和 renderer 品牌图统一从该母版派生；macOS 菜单栏保留单色模板 SVG。版本 0.37.0 → **0.38.0**。
+- 2026-07-14 v1.24 决议 #227：修复私聊头部资料入口 hover 回归；移除宽按钮背景与 transform 反馈，保留昵称颜色过渡、完整点击热区和键盘焦点轮廓。版本 0.38.0 → **0.38.1**。
+- 2026-07-14 v1.25 决议 #228：文字气泡移除顶部内高光，文件卡与文字气泡统一四角 14px；文件类型图标从内联 SVG 切换为本地透明 4×4 PNG atlas，保持原扩展名映射 API。版本 0.38.1 → **0.39.0**。

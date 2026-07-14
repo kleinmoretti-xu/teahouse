@@ -1,8 +1,9 @@
 {
   "name": "pantry",
   "productName": "茶话间",
-  "version": "0.36.8",
+  "version": "0.39.0",
   "description": "茶话间（Teahouse）—— 纯内网、基于 IP 的局域网即时通讯与文件传输工具",
+  "license": "GPL-3.0-only",
   "private": true,
   "main": "./out/main/index.js",
   "engines": {
@@ -139,6 +140,10 @@
         {
           "from": "build/mac/zh-Hans.lproj",
           "to": "zh-Hans.lproj"
+        },
+        {
+          "from": "LICENSE",
+          "to": "LICENSE"
         }
       ]
     },
@@ -146,6 +151,10 @@
       {
         "from": "build/icons/window-icon.png",
         "to": "icons/pantry.png"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
       }
     ]
   },

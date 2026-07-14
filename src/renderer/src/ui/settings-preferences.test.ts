@@ -43,4 +43,9 @@ describe('设置二选一偏好滑块', () => {
     expect(iconSource).toContain("name === 'key-control'")
     expect(iconSource).toContain("name === 'key-enter'")
   })
+
+  it('关于页展示项目当前的 GPL v3 许可标识', () => {
+    expect(settingsSource).toContain('<dd>GPL-3.0-only</dd>')
+    expect(settingsSource).not.toContain('MIT 许可证')
+  })
 })

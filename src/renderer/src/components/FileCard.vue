@@ -301,7 +301,7 @@ function requestDirect(): void {
   min-height: 58px;
   background: var(--bg-window);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 9px 10px;
   display: flex;
   /* 三栏共享同一垂直中心线（决议 #129）：图标、文件名/大小、右侧操作/状态高低一致，
