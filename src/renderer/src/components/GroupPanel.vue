@@ -14,6 +14,7 @@ import {
 } from '../utils/group-admin'
 import PantryIcon from './PantryIcon.vue'
 import AvatarMark from './AvatarMark.vue'
+import GroupInviteDialog from './GroupInviteDialog.vue'
 
 // 群成员面板（ui-design §5）：角色徽标 / 任免管理员 / 移除 / 开放邀请 / 改名 / 退出。
 // 角色权限与管理密码兼容规则统一遵循决议 #241。
@@ -26,16 +27,12 @@ const chatStore = useChatStore()
 const groupsStore = useGroupsStore()
 const renaming = ref(false)
 const newName = ref('')
-const adding = ref(false)
+const showInviteDialog = ref(false)
 const adminPassword = ref('')
 const adminFeedback = ref('')
 const adminBusy = ref(false)
 
-const memberIds = computed(() => new Set(props.group.members))
 const atMemberCap = computed(() => props.group.members.length >= GROUP_MAX_MEMBERS)
-const addable = computed(() =>
-  atMemberCap.value ? [] : peersStore.peers.filter((p) => !memberIds.value.has(p.nodeId))
-)
 const canShowAdmin = computed(() => canRenameGroup(props.group))
 const hasLegacyMembers = computed(() =>
   props.group.members.some(
@@ -78,11 +75,6 @@ async function rename(): Promise<void> {
 async function removeMember(id: string): Promise<void> {
   if (adminBusy.value) return
   await updateAdmin({ kind: 'remove', memberIds: [id] })
-}
-
-async function addMember(id: string): Promise<void> {
-  if (adminBusy.value || atMemberCap.value) return
-  await runUpdate({ kind: 'invite', memberIds: [id] }, '邀请失败，请稍后重试')
 }
 
 async function toggleAdmin(id: string): Promise<void> {
@@ -203,25 +195,22 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
 
     <template v-if="group.amMember">
       <button
-        v-if="group.amMember"
         class="add"
         :disabled="adminBusy || atMemberCap"
         :title="atMemberCap ? `最多 ${GROUP_MAX_MEMBERS} 人` : '添加成员'"
-        @click="adding = !adding"
+        @click="showInviteDialog = true"
       >
         <PantryIcon name="plus" :size="14" />{{ atMemberCap ? '已满员' : '添加成员' }}
       </button>
-      <ul v-if="adding && !atMemberCap" class="members addlist">
-        <li v-for="p in addable" :key="p.nodeId" class="addable" @click="addMember(p.nodeId)">
-          <AvatarMark class="m-avatar" :avatar="p.avatar" :name="p.remark || p.nick" :presence="p.online ? 'online' : 'offline'" />
-          <span class="nm">{{ p.remark || p.nick }}</span>
-          <PantryIcon class="plus" name="plus" :size="13" />
-        </li>
-        <li v-if="addable.length === 0" class="empty">没有可添加的人了</li>
-      </ul>
       <button class="leave" @click="leave">退出讨论组</button>
     </template>
     <p v-else class="left-tip">你已不在该讨论组（历史保留，无法发言）</p>
+
+    <GroupInviteDialog
+      v-if="showInviteDialog && group.amMember"
+      :group="group"
+      @close="showInviteDialog = false"
+    />
   </aside>
 </template>
 
@@ -401,26 +390,6 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
 .add:disabled {
   cursor: default;
   opacity: 0.55;
-}
-.addlist {
-  max-height: 140px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 6px;
-}
-.addable {
-  cursor: pointer;
-}
-.addable:hover {
-  background: var(--line);
-}
-.plus {
-  color: var(--primary);
-}
-.empty {
-  color: var(--text-3);
-  font-size: 12px;
-  justify-content: center;
 }
 .leave {
   margin-top: auto;

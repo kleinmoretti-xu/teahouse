@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.38；群角色与开放邀请（决议 #241）；v0.40.0 开发中 |
+| 状态 | v1.39；群成员批量邀请弹窗（决议 #242）；v0.41.0 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -52,6 +52,7 @@ Naive UI 接入约束（决议 #215）：
 - 图片选择授权（决议 #235）：`file:pick` 继续只服务普通文件 / 文件夹；`img:pick` 固定使用 `openFile + multiSelections` 和 PNG/JPG/JPEG/GIF/WebP/BMP 对话框过滤器。主进程收到对话框结果后再次通过 `IMAGE_FILE_EXTENSIONS` 白名单过滤，再写入 `PathGrantStore`；renderer 的发送图片按钮只调用 `pickImages -> img:offer-path`，不接入普通文件发送分支。实际文件内容继续由决议 #234 的暂存后元数据门禁复核。
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
+- 群成员批量邀请（决议 #242）：从 `GroupCreator` 抽取纯 renderer 的共享成员选择组件，统一多字段过滤、紧凑联系人行、跨搜索选择、已选标签与上限门禁；`GroupInviteDialog` 过滤当前群成员并把剩余名额作为可选上限，一次调用既有 `group:update invite`。弹窗通过 Teleport 挂到 `body`，沿用全局遮罩、焦点回收和 Esc 契约；协议、IPC、store 数据形状与数据库均不扩展。
 - 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
 - 设置分组图标（决议 #239）：新增 `SettingsNavIcon.vue` 作为设置动态入口专属叶组件，按既有 `Section` id 映射 7 组 24×24 viewBox 的线性 SVG path，继承 `PantryIcon` 的 `currentColor`、1.6px stroke 与圆角端点契约。专属组件避免设置路径进入多窗口共享 `PantryIcon` chunk；导航按钮改为 flex 横排，图标 18px、间距 9px，hover / active 颜色由按钮祖先继承。无单独图片请求、位图解码、组件实例状态、IPC 或依赖变化。
 - 端口编辑保护（决议 #240）：`SettingsApp.vue` 维护 `pendingPortEdit` 与 `unlockedPort` 两个纯 renderer 状态。原生 number input 以 `readonly` 作为默认门禁；focus 时立即 blur 并打开固定定位确认层，确认后在 `nextTick` 中只解除当前字段只读并调用原生 `focus()` / `select()`。输入框 blur 复用既有 `autoSavePorts()` 的 1–65535 校验与 `saveAppSettings`，完成后重新锁定。取消、遮罩和 Esc 只清理待确认状态，不改表单值。确认层沿用本地 `PantryIcon warning` 与已加载的 Naive `NButton`，危险操作使用 `type="error"`，不新增组件库模块、IPC、配置字段或定时器。
@@ -466,3 +467,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.36 决议 #239：新增设置动态入口专属 `SettingsNavIcon`，提供 7 组 24×24 线性 SVG 路径；导航改为 18px 图标与文字同一 flex 行，颜色继承现有 hover / 选中状态，公共 `PantryIcon` chunk 不增长。版本 0.39.10 → **0.39.11**。
 - 2026-07-14 v1.37 决议 #240：端口输入框默认 readonly；renderer 确认层以 `pendingPortEdit` / `unlockedPort` 管理单字段解锁，取消不改值，确认后聚焦全选，失焦复用原校验保存并重新锁定。版本 0.39.11 → **0.39.12**。
 - 2026-07-14 v1.38 决议 #241：groups v11 增加 `owner_id/admin_ids`；协议元数据、备份和 IPC 视图同步角色字段，服务层按单操作权限矩阵校验本地与远端变更，群主退出执行确定性转让，renderer 展示角色与兼容提示。版本 0.39.12 → **0.40.0**。
+- 2026-07-14 v1.39 决议 #242：抽取建群/邀请共用的成员搜索多选组件，新增 Teleport 全局邀请弹窗；批量确认复用既有 `invite memberIds[]`，无协议、IPC、数据库或依赖变化。版本 0.40.0 → **0.41.0**。

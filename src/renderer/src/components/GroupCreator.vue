@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NButton, NInput } from 'naive-ui'
 import type { PeerView } from '../../../shared/ipc'
 import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
-import PantryIcon from './PantryIcon.vue'
+import GroupMemberPicker from './GroupMemberPicker.vue'
 
 // 发起讨论组（ui-design §7.1）：搜索选人 → 下一步设置组名 / 管理密码 / 密码提示。
 
@@ -15,16 +15,20 @@ const emit = defineEmits<{ close: [] }>()
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
 const step = ref<'members' | 'settings'>('members')
-const query = ref('')
 const name = ref('')
 const adminPassword = ref('')
 const adminPasswordConfirm = ref('')
 const adminHint = ref('')
-const picked = ref(new Set<string>(props.preselect ?? []))
+const maxPickOthers = GROUP_MAX_MEMBERS - 1
+const pickedIds = ref(
+  [...new Set(props.preselect ?? [])]
+    .filter((id) => !!peersStore.byId(id))
+    .slice(0, maxPickOthers)
+)
 const creating = ref(false)
 
 const selectedPeers = computed(() =>
-  [...picked.value]
+  pickedIds.value
     .map((id) => peersStore.byId(id))
     .filter((peer): peer is PeerView => !!peer)
 )
@@ -32,31 +36,6 @@ const selectedPeers = computed(() =>
 const fallbackName = computed(() => {
   const names = selectedPeers.value.slice(0, 3).map((peer) => displayName(peer))
   return names.length > 0 ? `${names.join('、')} 的讨论组` : '讨论组'
-})
-
-const filteredPeerRows = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  const peers = keyword
-    ? peersStore.peers.filter((peer) =>
-        [
-          peer.remark,
-          peer.nick,
-          peer.company,
-          peer.dept,
-          peer.team,
-          peer.ip,
-          peer.host
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-          .includes(keyword)
-      )
-    : peersStore.peers
-  return peers.map((peer) => ({
-    peer,
-    organization: [peer.company, peer.dept, peer.team].filter(Boolean).join(' · ')
-  }))
 })
 
 const passwordError = computed(() => {
@@ -71,28 +50,15 @@ const passwordError = computed(() => {
 })
 
 // 建群时本机会自动入组，可选他人最多 GROUP_MAX_MEMBERS - 1
-const maxPickOthers = GROUP_MAX_MEMBERS - 1
-const canNext = computed(() => picked.value.size >= 1)
+const canNext = computed(() => pickedIds.value.length >= 1)
 const canCreate = computed(() => canNext.value && !passwordError.value && !creating.value)
-const atPickCap = computed(() => picked.value.size >= maxPickOthers)
+
+watch(pickedIds, (ids) => {
+  if (ids.length === 0) step.value = 'members'
+})
 
 function displayName(peer: PeerView): string {
   return peer.remark || peer.nick
-}
-
-function toggle(nodeId: string): void {
-  const next = new Set(picked.value)
-  if (next.has(nodeId)) next.delete(nodeId)
-  else if (next.size >= maxPickOthers) return
-  else next.add(nodeId)
-  picked.value = next
-}
-
-function removePicked(nodeId: string): void {
-  const next = new Set(picked.value)
-  next.delete(nodeId)
-  picked.value = next
-  if (picked.value.size === 0) step.value = 'members'
 }
 
 function nextStep(): void {
@@ -106,7 +72,7 @@ async function create(): Promise<void> {
   creating.value = true
   const group = await window.pantry.createGroup(
     name.value.trim() || fallbackName.value,
-    [...picked.value],
+    pickedIds.value,
     adminPassword.value.trim(),
     adminHint.value.trim()
   )
@@ -129,44 +95,7 @@ async function create(): Promise<void> {
         </div>
       </header>
 
-      <section v-if="step === 'members'" class="page">
-        <NInput
-          v-model:value="query"
-          class="search"
-          size="small"
-          maxlength="40"
-          autofocus
-          placeholder="搜索联系人、部门、团队或 IP"
-          :input-props="{ 'aria-label': '搜索讨论组成员' }"
-        />
-        <div class="pick-list">
-          <label
-            v-for="{ peer: p, organization } in filteredPeerRows"
-            :key="p.nodeId"
-            class="pick"
-            :class="{ disabled: atPickCap && !picked.has(p.nodeId) }"
-          >
-            <input
-              type="checkbox"
-              :checked="picked.has(p.nodeId)"
-              :disabled="atPickCap && !picked.has(p.nodeId)"
-              @change="toggle(p.nodeId)"
-            />
-            <span class="dot" :class="p.online ? 'on' : 'off'"></span>
-            <span class="person" :class="{ 'has-meta': organization }">
-              <span class="nm" :title="displayName(p)">{{ displayName(p) }}</span>
-              <span v-if="organization" class="meta" :title="organization">
-                {{ organization }}
-              </span>
-            </span>
-            <em v-if="!p.online" class="off-tag">离线</em>
-          </label>
-          <p v-if="peersStore.peers.length === 0" class="empty">还没有发现任何节点</p>
-          <p v-else-if="filteredPeerRows.length === 0" class="empty">没有匹配的联系人</p>
-        </div>
-      </section>
-
-      <section v-else class="page">
+      <section v-if="step === 'settings'" class="page">
         <div class="field">
           <label for="group-name">组名</label>
           <NInput
@@ -213,21 +142,15 @@ async function create(): Promise<void> {
         <p v-else class="hint">管理密码不会保存明文；提示只用于帮成员回忆密码。</p>
       </section>
 
-      <div v-if="selectedPeers.length > 0" class="picked-bar">
-        <span class="count">
-          已选 {{ selectedPeers.length }} 人（+你，最多 {{ GROUP_MAX_MEMBERS }}）
-        </span>
-        <button
-          v-for="peer in selectedPeers.slice(0, 5)"
-          :key="peer.nodeId"
-          class="chip"
-          @click="removePicked(peer.nodeId)"
-        >
-          <span>{{ displayName(peer) }}</span>
-          <PantryIcon name="x" :size="12" />
-        </button>
-        <span v-if="selectedPeers.length > 5" class="more">+{{ selectedPeers.length - 5 }}</span>
-      </div>
+      <GroupMemberPicker
+        v-model:selected-ids="pickedIds"
+        :class="{ 'member-picker-page': step === 'members' }"
+        :max-pick="maxPickOthers"
+        :show-list="step === 'members'"
+        autofocus
+        search-aria-label="搜索讨论组成员"
+        :selection-limit-label="`+你，最多 ${GROUP_MAX_MEMBERS}`"
+      />
 
       <div class="foot">
         <NButton
@@ -301,92 +224,9 @@ h3 {
   color: var(--primary);
   background: var(--primary-weak);
 }
-.page {
+.page,
+.member-picker-page {
   min-height: 318px;
-}
-.search {
-  width: 100%;
-  margin-bottom: 10px;
-}
-.pick-list {
-  max-height: 274px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 4px;
-}
-.pick {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 3px 7px;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 4px;
-}
-.pick:hover {
-  background: var(--line);
-}
-.pick.disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.pick.disabled:hover {
-  background: transparent;
-}
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.dot.on {
-  background: var(--online);
-}
-.dot.off {
-  background: var(--offline);
-}
-.person {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  overflow: hidden;
-}
-.nm,
-.meta {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.nm {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
-  font-weight: 500;
-}
-.person.has-meta .nm {
-  max-width: 48%;
-}
-.meta {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-3);
-}
-.off-tag {
-  flex-shrink: 0;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--text-3);
-}
-.empty {
-  text-align: center;
-  color: var(--text-3);
-  font-size: 12px;
-  padding: 16px 0;
 }
 .field {
   display: flex;
@@ -409,45 +249,6 @@ h3 {
 }
 .error {
   color: var(--danger);
-}
-.picked-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-  margin-top: 10px;
-}
-.count {
-  color: var(--text-3);
-  font-size: 12px;
-  flex: 0 0 auto;
-  margin-right: 2px;
-}
-.chip {
-  max-width: 76px;
-  height: 24px;
-  border: none;
-  border-radius: 4px;
-  padding: 0 6px;
-  background: var(--primary-weak);
-  color: var(--primary);
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-}
-.chip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.more {
-  color: var(--text-3);
-  font-size: 12px;
 }
 .foot {
   display: flex;

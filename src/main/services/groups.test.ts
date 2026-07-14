@@ -618,8 +618,12 @@ function groupInfos(messenger: FakeMessenger): Envelope[] {
     .map((s) => s.env)
 }
 
-describe('GroupsService 群变更系统提示（决议 #87/#241）', () => {
-  function member(selfId: string, selfIp: string, displayName?: string) {
+describe('GroupsService 群变更系统提示（决议 #87/#241/#242）', () => {
+  function member(
+    selfId: string,
+    selfIp: string,
+    displayName?: string | ((nodeId: string) => string)
+  ) {
     const messenger = new FakeMessenger()
     const msgRepo = new FakeMsgRepo()
     const groupRepo = new FakeGroupRepo()
@@ -630,7 +634,12 @@ describe('GroupsService 群变更系统提示（决议 #87/#241）', () => {
       msgRepo: msgRepo as unknown as MsgRepo,
       groupRepo: groupRepo as unknown as GroupRepo,
       getSelfIp: () => selfIp,
-      resolveDisplayName: displayName ? () => displayName : undefined
+      resolveDisplayName:
+        typeof displayName === 'function'
+          ? displayName
+          : displayName
+            ? () => displayName
+            : undefined
     })
     return { svc, messenger, msgRepo, groupRepo }
   }
@@ -678,16 +687,27 @@ describe('GroupsService 群变更系统提示（决议 #87/#241）', () => {
   })
 
   it('邀请与任免管理员生成可去重的系统提示', () => {
-    const a = member('node-a', '10.0.0.1', '阿明')
+    const names: Record<string, string> = {
+      'node-b': '阿明',
+      'node-c': '小陈',
+      'node-d': '小杜'
+    }
+    const a = member('node-a', '10.0.0.1', (nodeId) => names[nodeId] ?? '联系人')
     const g = a.svc.createGroup('研发组', ['node-b'])!
+    const revBeforeInvite = g.rev
 
-    a.svc.updateGroup(g.groupId, { kind: 'invite', memberIds: ['node-c'] })
+    const invited = a.svc.updateGroup(g.groupId, {
+      kind: 'invite',
+      memberIds: ['node-c', 'node-d']
+    })
+    expect(invited?.members).toEqual(['node-a', 'node-b', 'node-c', 'node-d'])
+    expect(invited?.rev).toBe(revBeforeInvite + 1)
     a.svc.updateGroup(g.groupId, { kind: 'set-admin', memberId: 'node-b', enabled: true })
     a.svc.updateGroup(g.groupId, { kind: 'set-admin', memberId: 'node-b', enabled: false })
     a.svc.updateGroup(g.groupId, { kind: 'remove', memberIds: ['node-b'] })
 
     expect(a.msgRepo.inserted.filter((m) => m.kind === 'system').map((m) => m.content)).toEqual([
-      '你邀请阿明加入群聊',
+      '你邀请小陈、小杜加入群聊',
       '你将阿明设为管理员',
       '你取消了阿明的管理员身份',
       '你将阿明移出群聊'
