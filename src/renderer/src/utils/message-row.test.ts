@@ -12,6 +12,7 @@ describe('消息行显示逻辑', () => {
     expect(messageStatusHint('text', 'queued')).toBe('对方上线后自动送达')
     expect(messageStatusHint('image', 'failed')).toBe('发送失败，点击重发')
     expect(messageStatusHint('file', 'failed')).toBe('')
+    expect(messageStatusHint('text', 'canceled')).toBe('')
     expect(messageStatusHint('text', 'recalled')).toBe('')
   })
 

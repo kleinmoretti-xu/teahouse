@@ -35,6 +35,14 @@ describe('消息与文件视觉统一', () => {
     expect(ruleBody(fileCardSource, '.card')).toContain('border-radius: 14px')
   })
 
+  it('发送方主动取消使用独立的灰色状态，不落入失败重发入口', () => {
+    expect(fileCardSource).toContain("props.msg.status === 'canceled' ? '发送取消' : '已取消'")
+    expect(fileCardSource).toContain("if (props.msg.status === 'canceled') return '发送取消'")
+    expect(messageSource).toContain("v-else-if=\"props.msg.status === 'canceled'\"")
+    expect(messageSource).toContain('title="发送取消"')
+    expect(ruleBody(messageSource, '.status .canceled')).toContain('color: var(--text-3)')
+  })
+
   it('文件类型 atlas 是 512 RGBA PNG', () => {
     expect(
       readPngHeader(new URL('../assets/file-types/file-type-atlas.png', import.meta.url))

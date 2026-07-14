@@ -509,7 +509,7 @@ export class PorterService {
       msg.fileRef ?? null,
       msg.ts,
       seq,
-      msg.status === 'recalled' ? 'recalled' : 'sent'
+      msg.status === 'recalled' ? 'recalled' : msg.status === 'canceled' ? 'canceled' : 'sent'
     )
     const tokens = kind === 'system' ? '' : toFtsTokens(msg.content ?? '')
     if (tokens) statements.messageFtsInsert.run(msg.id, tokens)

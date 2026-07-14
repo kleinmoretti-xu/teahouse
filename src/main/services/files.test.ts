@@ -1244,6 +1244,31 @@ describe('FilesService 发送状态以数据面为准（issue #3）', () => {
     expect(msgRepo.get(view!.id)?.status).toBe('sent')
   })
 
+  it('发送方主动取消后，迟到的 offer 失败与数据面完成都不得覆盖取消终态（决议 #236）', async () => {
+    let failOffer!: (v: boolean) => void
+    const { service, msgRepo, transferRepo, imgPath } = makeService(
+      new Promise<boolean>((resolve) => {
+        failOffer = resolve
+      })
+    )
+    const view = await service.offerPaths('node-bob', [imgPath])
+    expect(view).not.toBeNull()
+    const tid = [...transferRepo.rows.keys()][0]
+
+    await service.cancel(tid)
+    expect(msgRepo.get(view!.id)?.status).toBe('canceled')
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+
+    failOffer(false)
+    await waitTick()
+    expect(msgRepo.get(view!.id)?.status).toBe('canceled')
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+
+    ;(service as unknown as { server: EventEmitter }).server.emit('served', tid)
+    expect(msgRepo.get(view!.id)?.status).toBe('canceled')
+    expect(transferRepo.get(tid)?.status).toBe('canceled')
+  })
+
   it('offer 失败且无任何送达迹象 → 仍判失败', async () => {
     const { service, msgRepo, transferRepo, imgPath } = makeService(false)
     const view = await service.offerPaths('node-bob', [imgPath], 'image')

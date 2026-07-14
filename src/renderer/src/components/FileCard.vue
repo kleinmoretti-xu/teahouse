@@ -18,6 +18,7 @@ interface TransferStats {
   total: number
   done: number
   failed: number
+  canceled: number
   active: boolean
   receivedNames: string[]
 }
@@ -42,6 +43,7 @@ const transferStats = computed<TransferStats>(() => {
     total: transferList.value.length,
     done: 0,
     failed: 0,
+    canceled: 0,
     active: false,
     receivedNames: []
   }
@@ -49,8 +51,10 @@ const transferStats = computed<TransferStats>(() => {
     if (t.status === 'done') {
       stats.done += 1
       stats.receivedNames.push(peersStore.nameOf(t.peerId))
-    } else if (t.status === 'failed' || t.status === 'declined' || t.status === 'canceled') {
+    } else if (t.status === 'failed' || t.status === 'declined') {
       stats.failed += 1
+    } else if (t.status === 'canceled') {
+      stats.canceled += 1
     } else if (t.status === 'offering' || t.status === 'accepted') {
       stats.active = true
     }
@@ -107,10 +111,11 @@ const stateChipText = computed(() => {
 const statusText = computed(() => {
   if (multiOut.value) {
     const total = transferIds.value.length
-    const { done, failed } = transferStats.value
+    const { done, failed, canceled } = transferStats.value
+    if (props.msg.status === 'canceled') return '发送取消'
     if (done === total) return '已全部送达'
     if (failed === total && total > 0) return '传输失败'
-    if (failed > 0) return `${failed} 位未完成`
+    if (failed + canceled > 0) return `${failed + canceled} 位未完成`
     return `等待 ${total} 位成员接收`
   }
   const t = transfer.value
@@ -121,7 +126,7 @@ const statusText = computed(() => {
     case 'declined':
       return t.direction === 'out' ? '对方已拒收' : '已拒收'
     case 'canceled':
-      return '已取消'
+      return t.direction === 'out' && props.msg.status === 'canceled' ? '发送取消' : '已取消'
     default:
       return directFile.value ? '直接发送失败' : '传输失败'
   }

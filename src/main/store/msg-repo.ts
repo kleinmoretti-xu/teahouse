@@ -26,7 +26,7 @@ export interface NewMessage {
   /** 文件消息：FileRefView 的 JSON */
   fileRef?: string
   ts: number
-  status: 'sending' | 'sent' | 'queued' | 'failed' | 'recalled'
+  status: 'sending' | 'sent' | 'queued' | 'failed' | 'canceled' | 'recalled'
 }
 
 /** 行 → 渲染层视图（chat 与 files 服务共用） */

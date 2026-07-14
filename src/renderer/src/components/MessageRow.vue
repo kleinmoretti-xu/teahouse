@@ -125,6 +125,13 @@ function openTextLink(url: string): void {
     <span v-if="props.msg.isMine" class="status">
       <PantryIcon v-if="props.msg.status === 'sending'" class="spin" name="loader" :size="13" />
       <PantryIcon v-else-if="props.msg.status === 'sent'" class="ok" name="check" :size="13" />
+      <PantryIcon
+        v-else-if="props.msg.status === 'canceled'"
+        class="canceled"
+        name="x"
+        :size="13"
+        title="发送取消"
+      />
       <span
         v-else-if="props.msg.status === 'queued'"
         class="queued"
@@ -257,6 +264,9 @@ function openTextLink(url: string): void {
 }
 .status .ok {
   color: var(--online);
+}
+.status .canceled {
+  color: var(--text-3);
 }
 .status .fail {
   color: var(--danger);

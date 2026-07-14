@@ -245,7 +245,7 @@ export interface MessageView {
   pkRef?: PkRefView
   ts: number
   seq: number
-  status: 'sending' | 'sent' | 'queued' | 'failed' | 'recalled'
+  status: 'sending' | 'sent' | 'queued' | 'failed' | 'canceled' | 'recalled'
   /** 入站群消息是否 @ 到本机；用于本次事件的加强提醒 */
   mentioned?: boolean
 }

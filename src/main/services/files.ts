@@ -255,7 +255,12 @@ export class FilesService extends EventEmitter {
       }
       // offer 回程 ACK 丢失：若对方已接受或数据已送达，判已发送、不翻失败；否则才算真失败
       const row = this.deps.transferRepo.get(transferId)
-      if (row && (row.status === 'accepted' || row.status === 'done')) return
+      if (
+        row &&
+        (row.status === 'accepted' || row.status === 'done' || row.status === 'canceled')
+      ) {
+        return
+      }
       this.finish(transferId, 'failed')
       this.applyMsgStatus(msgId, 'failed')
     })
@@ -356,7 +361,12 @@ export class FilesService extends EventEmitter {
           // offer 回程 ACK 丢失但对方已接受/数据已送达时不翻失败（issue #3）
           if (!ok) {
             const row = this.deps.transferRepo.get(target.transferId)
-            if (!row || (row.status !== 'accepted' && row.status !== 'done')) {
+            if (
+              !row ||
+              (row.status !== 'accepted' &&
+                row.status !== 'done' &&
+                row.status !== 'canceled')
+            ) {
               this.finish(target.transferId, 'failed')
             }
           }
@@ -658,6 +668,8 @@ export class FilesService extends EventEmitter {
       inc.cancelRef.canceled = true
       inc.cancelRef.socket?.destroy()
     }
+    // 本机发送方主动取消：消息与传输同步进入取消终态，供文件卡区分真实失败。
+    if (out) this.applyMsgStatus(out.msgId, 'canceled')
     this.finish(transferId, 'canceled')
     if (peerId) {
       await this.deps.messenger.sendReliable(
@@ -1016,6 +1028,12 @@ export class FilesService extends EventEmitter {
   // ---------- 内部 ----------
 
   private finish(transferId: string, status: 'done' | 'declined' | 'canceled' | 'failed'): void {
+    const current = this.deps.transferRepo.get(transferId)
+    // 本机已作废供流上下文的取消终态，不接受迟到 ACK / 数据面回调覆盖（决议 #236）。
+    // 对端取消后 outgoing 仍保留，若数据其实已经完整送达，served 仍可按数据面结论收口。
+    if (current?.status === 'canceled' && status !== 'canceled' && !this.outgoing.has(transferId)) {
+      return
+    }
     this.deps.transferRepo.updateStatus(transferId, status)
     this.outgoing.delete(transferId)
     // failed 保留 incoming 供「继续」，canceled 保留供「重新下载」（决议 #211）；
@@ -1087,6 +1105,7 @@ export class FilesService extends EventEmitter {
     const row = this.deps.msgRepo.get(msgId)
     if (!row) return
     if (row.status === 'recalled' && status !== 'recalled') return
+    if (row.status === 'canceled' && status !== 'recalled') return
     // issue #3：'sent'（accept / 数据送达已确认）是成功终态，迟到的 offer-ACK 'failed' 不再覆盖
     if (row.status === 'sent' && status === 'failed') return
     this.deps.msgRepo.updateStatus(msgId, status)
