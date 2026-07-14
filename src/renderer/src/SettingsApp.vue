@@ -36,6 +36,7 @@ import AvatarGlyph from './components/AvatarGlyph.vue'
 import AvatarMark from './components/AvatarMark.vue'
 import PantryBrandLogo from './components/PantryBrandLogo.vue'
 import PantryIcon from './components/PantryIcon.vue'
+import SettingsNavIcon from './components/SettingsNavIcon.vue'
 import WindowControls from './components/WindowControls.vue'
 import WindowDragStrip from './components/WindowDragStrip.vue'
 import {
@@ -54,14 +55,49 @@ type Section =
   | 'shortcuts'
   | 'about'
 
-const sections: Array<{ id: Section; label: string; summary: string }> = [
-  { id: 'profile', label: '账号资料', summary: '昵称、头像等会展示在通讯录和聊天窗口。' },
-  { id: 'general', label: '通用', summary: '启动方式、窗口行为与外观主题。' },
-  { id: 'notify', label: '通知', summary: '新消息的桌面提醒与提示音。' },
-  { id: 'storage', label: '聊天与文件', summary: '文件保存、发送键、聊天记录导出与传输记录。' },
-  { id: 'network', label: '网络', summary: '手动节点、网段扫描与端口。' },
-  { id: 'shortcuts', label: '快捷键', summary: '截图与主窗口的全局快捷键。' },
-  { id: 'about', label: '关于', summary: '版本、许可与纯内网安全说明。' }
+const sections: Array<{ id: Section; icon: string; label: string; summary: string }> = [
+  {
+    id: 'profile',
+    icon: 'settings-profile',
+    label: '账号资料',
+    summary: '昵称、头像等会展示在通讯录和聊天窗口。'
+  },
+  {
+    id: 'general',
+    icon: 'settings-general',
+    label: '通用',
+    summary: '启动方式、窗口行为与外观主题。'
+  },
+  {
+    id: 'notify',
+    icon: 'settings-notify',
+    label: '通知',
+    summary: '新消息的桌面提醒与提示音。'
+  },
+  {
+    id: 'storage',
+    icon: 'settings-storage',
+    label: '聊天与文件',
+    summary: '文件保存、发送键、聊天记录导出与传输记录。'
+  },
+  {
+    id: 'network',
+    icon: 'settings-network',
+    label: '网络',
+    summary: '手动节点、网段扫描与端口。'
+  },
+  {
+    id: 'shortcuts',
+    icon: 'settings-shortcuts',
+    label: '快捷键',
+    summary: '截图与主窗口的全局快捷键。'
+  },
+  {
+    id: 'about',
+    icon: 'settings-about',
+    label: '关于',
+    summary: '版本、许可与纯内网安全说明。'
+  }
 ]
 
 const section = ref<Section>('profile')
@@ -646,6 +682,7 @@ async function confirmRemove(cidr: string): Promise<void> {
           :class="{ on: section === item.id }"
           @click="section = item.id"
         >
+          <SettingsNavIcon class="nav-icon" :name="item.icon" :size="18" />
           <span>{{ item.label }}</span>
         </button>
       </nav>
@@ -1347,8 +1384,11 @@ async function confirmRemove(cidr: string): Promise<void> {
   color: var(--text-2);
   font-size: var(--fs-body);
   text-align: left;
-  padding: 0 14px;
+  padding: 0 12px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   transition:
     color 150ms ease,
     background 150ms ease,
@@ -1356,9 +1396,19 @@ async function confirmRemove(cidr: string): Promise<void> {
     transform 90ms ease-out;
 }
 
+.nav-icon {
+  opacity: 0.78;
+  transition: opacity 150ms ease;
+}
+
 .nav button:hover {
   background: var(--surface-hover);
   color: var(--text-1);
+}
+
+.nav button:hover .nav-icon,
+.nav button.on .nav-icon {
+  opacity: 1;
 }
 
 .nav button.on {
