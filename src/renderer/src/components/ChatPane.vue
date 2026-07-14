@@ -1510,6 +1510,8 @@ async function onDrop(event: DragEvent): Promise<void> {
                       class="history-thumb"
                       :src="historyImageSrc(hit)"
                       alt="[图片]"
+                      loading="lazy"
+                      decoding="async"
                       @error="markHistoryImageBroken(hit.msgId)"
                     />
                     <span v-else class="history-kind-icon">

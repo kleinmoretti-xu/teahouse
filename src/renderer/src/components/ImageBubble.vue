@@ -215,6 +215,8 @@ onUnmounted(() => {
         class="thumb"
         :class="{ sticker: isSticker }"
         alt="[图片]"
+        loading="lazy"
+        decoding="async"
         @click="openImageViewer"
         @error="broken = true"
         @contextmenu.prevent.stop="onContextMenu"

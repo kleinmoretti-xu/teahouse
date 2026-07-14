@@ -50,7 +50,12 @@ onMounted(() => void stickers.init())
         @click="props.stickerEnabled && emit('sticker', s.id)"
         @contextmenu.prevent="stickers.remove(s.id)"
       >
-        <img :src="`pantry-sticker://${s.id}`" alt="表情" />
+        <img
+          :src="`pantry-sticker://${s.id}`"
+          alt="表情"
+          loading="lazy"
+          decoding="async"
+        />
         <span class="stk-actions" @click.stop>
           <button :disabled="index === 0" @click="stickers.move(s.id, -1)">
             <PantryIcon name="chevron-up" :size="12" />
