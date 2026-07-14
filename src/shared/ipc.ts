@@ -39,6 +39,7 @@ export const IpcChannels = {
   transferList: 'transfer:list',
   dataExport: 'data:export',
   dataImport: 'data:import',
+  imgPick: 'img:pick',
   imgSendBytes: 'img:send-bytes',
   imgOfferPath: 'img:offer-path',
   groupImgSendBytes: 'group-img:send-bytes',
@@ -560,6 +561,8 @@ export interface PantryApi {
   pickDirectory(): Promise<string | null>
   /** 弹文件/文件夹选择框（发送用）；取消返回 null */
   pickFiles(directory: boolean): Promise<string[] | null>
+  /** 弹图片多选框；仅返回受支持图片路径，取消返回 null。 */
+  pickImages(): Promise<string[] | null>
   /** 授权用户拖拽 / 粘贴产生的本地文件路径用于一次发送。 */
   grantFilePaths(paths: string[]): Promise<string[]>
   /** 发起文件传输（对方离线直接失败，不入队——决议 #4）；返回本地文件消息 */

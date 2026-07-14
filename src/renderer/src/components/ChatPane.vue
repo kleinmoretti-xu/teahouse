@@ -1189,12 +1189,9 @@ async function sendFiles(directory: boolean): Promise<void> {
 
 async function sendImage(): Promise<void> {
   if (!canSendMedia.value) return
-  const paths = await window.pantry.pickFiles(false)
+  const paths = await window.pantry.pickImages()
   if (!paths) return
-  for (const p of paths) {
-    if (isImagePath(p)) await chatStore.sendImagePath(p)
-    else await chatStore.sendFilePaths([p])
-  }
+  for (const path of paths) await chatStore.sendImagePath(path)
 }
 
 interface ClipboardImagePayload {

@@ -109,6 +109,7 @@ import { ChatService } from './services/chat'
 import { ImageOcrResultCache } from './services/image-ocr-cache'
 import { ImagePreviewService } from './services/image-preview'
 import type { PeerRecord } from './net/peer-registry'
+import { filterImagePickerPaths, IMAGE_PICKER_EXTENSIONS } from './util/image-picker'
 import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
@@ -1610,6 +1611,20 @@ if (!gotLock) {
     if (result.canceled || result.filePaths.length === 0) return null
     rendererPathGrants.grant(event.sender.id, result.filePaths)
     return result.filePaths
+  })
+
+  ipcMain.handle(IpcChannels.imgPick, async (event): Promise<string[] | null> => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要发送的图片',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: '图片', extensions: IMAGE_PICKER_EXTENSIONS }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const paths = filterImagePickerPaths(result.filePaths)
+    if (paths.length === 0) return null
+    rendererPathGrants.grant(event.sender.id, paths)
+    return paths
   })
 
   ipcMain.handle(IpcChannels.fileGrantPaths, (event, paths: unknown): string[] => {

@@ -86,6 +86,7 @@ const api: PantryApi = {
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(IpcChannels.settingsPickDir),
   pickFiles: (directory: boolean): Promise<string[] | null> =>
     ipcRenderer.invoke(IpcChannels.filePick, directory),
+  pickImages: (): Promise<string[] | null> => ipcRenderer.invoke(IpcChannels.imgPick),
   grantFilePaths: (paths: string[]): Promise<string[]> =>
     ipcRenderer.invoke(IpcChannels.fileGrantPaths, paths),
   offerFiles: (peerNodeId: string, paths: string[]): Promise<MessageView | null> =>
