@@ -57,6 +57,7 @@ export function imageMimeFromExt(ext: string): string {
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.webp') return 'image/webp'
   if (ext === '.gif') return 'image/gif'
+  if (ext === '.bmp') return 'image/bmp'
   return 'image/png'
 }
 

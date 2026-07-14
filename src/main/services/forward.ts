@@ -9,6 +9,7 @@ export interface ForwardDeps {
   chat: ChatService
   groups: GroupsService
   files: FilesService
+  canInlineImage?: (path: string) => Promise<boolean>
 }
 
 // 转发编排：复用文本/群聊/文件服务，不新增线上协议。
@@ -58,11 +59,22 @@ export class ForwardService {
     if (!ref) return null
     const transfer = this.deps.files.transferView(ref.transferId)
     if (!transfer?.savedPath) return null
-    const purpose = row.kind === 'image' || row.kind === 'sticker' ? row.kind : 'file'
-    const tableText = this.tableTextForForward(row.kind, ref)
+    const purpose = await this.forwardPurpose(row.kind, transfer.savedPath)
+    const tableText = purpose === 'image' ? this.tableTextForForward(row.kind, ref) : undefined
     return target.type === 'group'
       ? this.deps.files.offerGroupPaths(target.id, [transfer.savedPath], purpose, tableText)
       : this.deps.files.offerPaths(target.id, [transfer.savedPath], purpose, tableText)
+  }
+
+  private async forwardPurpose(kind: string, path: string): Promise<'file' | 'image' | 'sticker'> {
+    if (kind === 'sticker') return 'sticker'
+    if (kind !== 'image') return 'file'
+    if (!this.deps.canInlineImage) return 'image'
+    try {
+      return (await this.deps.canInlineImage(path)) ? 'image' : 'file'
+    } catch {
+      return 'file'
+    }
   }
 
   private tableTextForForward(kind: string, ref: FileRefView): TableTextMeta | undefined {

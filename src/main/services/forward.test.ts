@@ -95,4 +95,35 @@ describe('ForwardService', () => {
       }
     ])
   })
+
+  it('转发时把未通过像素门禁的图片降级为普通文件', async () => {
+    const calls: Array<{ want: string; tableText?: TableTextMeta }> = []
+    const files = {
+      transferView: () => ({ transferId: 'transfer-1', savedPath: '/tmp/oversized.png' }),
+      offerGroupPaths: async (
+        _groupId: string,
+        _paths: string[],
+        want: string,
+        tableText?: TableTextMeta
+      ): Promise<MessageView | null> => {
+        calls.push({ want, tableText })
+        return {} as MessageView
+      }
+    } as unknown as FilesService
+    const msgRepo = {
+      get: () => row({ file_ref: fileRef({ tableText: '姓名\t分数' }) })
+    } as unknown as MsgRepo
+    const forward = new ForwardService({
+      msgRepo,
+      files,
+      chat: {} as ChatService,
+      groups: {} as GroupsService,
+      canInlineImage: async () => false
+    })
+
+    const result = await forward.forward('msg-1', [{ type: 'group', id: 'group-1' }])
+
+    expect(result.ok).toBe(1)
+    expect(calls).toEqual([{ want: 'file', tableText: undefined }])
+  })
 })

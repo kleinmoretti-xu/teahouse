@@ -16,6 +16,7 @@ import {
   type GroupView,
   type ImageOcrResult,
   type ImageOcrSource,
+  type ImageSourceBytes,
   type MessageView,
   type MsgStatusEvent,
   type NetState,
@@ -142,6 +143,10 @@ const api: PantryApi = {
     ipcRenderer.invoke(IpcChannels.imgOcrResultSet, transferId, cacheKey, result),
   saveImageAs: (transferId: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.imgSaveAs, transferId),
+  hasImageThumbnail: (transferId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.imgThumbnailHas, transferId),
+  cacheImageThumbnail: (transferId: string, bytes: ArrayBuffer): Promise<boolean> =>
+    ipcRenderer.invoke(IpcChannels.imgThumbnailCache, transferId, bytes),
   search: (query: string): Promise<SearchResult> =>
     ipcRenderer.invoke(IpcChannels.searchQuery, query),
   searchMessages: (options: ConversationSearchOptions): Promise<ConversationMessageHit[]> =>
@@ -181,7 +186,7 @@ const api: PantryApi = {
     ipcRenderer.invoke(IpcChannels.clipboardWriteImage, bytes),
   readImageFromClipboard: (): Promise<ArrayBuffer | null> =>
     ipcRenderer.invoke(IpcChannels.clipboardReadImage),
-  fetchStickerSource: (transferId: string): Promise<{ bytes: ArrayBuffer; ext: string } | null> =>
+  fetchStickerSource: (transferId: string): Promise<ImageSourceBytes | null> =>
     ipcRenderer.invoke(IpcChannels.stickerFetchSource, transferId),
   addSticker: (bytes: ArrayBuffer, ext: string, w: number, h: number): Promise<StickerView | null> =>
     ipcRenderer.invoke(IpcChannels.stickerAdd, bytes, ext, w, h),

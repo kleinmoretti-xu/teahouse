@@ -107,6 +107,7 @@ import { PeerClock } from './net/peer-clock'
 import { makeEnvelope } from './net/codec'
 import { ChatService } from './services/chat'
 import { ImageOcrResultCache } from './services/image-ocr-cache'
+import { ImagePreviewService } from './services/image-preview'
 import type { PeerRecord } from './net/peer-registry'
 import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
@@ -297,8 +298,10 @@ if (!gotLock) {
   const updatesDir = (): string => join(app.getPath('userData'), 'data', 'updates')
   const importedMediaDir = (): string => join(app.getPath('userData'), 'data', 'imported-media')
   const stickersDir = (): string => join(app.getPath('userData'), 'data', 'stickers')
+  const imageThumbnailsDir = (): string => join(app.getPath('userData'), 'data', 'image-thumbnails')
   const managedMediaRoots = (): string[] => [imagesDir(), importedMediaDir(), stickersDir()]
   const managedStickerRoots = (): string[] => [stickersDir(), importedMediaDir()]
+  const imagePreview = new ImagePreviewService(imageThumbnailsDir())
 
   async function stageOutgoingImagePath(sourcePath: string): Promise<string | null> {
     try {
@@ -349,6 +352,7 @@ if (!gotLock) {
   type OfferImagePaths = (
     targetId: string,
     paths: string[],
+    want: 'file' | 'image',
     tableTextMeta?: TableTextMeta
   ) => Promise<MessageView | null> | undefined
 
@@ -365,8 +369,9 @@ if (!gotLock) {
     if (!targetId || !name || !bytes) return null
     const tableTextMeta = parseTableTextMeta(tableText)
     if (tableTextMeta === null) return null
+    const want = imagePreview.isInlineNamedBytes(name, bytes) ? 'image' : 'file'
     const path = await stageImageBytes(name, bytes)
-    return (await offer(targetId, [path], tableTextMeta)) ?? null
+    return (await offer(targetId, [path], want, want === 'image' ? tableTextMeta : undefined)) ?? null
   }
 
   async function handleImagePath(
@@ -381,7 +386,8 @@ if (!gotLock) {
     if (!rendererPathGrants.consume(senderId, [path])) return null
     const staged = await stageOutgoingImagePath(path)
     if (!staged) return null
-    return (await offer(targetId, [staged])) ?? null
+    const want = (await imagePreview.inspectInlinePath(staged)) ? 'image' : 'file'
+    return (await offer(targetId, [staged], want)) ?? null
   }
 
   function managedTransferMediaView(transferId: string): TransferView | null {
@@ -394,6 +400,21 @@ if (!gotLock) {
     if (!msg || (msg.kind !== 'image' && msg.kind !== 'sticker')) return null
     if (!isPathInsideAny(view.savedPath, managedMediaRoots())) return null
     return view
+  }
+
+  async function managedInlineImageView(
+    transferId: string
+  ): Promise<{ view: TransferView; width: number; height: number; animated: boolean } | null> {
+    const view = managedTransferMediaView(transferId)
+    if (!view) return null
+    const metadata = await imagePreview.inspectInlinePath(view.savedPath)
+    if (!metadata) return null
+    return {
+      view,
+      width: metadata.width,
+      height: metadata.height,
+      animated: metadata.animated
+    }
   }
 
   function showMainWindow(options: { forceForeground?: boolean } = {}): void {
@@ -1073,7 +1094,8 @@ if (!gotLock) {
         msgRepo: new MsgRepo(db),
         chat,
         groups,
-        files
+        files,
+        canInlineImage: async (path) => Boolean(await imagePreview.inspectInlinePath(path))
       })
       porter = new PorterService(
         db,
@@ -1708,8 +1730,8 @@ if (!gotLock) {
   ipcMain.handle(
     IpcChannels.imgSendBytes,
     async (_event, peerId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
-      return handleImageBytes(peerId, name, bytes, tableText, (targetId, paths, tableTextMeta) =>
-        files?.offerPaths(targetId, paths, 'image', tableTextMeta)
+      return handleImageBytes(peerId, name, bytes, tableText, (targetId, paths, want, tableTextMeta) =>
+        files?.offerPaths(targetId, paths, want, tableTextMeta)
       )
     }
   )
@@ -1717,21 +1739,21 @@ if (!gotLock) {
   ipcMain.handle(
     IpcChannels.groupImgSendBytes,
     async (_event, groupId: unknown, name: unknown, bytes: unknown, tableText: unknown) => {
-      return handleImageBytes(groupId, name, bytes, tableText, (targetId, paths, tableTextMeta) =>
-        files?.offerGroupPaths(targetId, paths, 'image', tableTextMeta)
+      return handleImageBytes(groupId, name, bytes, tableText, (targetId, paths, want, tableTextMeta) =>
+        files?.offerGroupPaths(targetId, paths, want, tableTextMeta)
       )
     }
   )
 
   ipcMain.handle(IpcChannels.imgOfferPath, async (event, peerId: unknown, path: unknown) => {
-    return handleImagePath(event.sender.id, peerId, path, (targetId, paths) =>
-      files?.offerPaths(targetId, paths, 'image')
+    return handleImagePath(event.sender.id, peerId, path, (targetId, paths, want) =>
+      files?.offerPaths(targetId, paths, want)
     )
   })
 
   ipcMain.handle(IpcChannels.groupImgOfferPath, async (event, groupId: unknown, path: unknown) => {
-    return handleImagePath(event.sender.id, groupId, path, (targetId, paths) =>
-      files?.offerGroupPaths(targetId, paths, 'image')
+    return handleImagePath(event.sender.id, groupId, path, (targetId, paths, want) =>
+      files?.offerGroupPaths(targetId, paths, want)
     )
   })
 
@@ -1849,11 +1871,11 @@ if (!gotLock) {
     openSettingsWindow(mainWindow)
   })
 
-  ipcMain.handle(IpcChannels.imgOpenViewer, (_event, transferId: unknown): boolean => {
+  ipcMain.handle(IpcChannels.imgOpenViewer, async (_event, transferId: unknown): Promise<boolean> => {
     if (typeof transferId !== 'string' || transferId.length > 64) return false
-    const view = managedTransferMediaView(transferId)
-    if (!view) return false
-    openImageViewerWindow(transferId, view.name)
+    const media = await managedInlineImageView(transferId)
+    if (!media) return false
+    openImageViewerWindow(transferId, media.view.name)
     return true
   })
 
@@ -1882,12 +1904,14 @@ if (!gotLock) {
   ipcMain.handle(IpcChannels.imgOcrSource, async (event, transferId: unknown): Promise<ImageOcrSource | null> => {
     if (typeof transferId !== 'string' || transferId.length === 0 || transferId.length > 64) return null
     if (!event.sender.getURL().includes('#/image-viewer?')) return null
-    const view = managedTransferMediaView(transferId)
-    if (!view) return null
+    const media = await managedInlineImageView(transferId)
+    if (!media) return null
+    const { view } = media
     if (view.totalSize <= 0 || view.totalSize > OCR_SOURCE_MAX_BYTES) return null
     try {
       const buf = await readFile(view.savedPath)
       if (buf.length === 0 || buf.length > OCR_SOURCE_MAX_BYTES) return null
+      if (!imagePreview.isInlineNamedBytes(view.savedPath, buf)) return null
       const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
       return { name: view.name, size: buf.length, bytes }
     } catch {
@@ -1998,19 +2022,49 @@ if (!gotLock) {
 
   ipcMain.handle(IpcChannels.clipboardReadImage, () => readClipboardImage())
 
-  ipcMain.handle(IpcChannels.stickerFetchSource, (_event, transferId: unknown) => {
+  ipcMain.handle(IpcChannels.stickerFetchSource, async (_event, transferId: unknown) => {
     if (typeof transferId !== 'string' || transferId.length > 64) return null
-    const view = managedTransferMediaView(transferId)
-    if (!view) return null
+    const media = await managedInlineImageView(transferId)
+    if (!media) return null
+    const { view } = media
     try {
-      const buf = readFileSync(view.savedPath)
+      const buf = await readFile(view.savedPath)
       if (buf.length > 25 * 1024 * 1024) return null
+      const metadata = imagePreview.isInlineNamedBytes(view.savedPath, buf)
+      if (!metadata) return null
       const ext = extname(view.savedPath).toLowerCase() || '.png'
-      return { bytes: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), ext }
+      return {
+        bytes: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+        ext,
+        width: metadata.width,
+        height: metadata.height,
+        animated: metadata.animated
+      }
     } catch {
       return null
     }
   })
+
+  ipcMain.handle(IpcChannels.imgThumbnailHas, async (_event, transferId: unknown): Promise<boolean> => {
+    if (typeof transferId !== 'string' || transferId.length === 0 || transferId.length > 64) {
+      return false
+    }
+    if (!(await managedInlineImageView(transferId))) return false
+    return imagePreview.hasThumbnail(transferId)
+  })
+
+  ipcMain.handle(
+    IpcChannels.imgThumbnailCache,
+    async (_event, transferId: unknown, bytes: unknown): Promise<boolean> => {
+      if (typeof transferId !== 'string' || transferId.length === 0 || transferId.length > 64) {
+        return false
+      }
+      if (!(bytes instanceof ArrayBuffer)) return false
+      const media = await managedInlineImageView(transferId)
+      if (!media || media.animated) return false
+      return imagePreview.cacheThumbnail(transferId, bytes)
+    }
+  )
 
   ipcMain.handle(
     IpcChannels.stickerAdd,
@@ -2115,6 +2169,7 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    void imagePreview.prune()
     const updateCaps = canAdvertiseUpdateSource() ? [CAPS.updateSource] : []
     appState = loadAppState(app.getPath('userData'), app.getVersion(), tcpPort, udpPort, [
       CAPS.mediaRecall,
@@ -2134,15 +2189,37 @@ if (!gotLock) {
     protocol.registerFileProtocol('pantry-img', (request, callback) => {
       try {
         const transferId = new URL(request.url).hostname
-        const view = managedTransferMediaView(transferId)
-        if (view) {
-          callback({ path: view.savedPath })
-          return
-        }
+        void managedInlineImageView(transferId)
+          .then((media) => {
+            callback(media ? { path: media.view.savedPath } : { error: -6 })
+          })
+          .catch(() => callback({ error: -6 }))
+        return
       } catch {
         // fallthrough
       }
       callback({ error: -6 }) // net::ERR_FILE_NOT_FOUND
+    })
+
+    // pantry-thumb://<transferId> —— 仅服务可重建的受限派生缩略图；未命中安全回退原图。
+    protocol.registerFileProtocol('pantry-thumb', (request, callback) => {
+      try {
+        const transferId = new URL(request.url).hostname
+        void managedInlineImageView(transferId)
+          .then(async (media) => {
+            if (!media) {
+              callback({ error: -6 })
+              return
+            }
+            const path = await imagePreview.resolvePreviewPath(transferId, media.view.savedPath)
+            callback(path ? { path } : { error: -6 })
+          })
+          .catch(() => callback({ error: -6 }))
+        return
+      } catch {
+        // fallthrough
+      }
+      callback({ error: -6 })
     })
 
     // pantry-sticker://<id> —— 同理，只放行表情库登记过的路径

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.30；主窗口标准表单复用（决议 #233）；v0.39.5 开发中 |
+| 状态 | v1.31；图片像素防护与缩略图缓存（决议 #234）；v0.39.6 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -47,7 +47,8 @@ Naive UI 接入约束（决议 #215）：
 - 品牌位图管线（决议 #226/#231）：`build/icons/pantry-logo-icon-master.png` 是彩色品牌唯一母版，固定 1024×1024 RGBA；`gen-app-icons.mjs` 不再渲染彩色 SVG，直接校验母版尺寸 / alpha 后生成 `pantry-logo-icon.png`、ICO、ICNS，并链式生成 Linux hicolor、独立窗口图标与 renderer 同源 256px PNG。Windows / Linux 托盘从母版生成 32px RGBA，macOS 菜单栏继续从 `pantry-logo-mono.svg` 生成 Template Image。旧彩色 SVG 只保留为历史资料，不进入彩色运行时链路。
 - 私聊头部交互（决议 #84/#227）：`ChatPane` 的 `.title-button` 保留完整点击热区与 `focus-visible` 轮廓，用于打开联系人资料浮层；pointer hover / 弹窗激活只修改内部 `.title` 的 `color`，不得给宽按钮增加背景、阴影或 transform 按压反馈。昵称颜色以 150ms 过渡，`prefers-reduced-motion` 下关闭。
 - 消息与文件表面（决议 #228/#231）：`MessageRow` 文字气泡不再叠加 `--highlight-edge`，peer 只保留轻外阴影，mine 无阴影；`FileCard.card` 与文字 `.bubble` 均使用四角 14px。文件类型资源固定为 `renderer/assets/file-types/file-type-atlas.png`（512×512 RGBA、4×4 等分单元格），`FileTypeIcon` 只维护扩展名 → 类型 → atlas 坐标映射，并用 CSS background-position 缩放到请求尺寸。单元格 128px 足以覆盖当前 36px 最大显示位的高 DPI 展示，解码内存由 4 MiB 降至 1 MiB。资源随 renderer 本地打包，不经网络、不新增运行时依赖；PNG 头、类型覆盖和源码约束测试锁定该契约。
-- 滚动媒体加载（决议 #232）：聊天流 `ImageBubble`、聊天记录搜索结果缩略图与表情包网格均通过 `<img loading="lazy" decoding="async">` 交给 Chrome 108 按视口邻近度调度；历史消息与屏外表情不再在挂载时集中请求 `pantry-img://` / `pantry-sticker://` 并同步解码。独立图片查看器、截图桌面位图、品牌首屏图与小型兼容 emoji 需要立即绘制，保持默认 eager。该策略只改变 renderer 资源调度，不新增缓存、IPC 或磁盘文件。
+- 滚动媒体加载（决议 #232/#234）：聊天流 `ImageBubble`、聊天记录搜索结果缩略图与表情包网格保留 `<img loading="lazy" decoding="async">`；聊天图片与搜索图片额外通过共享 `IntersectionObserver` 在视口外沿触发预览解析。静态大图先查 `pantry-thumb://<transferId>` 派生缓存，未命中时受限读取原图字节，并用 `createImageBitmap(blob, { resizeWidth, resizeHeight })` 直接得到最长边 320px 的 bitmap，再编码 WebP 写入缓存；GIF、APNG、动画 WebP 及最长边 ≤320px 的图继续走 `pantry-img`。独立图片查看器、截图桌面位图、品牌首屏图与兼容 emoji 保持原加载策略。
+- 图片元数据与缓存边界（决议 #234）：`shared/image-metadata.ts` 以文件头白名单解析 PNG/JPEG/GIF/WebP/BMP 的真实格式、宽高和动画标记，不执行完整像素解码；主进程读取最多 2MiB 头部并按路径 size/mtime 缓存解析结果。内联条件固定为单边 ≤8192px、总像素 ≤3200 万；发送侧不合格内容降级为普通文件，所有 `pantry-img` / OCR / 复制 / 收藏入口复用校验。派生缩略图存入 `userData/data/image-thumbnails/`，文件名由 transferId 的 SHA-256 派生，写入前复核静态 WebP、最长边 ≤320px、字节 ≤1MiB；总量上限 128MiB，读取最多每小时触碰一次 mtime，写入后按 mtime 从旧到新清理。缓存可删除重建、不进 SQLite、不进备份；`pantry-thumb` 每次仍先校验 transfer 与原图授权，避免构造 ID 越权读取。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 - 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
@@ -450,3 +451,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.28 决议 #231：Win7 / Linux 的软渲染条件通过 `AppInfo` 下发 renderer，关闭浮层磨砂并停用小图自动 OCR；图片大文件 I/O 改为异步；四窗口增加完整静态 JS / CSS 闭包预算，renderer 品牌图与文件 atlas 分别收敛到 256px / 512px。版本 0.39.2 → **0.39.3**。
 - 2026-07-14 v1.29 决议 #232：保留主窗口 Naive UI 混合接入；聊天图片 / 表情消息、记录搜索缩略图与表情包网格启用原生惰性加载和异步解码。版本 0.39.3 → **0.39.4**。
 - 2026-07-14 v1.30 决议 #233：`GroupCreator` 与 `ProfileCard` 复用主窗口已加载的 Naive UI Input / Button 与集中主题；密集成员勾选和专用结构保持原生轻量节点。版本 0.39.4 → **0.39.5**。
+- 2026-07-14 v1.31 决议 #234：新增文件头图片元数据白名单、8192px / 3200 万像素内联门禁，以及 320px WebP、128MB LRU 的受限派生缩略图缓存；聊天流近视口加载缩略图，独立看图读取校验后的原图。版本 0.39.5 → **0.39.6**。

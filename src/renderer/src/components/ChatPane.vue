@@ -33,6 +33,7 @@ import type {
   TransferView
 } from '../../../shared/ipc'
 import { IMAGE_FILE_EXTENSIONS } from '../../../shared/media'
+import { vCachedImage } from '../directives/cached-image'
 import type { PkGame } from '../../../shared/pk'
 import {
   CAPS,
@@ -753,7 +754,7 @@ function historyIcon(hit: ConversationMessageHit): string {
 
 function openHistoryViewer(hit: ConversationMessageHit): void {
   const transferId = hit.fileRef?.transferId ?? ''
-  if (!transferId || !historyImageSrc(hit)) return
+  if (!transferId || !historyImageTransferId(hit)) return
   void window.pantry.openImageViewer(transferId)
 }
 
@@ -762,12 +763,22 @@ function historySecondary(hit: ConversationMessageHit): string {
   return `${who} · ${listTime(hit.ts)}`
 }
 
-function historyImageSrc(hit: ConversationMessageHit): string {
+function historyImageTransferId(hit: ConversationMessageHit): string {
   if (hit.kind !== 'image' || historyBrokenImages.value[hit.msgId]) return ''
-  return hit.fileRef?.transferId ? `pantry-img://${hit.fileRef.transferId}` : ''
+  return hit.fileRef?.transferId ?? ''
 }
 
-function markHistoryImageBroken(msgId: string): void {
+function markHistoryImageBroken(hit: ConversationMessageHit, event: Event): void {
+  const image = event.currentTarget as HTMLImageElement | null
+  if (
+    image?.src.startsWith('pantry-thumb:') &&
+    image.dataset.previewOriginalFallback !== 'true'
+  ) {
+    image.dataset.previewOriginalFallback = 'true'
+    image.src = `pantry-img://${hit.fileRef?.transferId ?? ''}`
+    return
+  }
+  const msgId = hit.msgId
   historyBrokenImages.value = { ...historyBrokenImages.value, [msgId]: true }
 }
 
@@ -1506,13 +1517,13 @@ async function onDrop(event: DragEvent): Promise<void> {
                 >
                   <span v-if="hit.kind !== 'text'" class="history-hit-media">
                     <img
-                      v-if="historyImageSrc(hit)"
+                      v-if="historyImageTransferId(hit)"
+                      v-cached-image="{ transferId: historyImageTransferId(hit) }"
                       class="history-thumb"
-                      :src="historyImageSrc(hit)"
                       alt="[图片]"
                       loading="lazy"
                       decoding="async"
-                      @error="markHistoryImageBroken(hit.msgId)"
+                      @error="markHistoryImageBroken(hit, $event)"
                     />
                     <span v-else class="history-kind-icon">
                       <PantryIcon :name="historyIcon(hit)" :size="20" />

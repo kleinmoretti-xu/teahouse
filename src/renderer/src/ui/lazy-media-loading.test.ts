@@ -17,7 +17,7 @@ function imageTagContaining(source: string, marker: string): string {
 describe('滚动媒体惰性加载', () => {
   it.each([
     ['聊天图片与表情消息', imageBubbleSource, 'ready && !failed'],
-    ['聊天记录搜索缩略图', chatPaneSource, 'historyImageSrc(hit)'],
+    ['聊天记录搜索缩略图', chatPaneSource, 'historyImageTransferId(hit)'],
     ['表情包网格', emojiPanelSource, 'pantry-sticker://']
   ])('%s 使用惰性加载与异步解码', (_label, source, marker) => {
     const tag = imageTagContaining(source, marker)

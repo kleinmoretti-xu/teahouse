@@ -6,6 +6,7 @@ import { imageMimeFromExt } from '../utils/clipboard'
 import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
 import { useTransfersStore } from '../stores/transfers'
 import { useStickersStore } from '../stores/stickers'
+import { vCachedImage } from '../directives/cached-image'
 import PantryIcon from './PantryIcon.vue'
 
 // 图片/表情消息气泡（ui-design §5）：图片 ≤280px 可看大图；表情固定 120px。
@@ -145,6 +146,19 @@ function openImageViewer(): void {
   void window.pantry.openImageViewer(transferId.value)
 }
 
+function onPreviewError(event: Event): void {
+  const image = event.currentTarget as HTMLImageElement | null
+  if (
+    image?.src.startsWith('pantry-thumb:') &&
+    image.dataset.previewOriginalFallback !== 'true'
+  ) {
+    image.dataset.previewOriginalFallback = 'true'
+    image.src = `pantry-img://${transferId.value}`
+    return
+  }
+  broken.value = true
+}
+
 function clearAddTipTimer(): void {
   if (addTipTimer !== undefined) {
     window.clearTimeout(addTipTimer)
@@ -157,7 +171,6 @@ const transfer = computed(() => transfers.byId[transferId.value])
 const ready = computed(
   () => transfer.value?.status === 'done' || (props.msg.isMine && !!transfer.value?.savedPath)
 )
-const src = computed(() => `pantry-img://${transferId.value}`)
 const failed = computed(() => {
   if (broken.value) return true
   // 发送方：以消息状态为准——数据送达即 sent、迟到的 offer 判负不算失败（issue #3，与终态保护一致）；
@@ -211,14 +224,14 @@ onUnmounted(() => {
     <template v-else>
       <img
         v-if="ready && !failed"
-        :src="src"
+        v-cached-image="{ transferId, cache: !isSticker }"
         class="thumb"
         :class="{ sticker: isSticker }"
         alt="[图片]"
         loading="lazy"
         decoding="async"
         @click="openImageViewer"
-        @error="broken = true"
+        @error="onPreviewError"
         @contextmenu.prevent.stop="onContextMenu"
       />
       <div v-else-if="failed" class="ph fail">{{ isSticker ? '表情' : '图片' }}传输失败</div>
@@ -348,11 +361,21 @@ onUnmounted(() => {
   display: block;
   border: 1px solid var(--line);
 }
+.thumb[data-preview-loading='true'] {
+  width: 180px;
+  height: 120px;
+  cursor: default;
+  background: var(--bg-list);
+}
 .thumb.sticker {
   max-width: 120px;
   max-height: 120px;
   cursor: default;
   border: none;
+}
+.thumb.sticker[data-preview-loading='true'] {
+  width: 120px;
+  height: 120px;
 }
 .ph.sticker {
   width: 120px;

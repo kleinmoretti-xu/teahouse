@@ -49,6 +49,8 @@ export const IpcChannels = {
   imgOcrResultGet: 'img:ocr-result-get',
   imgOcrResultSet: 'img:ocr-result-set',
   imgSaveAs: 'img:save-as',
+  imgThumbnailHas: 'img:thumbnail-has',
+  imgThumbnailCache: 'img:thumbnail-cache',
   searchQuery: 'search:query',
   msgSearch: 'msg:search',
   msgContext: 'msg:context',
@@ -277,6 +279,14 @@ export interface ImageOcrSource {
   name: string
   size: number
   bytes: ArrayBuffer
+}
+
+export interface ImageSourceBytes {
+  bytes: ArrayBuffer
+  ext: string
+  width: number
+  height: number
+  animated: boolean
 }
 
 export interface ImageOcrBox {
@@ -597,6 +607,10 @@ export interface PantryApi {
   saveImageOcrResult(transferId: string, cacheKey: string, result: ImageOcrResult): Promise<boolean>
   /** 大图查看器"另存为" */
   saveImageAs(transferId: string): Promise<boolean>
+  /** 查询聊天流派生缩略图是否已存在。 */
+  hasImageThumbnail(transferId: string): Promise<boolean>
+  /** 写入 renderer 生成的 320px WebP 派生缩略图。 */
+  cacheImageThumbnail(transferId: string, bytes: ArrayBuffer): Promise<boolean>
   /** 全局搜索（防抖在渲染层做） */
   search(query: string): Promise<SearchResult>
   /** 当前会话历史搜索：关键词 + 图片/文件/日期筛选 */
@@ -638,8 +652,8 @@ export interface PantryApi {
   writeImageToClipboard(bytes: ArrayBuffer): Promise<boolean>
   /** 读系统图片剪贴板 PNG；输入框 Command+V 兜底用 */
   readImageFromClipboard(): Promise<ArrayBuffer | null>
-  /** 读取某次传输的原始字节（收藏表情的压缩流水线用，仅图片/表情类传输可读） */
-  fetchStickerSource(transferId: string): Promise<{ bytes: ArrayBuffer; ext: string } | null>
+  /** 读取通过像素门禁的原始字节与元数据（缩略图 / 复制 / 收藏使用）。 */
+  fetchStickerSource(transferId: string): Promise<ImageSourceBytes | null>
   /** 保存收藏（bytes 已经渲染层压缩）；返回新表情 */
   addSticker(bytes: ArrayBuffer, ext: string, w: number, h: number): Promise<StickerView | null>
   listStickers(): Promise<StickerView[]>
