@@ -25,6 +25,9 @@ export const IpcChannels = {
   msgForward: 'msg:forward',
   settingsGet: 'settings:get',
   settingsSaveProfile: 'settings:save-profile',
+  avatarPickSource: 'avatar:pick-source',
+  profileSetAvatar: 'profile:set-avatar',
+  groupSetAvatar: 'group:set-avatar',
   settingsPickDir: 'settings:pick-dir',
   filePick: 'file:pick',
   fileGrantPaths: 'file:grant-paths',
@@ -112,6 +115,8 @@ export const IpcEvents = {
   openConv: 'ui:open-conv',
   /** 设置页保存后广播给所有窗口，统一主题/字体等外观 */
   settingsUpdated: 'settings:updated',
+  /** 自定义头像文件到达缓存，渲染层按哈希重试图片。 */
+  avatarReady: 'avatar:ready',
   /** Windows / Linux 设置模态窗开关状态，主窗据此显示静态暗色遮罩（决议 #222） */
   settingsWindowState: 'ui:settings-window-state',
   /** 主界面全局网段刷新进度 */
@@ -153,6 +158,7 @@ export interface PeerView {
   team: string
   host: string
   avatar: number
+  avatarHash: string
   platform: Platform
   ip: string
   online: boolean
@@ -362,6 +368,8 @@ export interface DataExportOptions {
 export interface DataImportResult {
   imported: number
   skipped: number
+  /** 备份中的本机头像；主进程确认受管文件已恢复后应用。 */
+  profileAvatarHash?: string
 }
 
 /** 讨论组视图（F-MSG-4）：amMember=false 表示已退出/被移出（历史保留、禁发） */
@@ -376,6 +384,7 @@ export interface GroupView {
   creatorIp: string
   ownerId: string
   adminIds: string[]
+  avatarHash: string
   selfRole: GroupRole
   hasAdminPassword: boolean
   adminHint: string
@@ -389,6 +398,7 @@ export type GroupPatch =
   | { kind: 'invite'; memberIds: string[] }
   | { kind: 'remove'; memberIds: string[]; adminPassword?: string }
   | { kind: 'set-admin'; memberId: string; enabled: boolean }
+  | { kind: 'set-avatar'; avatarHash: string; adminPassword?: string }
 
 /** 全局搜索（ui-design §6）：联系人 / 聊天记录（按会话聚合）/ 文件 */
 export interface MessageGroupHit {
@@ -448,6 +458,7 @@ export interface SettingsView {
   team: string
   host: string
   avatar: number
+  avatarHash: string
   setupDone: boolean
   /** 用户自选的文件保存目录；空 = 跟随默认 */
   fileDir: string
@@ -524,8 +535,24 @@ export interface ProfileSubmit {
   dept: string
   team: string
   avatar: number
+  /** 显式空串表示切回数字头像；缺省用于首启向导兼容。 */
+  avatarHash?: string
   fileDir: string
 }
+
+export type AvatarSourcePick =
+  | {
+      ok: true
+      bytes: ArrayBuffer
+      mime: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/bmp'
+      width: number
+      height: number
+    }
+  | { ok: false; error: string }
+
+export type ProfileAvatarChoice =
+  | { kind: 'preset'; avatar: number }
+  | { kind: 'custom'; bytes: ArrayBuffer }
 
 /** preload 经 contextBridge 暴露到 window.pantry 的 API 形状 */
 export interface PantryApi {
@@ -561,6 +588,10 @@ export interface PantryApi {
   getSettings(): Promise<SettingsView>
   /** 保存资料（向导/设置）：资料有变自动广播刷新全网 */
   saveProfile(submit: ProfileSubmit): Promise<SettingsView>
+  /** 选择并预校验单张本地静态头像源图；取消返回 null。 */
+  pickAvatarSource(): Promise<AvatarSourcePick | null>
+  /** 应用图片头像或切回数字头像。 */
+  setProfileAvatar(choice: ProfileAvatarChoice): Promise<SettingsView>
   /** 弹系统目录选择框；取消返回 null */
   pickDirectory(): Promise<string | null>
   /** 弹文件/文件夹选择框（发送用）；取消返回 null */
@@ -643,8 +674,14 @@ export interface PantryApi {
     adminPassword?: string,
     adminHint?: string
   ): Promise<GroupView | null>
-  /** 改名/邀请/移出/任免管理员；主进程按单操作权限矩阵校验 */
+  /** 改名/邀请/移出/任免管理员/头像元数据；主进程按单操作权限矩阵校验 */
   updateGroup(groupId: string, patch: GroupPatch): Promise<GroupView | null>
+  /** 应用裁剪后的群头像；bytes=null 恢复默认。 */
+  setGroupAvatar(
+    groupId: string,
+    bytes: ArrayBuffer | null,
+    adminPassword?: string
+  ): Promise<GroupView | null>
   leaveGroup(groupId: string): Promise<void>
   getGroup(groupId: string): Promise<GroupView | null>
   listGroups(): Promise<GroupView[]>
@@ -684,6 +721,7 @@ export interface PantryApi {
   onOpenConv(listener: (convId: string) => void): () => void
   /** 设置变更后同步主窗/设置窗外观 */
   onSettingsUpdated(listener: (settings: SettingsView) => void): () => void
+  onAvatarReady(listener: (hash: string) => void): () => void
   /** Windows / Linux 设置模态窗开关状态；主窗用来控制遮罩与交互层级 */
   onSettingsWindowState(listener: (open: boolean) => void): () => void
   /** 主界面全局网段刷新进度 */

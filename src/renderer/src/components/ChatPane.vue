@@ -22,6 +22,7 @@ import CompatEmoji from './CompatEmoji.vue'
 import MessageRow from './MessageRow.vue'
 import EmojiPanel from './EmojiPanel.vue'
 import GroupPanel from './GroupPanel.vue'
+import GroupAvatar from './GroupAvatar.vue'
 import ForwardDialog from './ForwardDialog.vue'
 import PantryIcon from './PantryIcon.vue'
 import type {
@@ -401,6 +402,10 @@ function senderName(msg: MessageView): string {
 
 function senderAvatar(msg: MessageView): number {
   return peersStore.byId(msg.senderId)?.avatar ?? -1
+}
+
+function senderAvatarHash(msg: MessageView): string {
+  return peersStore.byId(msg.senderId)?.avatarHash ?? ''
 }
 
 const draftBytes = computed(() => new TextEncoder().encode(draft.value.trim()).length)
@@ -1559,6 +1564,7 @@ async function onDrop(event: DragEvent): Promise<void> {
           <AvatarMark
             class="head-avatar"
             :avatar="peer.avatar"
+            :avatar-hash="peer.avatarHash"
             :name="peerName"
             :presence="peerOnline ? 'online' : 'offline'"
           />
@@ -1584,6 +1590,7 @@ async function onDrop(event: DragEvent): Promise<void> {
             <AvatarMark
               class="profile-avatar"
               :avatar="peer.avatar"
+              :avatar-hash="peer.avatarHash"
               :name="peer.remark || peer.nick"
               :offline="!peer.online"
             />
@@ -1629,9 +1636,16 @@ async function onDrop(event: DragEvent): Promise<void> {
           </div>
         </section>
       </div>
-      <span v-else class="title-block">
-        <span class="title">{{ peerName }}</span>
-      </span>
+      <template v-else>
+        <GroupAvatar
+          class="group-head-avatar"
+          :avatar-hash="group?.avatarHash"
+          :icon-size="20"
+        />
+        <span class="title-block">
+          <span class="title">{{ peerName }}</span>
+        </span>
+      </template>
       <span v-if="isGroup" class="state">{{ group?.members.length ?? 0 }} 人</span>
       <span class="head-spacer"></span>
       <button v-if="isGroup" class="head-btn" title="成员" @click="showMembers = !showMembers">
@@ -1659,6 +1673,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         :is-group-conv="isGroup"
         :sender-name="senderName(msg)"
         :sender-avatar="senderAvatar(msg)"
+        :sender-avatar-hash="senderAvatarHash(msg)"
         :highlighted="msg.id === chatStore.highlightId"
         :can-send-pk="canSendPk"
         :pk-disabled-reason="pkDisabledReason"
@@ -2644,6 +2659,11 @@ async function onDrop(event: DragEvent): Promise<void> {
   flex: 0 0 40px;
   color: #fff;
   font-size: 17px;
+}
+.group-head-avatar {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
 }
 .title-text {
   min-width: 0;

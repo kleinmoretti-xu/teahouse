@@ -16,6 +16,7 @@ function peer(nodeId: string, overrides: Partial<PeerView> = {}): PeerView {
     team: '',
     host: `${nodeId}.local`,
     avatar: 0,
+    avatarHash: '',
     platform: 'mac',
     ip: '192.168.1.10',
     online: true,

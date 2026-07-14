@@ -1,0 +1,207 @@
+import { EventEmitter } from 'node:events'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import {
+  CAPS,
+  MSG_TYPES,
+  type AvatarPayload,
+  type Envelope,
+  type GroupMeta,
+  type Profile
+} from '../../shared/protocol'
+import { makeEnvelope } from '../net/codec'
+import type { Messenger } from '../net/messenger'
+import type { PeerRecord, PeerRegistry } from '../net/peer-registry'
+import type { GroupRepo } from '../store/group-repo'
+import { AvatarStore, avatarHashOf } from './avatar-store'
+import { AvatarService } from './avatars'
+
+function putAscii(bytes: Uint8Array, offset: number, text: string): void {
+  for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i)
+}
+function avatarWebp(): Uint8Array {
+  const bytes = new Uint8Array(30)
+  putAscii(bytes, 0, 'RIFF')
+  bytes[4] = 22
+  putAscii(bytes, 8, 'WEBP')
+  putAscii(bytes, 12, 'VP8 ')
+  bytes[16] = 10
+  bytes[23] = 0x9d
+  bytes[24] = 0x01
+  bytes[25] = 0x2a
+  bytes[26] = 192
+  bytes[28] = 192
+  return bytes
+}
+
+function profile(nodeId: string, avatarHash?: string): Profile {
+  return {
+    nodeId,
+    nick: nodeId,
+    company: '',
+    dept: '',
+    team: '',
+    avatar: -1,
+    avatarHash,
+    profileRev: 1,
+    host: `${nodeId}.local`,
+    platform: 'mac',
+    tcpPort: 17879,
+    ver: '0.42.0',
+    caps: [CAPS.avatarImages]
+  }
+}
+
+class FakeMessenger extends EventEmitter {
+  sent: Array<{ peerId: string; env: Envelope }> = []
+  async sendReliable(peerId: string, env: Envelope): Promise<boolean> {
+    this.sent.push({ peerId, env })
+    return true
+  }
+}
+
+class FakeRegistry extends EventEmitter {
+  readonly rows = new Map<string, PeerRecord>()
+  get(nodeId: string): PeerRecord | undefined {
+    return this.rows.get(nodeId)
+  }
+  values(): PeerRecord[] {
+    return [...this.rows.values()]
+  }
+  put(nodeId: string, avatarHash: string | undefined, online = true): void {
+    this.rows.set(nodeId, {
+      profile: profile(nodeId, avatarHash),
+      ip: '127.0.0.1',
+      udpPort: 17878,
+      lastSeen: Date.now(),
+      online
+    })
+  }
+}
+
+class FakeGroupRepo {
+  readonly rows = new Map<string, GroupMeta>()
+  get(id: string): GroupMeta | undefined {
+    return this.rows.get(id)
+  }
+  list(): GroupMeta[] {
+    return [...this.rows.values()]
+  }
+}
+
+async function settle(): Promise<void> {
+  await Promise.resolve()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+describe('AvatarService', () => {
+  it('联系人头像按哈希去重请求，离线恢复上线后重试并通知就绪', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pantry-avatar-net-'))
+    try {
+      const bytes = avatarWebp()
+      const hash = avatarHashOf(bytes)
+      const messenger = new FakeMessenger()
+      const registry = new FakeRegistry()
+      const groups = new FakeGroupRepo()
+      registry.put('node-peer', hash, false)
+      const store = new AvatarStore(root)
+      const service = new AvatarService({
+        selfId: 'node-self',
+        messenger: messenger as unknown as Messenger,
+        registry: registry as unknown as PeerRegistry,
+        groupRepo: groups as unknown as GroupRepo,
+        store,
+        getSelfProfile: () => profile('node-self')
+      })
+      const ready: string[] = []
+      service.on('ready', (value: string) => ready.push(value))
+
+      await service.ensurePeer('node-peer')
+      expect(messenger.sent).toHaveLength(0)
+      registry.get('node-peer')!.online = true
+      registry.emit('online', 'node-peer')
+      await settle()
+      await service.ensurePeer('node-peer')
+      expect(messenger.sent).toHaveLength(1)
+      expect(messenger.sent[0]).toMatchObject({ peerId: 'node-peer', env: { type: MSG_TYPES.avatar } })
+
+      const avatarReady = new Promise<string>((resolve) => service.once('ready', resolve))
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-peer', {
+          op: 'data',
+          hash,
+          bytesBase64: Buffer.from(bytes).toString('base64')
+        })
+      )
+      expect(await avatarReady).toBe(hash)
+      expect(await store.has(hash)).toBe(true)
+      expect(ready).toEqual([hash])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('群头像只向同群成员提供，也只接收当前群元数据匹配的哈希', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pantry-avatar-group-'))
+    try {
+      const bytes = avatarWebp()
+      const hash = avatarHashOf(bytes)
+      const messenger = new FakeMessenger()
+      const registry = new FakeRegistry()
+      const groups = new FakeGroupRepo()
+      registry.put('node-member', undefined)
+      registry.put('node-outsider', undefined)
+      groups.rows.set('group-1', {
+        groupId: 'group-1',
+        name: '项目组',
+        members: ['node-self', 'node-member'],
+        rev: 1,
+        updatedBy: 'node-self',
+        updatedTs: 1,
+        creatorIp: '127.0.0.1',
+        creatorId: 'node-self',
+        ownerId: 'node-self',
+        adminIds: [],
+        avatarHash: hash,
+        adminSecretHash: '',
+        adminHint: ''
+      })
+      const store = new AvatarStore(root)
+      await store.import(hash, bytes)
+      new AvatarService({
+        selfId: 'node-self',
+        messenger: messenger as unknown as Messenger,
+        registry: registry as unknown as PeerRegistry,
+        groupRepo: groups as unknown as GroupRepo,
+        store,
+        getSelfProfile: () => profile('node-self')
+      })
+
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-outsider', {
+          op: 'get',
+          hash,
+          groupId: 'group-1'
+        })
+      )
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-member', {
+          op: 'get',
+          hash,
+          groupId: 'group-1'
+        })
+      )
+      await settle()
+      expect(messenger.sent).toHaveLength(1)
+      expect(messenger.sent[0].peerId).toBe('node-member')
+      expect(messenger.sent[0].env.payload).toMatchObject({ op: 'data', hash, groupId: 'group-1' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

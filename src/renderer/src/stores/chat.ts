@@ -85,6 +85,7 @@ export const useChatStore = defineStore('chat', {
     selfId: '',
     selfNick: '',
     selfAvatar: -1,
+    selfAvatarHash: '',
     lastNudge: null as NudgeEvent | null,
     /** 移除聊天的待删除项（决议 #125）：非空时该会话在列表中隐藏，10 秒倒计时内可撤回 */
     pendingRemoval: null as PendingRemoval | null,
@@ -118,10 +119,12 @@ export const useChatStore = defineStore('chat', {
       if (selfSettings) {
         this.selfNick = selfSettings.nick
         this.selfAvatar = selfSettings.avatar
+        this.selfAvatarHash = selfSettings.avatarHash
       }
       window.pantry.onSettingsUpdated((next) => {
         this.selfNick = next.nick
         this.selfAvatar = next.avatar
+        this.selfAvatarHash = next.avatarHash
       })
 
       window.pantry.onConvsUpdated((convs) => {

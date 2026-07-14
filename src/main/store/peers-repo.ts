@@ -14,6 +14,7 @@ interface PeerRow {
   dept: string
   team: string
   avatar: number
+  avatar_hash: string
   host: string
   platform: string
   ip: string
@@ -40,15 +41,16 @@ export class PeersRepo {
   constructor(db: DatabaseT.Database) {
     this.upsertStmt = db.prepare(`
       INSERT INTO peers (
-        node_id, nick, company, dept, team, avatar, host, platform,
+        node_id, nick, company, dept, team, avatar, avatar_hash, host, platform,
         ip, udp_port, tcp_port, profile_rev, caps, ver, first_seen, last_seen
       ) VALUES (
-        @nodeId, @nick, @company, @dept, @team, @avatar, @host, @platform,
+        @nodeId, @nick, @company, @dept, @team, @avatar, @avatarHash, @host, @platform,
         @ip, @udpPort, @tcpPort, @profileRev, @caps, @ver, @now, @lastSeen
       )
       ON CONFLICT(node_id) DO UPDATE SET
         nick = excluded.nick, company = excluded.company, dept = excluded.dept,
-        team = excluded.team, avatar = excluded.avatar, host = excluded.host,
+        team = excluded.team, avatar = excluded.avatar, avatar_hash = excluded.avatar_hash,
+        host = excluded.host,
         platform = excluded.platform, ip = excluded.ip, udp_port = excluded.udp_port,
         tcp_port = excluded.tcp_port, profile_rev = excluded.profile_rev,
         caps = excluded.caps, ver = excluded.ver, last_seen = excluded.last_seen
@@ -79,6 +81,7 @@ export class PeersRepo {
       dept: p.dept,
       team: p.team,
       avatar: p.avatar,
+      avatarHash: p.avatarHash ?? '',
       host: p.host,
       platform: p.platform,
       ip: record.ip,
@@ -123,6 +126,7 @@ export class PeersRepo {
         dept: row.dept,
         team: row.team,
         avatar: row.avatar,
+        avatarHash: row.avatar_hash || undefined,
         profileRev: row.profile_rev,
         host: row.host,
         platform: toPlatform(row.platform),

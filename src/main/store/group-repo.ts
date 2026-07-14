@@ -1,5 +1,5 @@
 import type DatabaseT from 'better-sqlite3'
-import type { GroupMeta } from '../../shared/protocol'
+import { isAvatarHash, type GroupMeta } from '../../shared/protocol'
 
 // 群元数据存储（§7.4）：rev 单调递增，冲突按 (rev, updatedTs) 取大——LWW 尽力而为一致性
 
@@ -14,6 +14,7 @@ interface GroupRow {
   creator_id?: string
   owner_id?: string
   admin_ids?: string
+  avatar_hash?: string
   admin_secret_hash?: string
   admin_hint?: string
 }
@@ -59,6 +60,7 @@ function rowToMeta(row: GroupRow): GroupMeta {
     creatorId: row.creator_id ?? '',
     ownerId,
     adminIds,
+    avatarHash: isAvatarHash(row.avatar_hash) ? row.avatar_hash : '',
     adminSecretHash: row.admin_secret_hash ?? '',
     adminHint: row.admin_hint ?? ''
   }
@@ -77,6 +79,7 @@ function normalizeMeta(meta: GroupMeta): GroupMeta {
     adminIds: [...new Set(meta.adminIds ?? [])].filter(
       (id) => id !== ownerId && members.includes(id)
     ),
+    avatarHash: isAvatarHash(meta.avatarHash) ? meta.avatarHash : '',
     adminSecretHash: meta.adminSecretHash ?? '',
     adminHint: meta.adminSecretHash ? (meta.adminHint ?? '').slice(0, 40) : ''
   }
@@ -91,17 +94,18 @@ export class GroupRepo {
     this.upsertStmt = db.prepare(`
       INSERT INTO groups (
         group_id, name, members, rev, updated_by, updated_ts,
-        creator_ip, creator_id, owner_id, admin_ids, admin_secret_hash, admin_hint
+        creator_ip, creator_id, owner_id, admin_ids, avatar_hash, admin_secret_hash, admin_hint
       )
       VALUES (
         @groupId, @name, @members, @rev, @updatedBy, @updatedTs,
-        @creatorIp, @creatorId, @ownerId, @adminIds, @adminSecretHash, @adminHint
+        @creatorIp, @creatorId, @ownerId, @adminIds, @avatarHash, @adminSecretHash, @adminHint
       )
       ON CONFLICT(group_id) DO UPDATE SET
         name = excluded.name, members = excluded.members, rev = excluded.rev,
         updated_by = excluded.updated_by, updated_ts = excluded.updated_ts,
         creator_ip = excluded.creator_ip, creator_id = excluded.creator_id,
         owner_id = excluded.owner_id, admin_ids = excluded.admin_ids,
+        avatar_hash = excluded.avatar_hash,
         admin_secret_hash = excluded.admin_secret_hash,
         admin_hint = excluded.admin_hint
     `)

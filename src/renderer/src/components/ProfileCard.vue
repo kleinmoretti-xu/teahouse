@@ -109,6 +109,7 @@ function lastSeenLabel(peer: PeerView): string {
           class="avatar"
           :class="{ off: !peer.online }"
           :avatar="peer.avatar"
+          :avatar-hash="peer.avatarHash"
           :name="displayName"
           :offline="!peer.online"
         />

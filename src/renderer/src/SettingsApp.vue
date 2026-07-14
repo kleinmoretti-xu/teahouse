@@ -15,6 +15,7 @@ import {
   DEFAULT_SHOWHIDE_SHORTCUT,
   type AppInfo,
   type AppSettingsPatch,
+  type AvatarSourcePick,
   type ConversationView,
   type DataExportOptions,
   type ScanRangeItemView,
@@ -33,6 +34,7 @@ import {
   avatarValue
 } from './utils/avatar'
 import AvatarGlyph from './components/AvatarGlyph.vue'
+import AvatarCropDialog from './components/AvatarCropDialog.vue'
 import AvatarMark from './components/AvatarMark.vue'
 import PantryBrandLogo from './components/PantryBrandLogo.vue'
 import PantryIcon from './components/PantryIcon.vue'
@@ -189,6 +191,10 @@ const company = ref('')
 const dept = ref('')
 const team = ref('')
 const avatar = ref(-1)
+const avatarHash = ref('')
+const avatarSource = ref<Extract<AvatarSourcePick, { ok: true }> | null>(null)
+const avatarSaving = ref(false)
+const avatarError = ref('')
 const fileDir = ref('')
 // 网络表单
 const newPeer = ref('')
@@ -217,6 +223,7 @@ let stopSettings: (() => void) | null = null
 const selectedAvatarEmoji = computed(() => avatarEmojiIndex(avatar.value))
 const selectedAvatarColor = computed(() => avatarColorIndex(avatar.value, nick.value || '茶'))
 const avatarSummary = computed(() => {
+  if (avatarHash.value) return '自定义图片'
   const colorName = AVATAR_COLORS[selectedAvatarColor.value]?.name ?? ''
   return avatar.value === -1 ? `昵称首字 · ${colorName}` : `图标 · ${colorName}`
 })
@@ -277,6 +284,7 @@ function syncForm(s: SettingsView): void {
   dept.value = s.dept
   team.value = s.team
   avatar.value = s.avatar
+  avatarHash.value = s.avatarHash
   fileDir.value = s.fileDir
   udpPortInput.value = String(s.udpPort)
   tcpPortInput.value = String(s.tcpPort)
@@ -314,6 +322,7 @@ function profileDirty(): boolean {
     dept.value.trim() !== s.dept ||
     team.value.trim() !== s.team ||
     avatar.value !== s.avatar ||
+    avatarHash.value !== s.avatarHash ||
     fileDir.value !== s.fileDir
   )
 }
@@ -332,6 +341,7 @@ async function autoSaveProfile(): Promise<void> {
     dept: dept.value.trim(),
     team: team.value.trim(),
     avatar: avatar.value,
+    avatarHash: avatarHash.value,
     fileDir: fileDir.value
   })
   if (settings.value) syncForm(settings.value)
@@ -339,19 +349,62 @@ async function autoSaveProfile(): Promise<void> {
 }
 
 function chooseInitialAvatar(): void {
+  avatarHash.value = ''
   avatar.value = -1
   void autoSaveProfile()
 }
 
 function chooseAvatarEmoji(index: number): void {
+  avatarHash.value = ''
   avatar.value = avatarValue(index, selectedAvatarColor.value)
   void autoSaveProfile()
 }
 
 function chooseAvatarColor(index: number): void {
+  avatarHash.value = ''
   const emoji = selectedAvatarEmoji.value >= 0 ? selectedAvatarEmoji.value : 0
   avatar.value = avatarValue(emoji, index)
   void autoSaveProfile()
+}
+
+async function pickCustomAvatar(): Promise<void> {
+  if (avatarSaving.value) return
+  const source = await window.pantry.pickAvatarSource()
+  if (!source) return
+  if (!source.ok) {
+    flashSaved(source.error)
+    return
+  }
+  avatarError.value = ''
+  avatarSource.value = source
+}
+
+async function applyCustomAvatar(bytes: ArrayBuffer): Promise<void> {
+  if (avatarSaving.value) return
+  avatarSaving.value = true
+  avatarError.value = ''
+  try {
+    const next = await window.pantry.setProfileAvatar({ kind: 'custom', bytes })
+    syncForm(next)
+    avatarSource.value = null
+    flashSaved('头像已更新')
+  } catch {
+    avatarError.value = '保存头像失败，请稍后重试'
+  } finally {
+    avatarSaving.value = false
+  }
+}
+
+async function restoreDefaultAvatar(): Promise<void> {
+  if (avatarSaving.value) return
+  avatarSaving.value = true
+  try {
+    const next = await window.pantry.setProfileAvatar({ kind: 'preset', avatar: avatar.value })
+    syncForm(next)
+    flashSaved('已恢复默认头像')
+  } finally {
+    avatarSaving.value = false
+  }
 }
 
 function avatarOptionStyle(index: number): { backgroundColor: string; color: string } {
@@ -750,7 +803,12 @@ async function confirmRemove(cidr: string): Promise<void> {
             <!-- 头像编辑器（决议 #50）：大预览 + 样式分段切换 + 图标网格 + 背景色板 -->
             <div class="avatar-editor">
               <div class="avatar-stage">
-                <AvatarMark class="avatar-preview" :avatar="avatar" :name="nick || '茶'" />
+                <AvatarMark
+                  class="avatar-preview"
+                  :avatar="avatar"
+                  :avatar-hash="avatarHash"
+                  :name="nick || '茶'"
+                />
                 <span class="avatar-current">{{ avatarSummary }}</span>
               </div>
               <div class="avatar-mode-block">
@@ -758,13 +816,12 @@ async function confirmRemove(cidr: string): Promise<void> {
                   class="preference-segment avatar-mode"
                   role="radiogroup"
                   aria-label="头像样式"
-                  :data-second="avatar === -1"
                 >
                   <button
                     type="button"
                     role="radio"
-                    :class="{ on: avatar >= 0 }"
-                    :aria-checked="avatar >= 0"
+                    :class="{ on: !avatarHash && avatar >= 0 }"
+                    :aria-checked="!avatarHash && avatar >= 0"
                     @click="chooseAvatarEmoji(selectedAvatarEmoji >= 0 ? selectedAvatarEmoji : 0)"
                   >
                     图标头像
@@ -772,22 +829,47 @@ async function confirmRemove(cidr: string): Promise<void> {
                   <button
                     type="button"
                     role="radio"
-                    :class="{ on: avatar === -1 }"
-                    :aria-checked="avatar === -1"
+                    :class="{ on: !avatarHash && avatar === -1 }"
+                    :aria-checked="!avatarHash && avatar === -1"
                     @click="chooseInitialAvatar"
                   >
                     昵称首字
                   </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    :class="{ on: Boolean(avatarHash) }"
+                    :aria-checked="Boolean(avatarHash)"
+                    @click="pickCustomAvatar"
+                  >
+                    图片头像
+                  </button>
                 </div>
                 <p class="avatar-mode-hint">
                   {{
-                    avatar === -1
+                    avatarHash
+                      ? '使用裁剪后的本地图片；图片只会在局域网内按需同步。'
+                      : avatar === -1
                       ? '使用昵称第一个字作头像，背景色按昵称自动分配。'
                       : '从下方挑一个图标，再配一个背景色。'
                   }}
                 </p>
+                <div class="avatar-picture-actions">
+                  <button type="button" :disabled="avatarSaving" @click="pickCustomAvatar">
+                    {{ avatarHash ? '更换图片' : '选择图片' }}
+                  </button>
+                  <button
+                    v-if="avatarHash"
+                    type="button"
+                    class="restore"
+                    :disabled="avatarSaving"
+                    @click="restoreDefaultAvatar"
+                  >
+                    恢复默认
+                  </button>
+                </div>
               </div>
-              <div class="avatar-pick">
+              <div v-if="!avatarHash" class="avatar-pick">
                 <span class="avatar-label">图标</span>
                 <div class="avatar-grid" aria-label="精选头像图标">
                   <button
@@ -1412,6 +1494,15 @@ async function confirmRemove(cidr: string): Promise<void> {
         <span>{{ toast }}</span>
       </div>
     </Transition>
+    <AvatarCropDialog
+      v-if="avatarSource"
+      :source="avatarSource"
+      title="调整个人头像"
+      :busy="avatarSaving"
+      :error="avatarError"
+      @close="avatarSource = null"
+      @apply="applyCustomAvatar"
+    />
     </div>
   </NConfigProvider>
 </template>
@@ -1891,14 +1982,53 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 .avatar-mode {
-  width: 184px;
+  width: 276px;
   margin-bottom: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.avatar-mode::before {
+  display: none;
+}
+
+.avatar-mode button.on {
+  background: var(--bg-window);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .avatar-mode-hint {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-3);
+}
+
+.avatar-picture-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.avatar-picture-actions button {
+  height: 30px;
+  border: 1px solid var(--primary);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: var(--primary);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.avatar-picture-actions button.restore {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.avatar-picture-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .avatar-label {

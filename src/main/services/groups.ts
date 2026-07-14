@@ -6,6 +6,7 @@ import {
   LIMITS,
   MSG_TYPES,
   TEXT_TCP_LIMIT,
+  isAvatarHash,
   type Envelope,
   type GroupMeta,
   type GroupPayload,
@@ -65,6 +66,7 @@ export class GroupsService extends EventEmitter {
       creatorIp: meta.creatorIp,
       ownerId: meta.ownerId,
       adminIds: meta.adminIds,
+      avatarHash: meta.avatarHash ?? '',
       selfRole,
       hasAdminPassword: meta.adminSecretHash.length > 0,
       adminHint: meta.adminHint,
@@ -104,6 +106,7 @@ export class GroupsService extends EventEmitter {
       creatorId: this.deps.selfId,
       ownerId: this.deps.selfId,
       adminIds: [],
+      avatarHash: '',
       adminSecretHash: secret ? groupAdminSecretHash(groupId, secret) : '',
       adminHint: secret ? normalizeAdminHint(adminHint) : ''
     }
@@ -124,6 +127,7 @@ export class GroupsService extends EventEmitter {
     let name = meta.name
     let members = [...meta.members]
     let adminIds = [...meta.adminIds]
+    let avatarHash = meta.avatarHash ?? ''
 
     if (patch.kind === 'invite') {
       for (const id of patch.memberIds) {
@@ -145,13 +149,17 @@ export class GroupsService extends EventEmitter {
       adminIds = patch.enabled
         ? [...new Set([...adminIds, patch.memberId])]
         : adminIds.filter((id) => id !== patch.memberId)
+    } else if (patch.kind === 'set-avatar') {
+      if (!this.canManage(meta, patch.adminPassword)) return null
+      avatarHash = patch.avatarHash
     }
 
     if (members.length === 0) return null
     const changed =
       name !== meta.name ||
       !sameStringArray(members, meta.members) ||
-      !sameStringArray(adminIds, meta.adminIds)
+      !sameStringArray(adminIds, meta.adminIds) ||
+      avatarHash !== (meta.avatarHash ?? '')
     if (!changed) return this.toView(meta)
 
     const next: GroupMeta = {
@@ -159,6 +167,7 @@ export class GroupsService extends EventEmitter {
       name,
       members,
       adminIds,
+      avatarHash,
       rev: meta.rev + 1,
       updatedBy: this.deps.selfId,
       updatedTs: Date.now()
@@ -449,6 +458,9 @@ export class GroupsService extends EventEmitter {
     if (previous.name !== next.name) {
       return `${actor}把群名「${previous.name}」改成了「${next.name}」`
     }
+    if ((previous.avatarHash ?? '') !== (next.avatarHash ?? '')) {
+      return next.avatarHash ? `${actor}修改了群头像` : `${actor}恢复了默认群头像`
+    }
     const promoted = next.adminIds.filter((id) => !previous.adminIds.includes(id))
     if (promoted.length > 0) return `${actor}将${this.memberListLabel(promoted)}设为管理员`
     const demoted = previous.adminIds.filter((id) => !next.adminIds.includes(id))
@@ -495,6 +507,7 @@ export class GroupsService extends EventEmitter {
     const nameChanged = incoming.name !== local.name
     const ownerChanged = incoming.ownerId !== local.ownerId
     const adminsChanged = !sameStringSet(incoming.adminIds, local.adminIds)
+    const avatarChanged = (incoming.avatarHash ?? '') !== (local.avatarHash ?? '')
     const actorRole = groupRoleOf(local, actorId)
     const actorWasMember = local.members.includes(actorId)
     const passwordCompatible =
@@ -513,12 +526,13 @@ export class GroupsService extends EventEmitter {
         actorWasMember &&
         removed.length === 0 &&
         !nameChanged &&
-        !adminsChanged
+        !adminsChanged &&
+        !avatarChanged
       )
     }
 
     if (removed.length > 0) {
-      if (nameChanged || added.length > 0) return false
+      if (nameChanged || avatarChanged || added.length > 0) return false
       const expectedAdmins = local.adminIds.filter((id) => incoming.members.includes(id))
       if (!sameStringSet(incoming.adminIds, expectedAdmins)) return false
       if (removed.includes(actorId)) return false
@@ -528,6 +542,17 @@ export class GroupsService extends EventEmitter {
     }
 
     if (nameChanged) {
+      return (
+        !adminsChanged &&
+        !avatarChanged &&
+        (actorRole === 'owner' ||
+          actorRole === 'admin' ||
+          passwordCompatible ||
+          legacyCreatorSource)
+      )
+    }
+
+    if (avatarChanged) {
       return (
         !adminsChanged &&
         (actorRole === 'owner' ||
@@ -564,6 +589,7 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
     creatorId?: unknown
     ownerId?: unknown
     adminIds?: unknown
+    avatarHash?: unknown
     adminSecretHash?: unknown
     adminHint?: unknown
   }
@@ -587,6 +613,10 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
         (id): id is string => typeof id === 'string' && id !== ownerId && members.includes(id)
       )
     : (local?.adminIds ?? []).filter((id) => id !== ownerId && members.includes(id))
+  const avatarHash =
+    typeof raw.avatarHash === 'string'
+      ? raw.avatarHash
+      : local?.avatarHash ?? ''
   return {
     ...meta,
     members,
@@ -597,6 +627,7 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
     creatorId,
     ownerId,
     adminIds,
+    avatarHash,
     adminSecretHash,
     adminHint:
       adminSecretHash && typeof raw.adminHint === 'string'
@@ -616,6 +647,7 @@ function isSelfLeave(local: GroupMeta, incoming: GroupMeta): boolean {
     actorId !== local.ownerId &&
     added.length === 0 &&
     incoming.name === local.name &&
+    (incoming.avatarHash ?? '') === (local.avatarHash ?? '') &&
     incoming.ownerId === local.ownerId &&
     sameStringSet(incoming.adminIds, expectedAdmins)
   )
@@ -634,6 +666,7 @@ function isOwnerLeave(local: GroupMeta, incoming: GroupMeta): boolean {
     removed[0] === local.ownerId &&
     added.length === 0 &&
     incoming.name === local.name &&
+    (incoming.avatarHash ?? '') === (local.avatarHash ?? '') &&
     incoming.ownerId === expectedOwnerId &&
     sameStringSet(incoming.adminIds, expectedAdmins)
   )
@@ -702,6 +735,13 @@ function isSingleOperationPatch(patch: GroupPatch): boolean {
     return (
       hasOnly(['kind', 'memberIds', 'adminPassword']) &&
       validMemberIds(value.memberIds) &&
+      validPassword
+    )
+  }
+  if (value.kind === 'set-avatar') {
+    return (
+      hasOnly(['kind', 'avatarHash', 'adminPassword']) &&
+      (value.avatarHash === '' || isAvatarHash(value.avatarHash)) &&
       validPassword
     )
   }

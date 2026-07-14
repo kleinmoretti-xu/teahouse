@@ -15,7 +15,7 @@ import {
 } from 'electron'
 import { networkInterfaces, release } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, extname, join, resolve } from 'node:path'
 import {
@@ -23,6 +23,7 @@ import {
   DEFAULT_SHOWHIDE_SHORTCUT,
   IpcChannels,
   IpcEvents,
+  type AvatarSourcePick,
   type AppInfo,
   type AppSettingsPatch,
   type ConversationSearchOptions,
@@ -49,6 +50,9 @@ import {
   DEFAULT_TCP_PORT,
   DEFAULT_UDP_PORT,
   CAPS,
+  AVATAR_MAX_BYTES,
+  AVATAR_MAX_DIMENSION,
+  AVATAR_SOURCE_MAX_BYTES,
   GROUP_MAX_MEMBERS,
   LIMITS,
   MSG_TYPES,
@@ -60,6 +64,8 @@ import {
   type ScanRangeSummary,
   type UpdateReqPayload
 } from '../shared/protocol'
+import { isAvatarHash } from '../shared/protocol'
+import { inspectImageMetadata } from '../shared/image-metadata'
 import { DEFAULT_IMAGE_EXTENSION, IMAGE_FILE_EXTENSIONS } from '../shared/media'
 import {
   addSharedScanRanges,
@@ -109,6 +115,8 @@ import { makeEnvelope } from './net/codec'
 import { ChatService } from './services/chat'
 import { ImageOcrResultCache } from './services/image-ocr-cache'
 import { ImagePreviewService } from './services/image-preview'
+import { AvatarStore } from './services/avatar-store'
+import { AvatarService } from './services/avatars'
 import type { PeerRecord } from './net/peer-registry'
 import { filterImagePickerPaths, IMAGE_PICKER_EXTENSIONS } from './util/image-picker'
 import { isPathInsideAny, PathGrantStore } from './util/path-policy'
@@ -171,6 +179,7 @@ if (!gotLock) {
   const GLOBAL_SCAN_HOST_DELAY = 8
   const GLOBAL_SCAN_PROGRESS_PUSH_INTERVAL = 200
   const IMAGE_EXTS = new Set<string>(IMAGE_FILE_EXTENSIONS)
+  const AVATAR_PICKER_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'bmp']
   const IMAGE_SEND_MAX_BYTES = 20 * 1024 * 1024
   const imageOcrCache = new ImageOcrResultCache()
   const rendererPathGrants = new PathGrantStore()
@@ -185,6 +194,8 @@ if (!gotLock) {
   let chat: ChatService | null = null
   let files: FilesService | null = null
   let groups: GroupsService | null = null
+  let groupRepo: GroupRepo | null = null
+  let avatars: AvatarService | null = null
   let forward: ForwardService | null = null
   let porter: PorterService | null = null
   let search: SearchService | null = null
@@ -192,6 +203,7 @@ if (!gotLock) {
   let stickerRepo: StickerRepo | null = null
   let capturing = false
   let pruneTimer: ReturnType<typeof setInterval> | null = null
+  let avatarPruneTimer: ReturnType<typeof setTimeout> | null = null
   let appState: AppState | null = null
   let rangeSync: RangeSync | null = null
   let tray: Tray | null = null
@@ -301,9 +313,49 @@ if (!gotLock) {
   const importedMediaDir = (): string => join(app.getPath('userData'), 'data', 'imported-media')
   const stickersDir = (): string => join(app.getPath('userData'), 'data', 'stickers')
   const imageThumbnailsDir = (): string => join(app.getPath('userData'), 'data', 'image-thumbnails')
+  const avatarsDir = (): string => join(app.getPath('userData'), 'data', 'avatars')
   const managedMediaRoots = (): string[] => [imagesDir(), importedMediaDir(), stickersDir()]
   const managedStickerRoots = (): string[] => [stickersDir(), importedMediaDir()]
   const imagePreview = new ImagePreviewService(imageThumbnailsDir())
+  const avatarStore = new AvatarStore(avatarsDir())
+
+  function broadcastAvatarReady(hash: string): void {
+    if (!isAvatarHash(hash)) return
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(IpcEvents.avatarReady, hash)
+    }
+  }
+
+  function referencedAvatarHashes(): string[] {
+    const hashes = new Set<string>()
+    const selfHash = appState?.config.avatarHash
+    if (isAvatarHash(selfHash)) hashes.add(selfHash)
+    for (const record of registry?.values() ?? []) {
+      if (isAvatarHash(record.profile.avatarHash)) hashes.add(record.profile.avatarHash)
+    }
+    for (const group of groupRepo?.list() ?? []) {
+      if (isAvatarHash(group.avatarHash)) hashes.add(group.avatarHash)
+    }
+    return [...hashes]
+  }
+
+  function scheduleAvatarPrune(): void {
+    if (avatarPruneTimer) clearTimeout(avatarPruneTimer)
+    avatarPruneTimer = setTimeout(() => {
+      avatarPruneTimer = null
+      void avatarStore.prune(referencedAvatarHashes())
+    }, 1_000)
+    avatarPruneTimer.unref?.()
+  }
+
+  function avatarMime(
+    format: 'png' | 'jpeg' | 'webp' | 'bmp'
+  ): Extract<AvatarSourcePick, { ok: true }>['mime'] {
+    if (format === 'jpeg') return 'image/jpeg'
+    if (format === 'png') return 'image/png'
+    if (format === 'bmp') return 'image/bmp'
+    return 'image/webp'
+  }
 
   async function stageOutgoingImagePath(sourcePath: string): Promise<string | null> {
     try {
@@ -633,6 +685,7 @@ if (!gotLock) {
       dept: record.profile.dept,
       team: record.profile.team,
       avatar: record.profile.avatar,
+      avatarHash: record.profile.avatarHash ?? '',
       host: record.profile.host,
       platform: record.profile.platform,
       ip: record.ip,
@@ -995,6 +1048,7 @@ if (!gotLock) {
     }
     if (db) {
       peersRepo = new PeersRepo(db)
+      groupRepo = new GroupRepo(db)
       registry.seed(peersRepo.loadAll()) // 历史联系人以离线态回灌（F-DISC-7）
       for (const [id, remark] of peersRepo.loadRemarks()) remarks.set(id, remark)
 
@@ -1012,7 +1066,7 @@ if (!gotLock) {
         selfId: state.nodeId,
         convRepo: new ConvRepo(db),
         msgRepo: new MsgRepo(db),
-        groupRepo: new GroupRepo(db),
+        groupRepo,
         messenger,
         peerClock,
         isOnline: (peerId) => registry?.get(peerId)?.online === true,
@@ -1056,7 +1110,7 @@ if (!gotLock) {
         convRepo: new ConvRepo(db),
         msgRepo: new MsgRepo(db),
         transferRepo: new TransferRepo(db),
-        groupRepo: new GroupRepo(db),
+        groupRepo,
         tcpPort,
         getSaveDir: () =>
           appState?.config.fileDir || defaultFileDir(),
@@ -1082,7 +1136,7 @@ if (!gotLock) {
         messenger,
         convRepo: new ConvRepo(db),
         msgRepo: new MsgRepo(db),
-        groupRepo: new GroupRepo(db),
+        groupRepo,
         getSelfIp: currentLocalIpv4,
         peerClock,
         isOnline: (nodeId) => registry?.get(nodeId)?.online === true,
@@ -1090,7 +1144,23 @@ if (!gotLock) {
       })
       groups.on('message', onMessage)
       groups.on('convs', onConvs)
-      groups.on('group', (view) => mainWindow?.webContents.send(IpcEvents.groupUpdated, view))
+      groups.on('group', (view) => {
+        mainWindow?.webContents.send(IpcEvents.groupUpdated, view)
+        void avatars?.ensureGroup(view.groupId)
+        scheduleAvatarPrune()
+      })
+
+      avatars = new AvatarService({
+        selfId: state.nodeId,
+        messenger,
+        registry,
+        groupRepo,
+        store: avatarStore,
+        getSelfProfile: () => state.profile
+      })
+      avatars.on('ready', (hash: string) => broadcastAvatarReady(hash))
+      avatars.ensureAll()
+      scheduleAvatarPrune()
 
       forward = new ForwardService({
         msgRepo: new MsgRepo(db),
@@ -1104,7 +1174,9 @@ if (!gotLock) {
         state.nodeId,
         state.config.nick,
         importedMediaDir(),
-        [imagesDir(), stickersDir()]
+        [imagesDir(), stickersDir()],
+        avatarsDir(),
+        state.config.avatarHash
       )
       search = new SearchService(db, registry, (id) => remarks.get(id) ?? '')
       msgRepoRef = new MsgRepo(db)
@@ -1122,6 +1194,7 @@ if (!gotLock) {
         pushTimer = null
         mainWindow?.webContents.send(IpcEvents.peersUpdated, peerViews())
         mainWindow?.webContents.send(IpcEvents.updateAvailable, currentUpdateAvailability())
+        avatars?.ensureAll()
       }, 200)
       // 落库节流 1s：≤1000 行整表 upsert 在事务内毫秒级
       if (!persistTimer) {
@@ -1523,6 +1596,7 @@ if (!gotLock) {
       team: c?.team ?? '',
       host: appState?.profile.host ?? '',
       avatar: c?.avatar ?? -1,
+      avatarHash: c?.avatarHash ?? '',
       setupDone: c?.setupDone ?? true,
       fileDir: c?.fileDir ?? '',
       defaultFileDir: defaultFileDir(),
@@ -1561,6 +1635,7 @@ if (!gotLock) {
       Number.isInteger(s.avatar) &&
       s.avatar >= -1 &&
       s.avatar <= 999 &&
+      (s.avatarHash === undefined || s.avatarHash === '' || isAvatarHash(s.avatarHash)) &&
       typeof s.fileDir === 'string' &&
       s.fileDir.length <= 1024
     )
@@ -1576,6 +1651,7 @@ if (!gotLock) {
         dept: submit.dept.trim(),
         team: submit.team.trim(),
         avatar: submit.avatar,
+        ...(submit.avatarHash !== undefined ? { avatarHash: submit.avatarHash } : {}),
         fileDir: submit.fileDir.trim()
       })
       if (db) {
@@ -1584,7 +1660,9 @@ if (!gotLock) {
           appState.nodeId,
           appState.config.nick,
           importedMediaDir(),
-          [imagesDir(), stickersDir()]
+          [imagesDir(), stickersDir()],
+          avatarsDir(),
+          appState.config.avatarHash
         )
       }
       discovery?.announceProfile() // 资料变更即时广播（F-DISC-7 的发送侧）
@@ -1593,6 +1671,112 @@ if (!gotLock) {
     }
     return settingsView()
   })
+
+  ipcMain.handle(
+    IpcChannels.avatarPickSource,
+    async (event): Promise<AvatarSourcePick | null> => {
+      const owner = BrowserWindow.fromWebContents(event.sender)
+      const result = owner
+        ? await dialog.showOpenDialog(owner, {
+            title: '选择头像图片',
+            properties: ['openFile'],
+            filters: [{ name: '图片', extensions: AVATAR_PICKER_EXTENSIONS }]
+          })
+        : await dialog.showOpenDialog({
+            title: '选择头像图片',
+            properties: ['openFile'],
+            filters: [{ name: '图片', extensions: AVATAR_PICKER_EXTENSIONS }]
+          })
+      if (result.canceled || result.filePaths.length === 0) return null
+      const path = result.filePaths[0]
+      try {
+        const info = await stat(path)
+        if (!info.isFile() || info.size <= 0) return { ok: false, error: '无法读取这张图片' }
+        if (info.size > AVATAR_SOURCE_MAX_BYTES) {
+          return { ok: false, error: '头像图片不能超过 20 MiB' }
+        }
+        const data = await readFile(path)
+        const metadata = inspectImageMetadata(data)
+        if (!metadata || metadata.format === 'gif') {
+          return { ok: false, error: '请选择 JPG、PNG、WebP 或 BMP 静态图片' }
+        }
+        if (metadata.animated) return { ok: false, error: '暂不支持动态头像' }
+        if (
+          metadata.width > AVATAR_MAX_DIMENSION ||
+          metadata.height > AVATAR_MAX_DIMENSION
+        ) {
+          return { ok: false, error: '头像图片单边不能超过 8192 像素' }
+        }
+        const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
+        return {
+          ok: true,
+          bytes,
+          mime: avatarMime(metadata.format),
+          width: metadata.width,
+          height: metadata.height
+        }
+      } catch {
+        return { ok: false, error: '无法读取这张图片' }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IpcChannels.profileSetAvatar,
+    async (_event, input: unknown): Promise<SettingsView> => {
+      if (!appState || typeof input !== 'object' || input === null) {
+        throw new Error('invalid-avatar')
+      }
+      const choice = input as { kind?: unknown; avatar?: unknown; bytes?: unknown }
+      let avatar = appState.config.avatar
+      let avatarHash = ''
+      if (choice.kind === 'preset') {
+        if (
+          typeof choice.avatar !== 'number' ||
+          !Number.isInteger(choice.avatar) ||
+          choice.avatar < -1 ||
+          choice.avatar > 999
+        ) {
+          throw new Error('invalid-avatar')
+        }
+        avatar = choice.avatar
+      } else if (choice.kind === 'custom') {
+        if (!(choice.bytes instanceof ArrayBuffer) || choice.bytes.byteLength > AVATAR_MAX_BYTES) {
+          throw new Error('invalid-avatar')
+        }
+        avatarHash = (await avatarStore.save(choice.bytes)) ?? ''
+        if (!avatarHash) throw new Error('invalid-avatar')
+      } else {
+        throw new Error('invalid-avatar')
+      }
+
+      saveProfile(appState, {
+        nick: appState.config.nick,
+        company: appState.config.company,
+        dept: appState.config.dept,
+        team: appState.config.team,
+        avatar,
+        avatarHash,
+        fileDir: appState.config.fileDir
+      })
+      if (db) {
+        porter = new PorterService(
+          db,
+          appState.nodeId,
+          appState.config.nick,
+          importedMediaDir(),
+          [imagesDir(), stickersDir()],
+          avatarsDir(),
+          appState.config.avatarHash
+        )
+      }
+      discovery?.announceProfile()
+      const view = broadcastSettings()
+      if (avatarHash) broadcastAvatarReady(avatarHash)
+      scheduleAvatarPrune()
+      return view
+    }
+  )
 
   ipcMain.handle(IpcChannels.settingsPickDir, async (): Promise<string | null> => {
     if (!mainWindow) return null
@@ -1735,7 +1919,34 @@ if (!gotLock) {
     if (result.canceled || result.filePaths.length === 0) return null
     try {
       const imported = porter.importBackup(result.filePaths[0])
+      if (appState && imported.profileAvatarHash) {
+        saveProfile(appState, {
+          nick: appState.config.nick,
+          company: appState.config.company,
+          dept: appState.config.dept,
+          team: appState.config.team,
+          avatar: appState.config.avatar,
+          avatarHash: imported.profileAvatarHash,
+          fileDir: appState.config.fileDir
+        })
+        discovery?.announceProfile()
+        broadcastSettings()
+        if (db) {
+          porter = new PorterService(
+            db,
+            appState.nodeId,
+            appState.config.nick,
+            importedMediaDir(),
+            [imagesDir(), stickersDir()],
+            avatarsDir(),
+            appState.config.avatarHash
+          )
+        }
+      }
       chat?.emit('convs', chat.listConversations())
+      avatars?.ensureAll()
+      for (const hash of referencedAvatarHashes()) broadcastAvatarReady(hash)
+      scheduleAvatarPrune()
       return imported
     } catch (err) {
       console.warn('[porter] 导入失败：', err)
@@ -2013,6 +2224,18 @@ if (!gotLock) {
       if (!memberIds || (p.adminPassword !== undefined && adminPassword === undefined)) return null
       clean = { kind: 'remove', memberIds, ...(adminPassword ? { adminPassword } : {}) }
     } else if (
+      p.kind === 'set-avatar' &&
+      hasOnly(['kind', 'avatarHash', 'adminPassword']) &&
+      (p.avatarHash === '' || isAvatarHash(p.avatarHash))
+    ) {
+      const adminPassword = password()
+      if (p.adminPassword !== undefined && adminPassword === undefined) return null
+      clean = {
+        kind: 'set-avatar',
+        avatarHash: p.avatarHash,
+        ...(adminPassword ? { adminPassword } : {})
+      }
+    } else if (
       p.kind === 'set-admin' &&
       hasOnly(['kind', 'memberId', 'enabled']) &&
       typeof p.memberId === 'string' &&
@@ -2026,6 +2249,42 @@ if (!gotLock) {
     }
     return groups?.updateGroup(groupId, clean) ?? null
   })
+
+  ipcMain.handle(
+    IpcChannels.groupSetAvatar,
+    async (
+      _event,
+      groupId: unknown,
+      bytes: unknown,
+      adminPassword: unknown
+    ) => {
+      if (typeof groupId !== 'string' || groupId.length === 0 || groupId.length > LIMITS.id) {
+        return null
+      }
+      if (
+        adminPassword !== undefined &&
+        (typeof adminPassword !== 'string' || adminPassword.length > LIMITS.groupAdminPassword)
+      ) {
+        return null
+      }
+      let avatarHash = ''
+      if (bytes !== null) {
+        if (!(bytes instanceof ArrayBuffer) || bytes.byteLength > AVATAR_MAX_BYTES) return null
+        avatarHash = (await avatarStore.save(bytes)) ?? ''
+        if (!avatarHash) return null
+      }
+      const updated = groups?.updateGroup(groupId, {
+        kind: 'set-avatar',
+        avatarHash,
+        ...(typeof adminPassword === 'string' && adminPassword
+          ? { adminPassword }
+          : {})
+      }) ?? null
+      if (updated && avatarHash) broadcastAvatarReady(avatarHash)
+      scheduleAvatarPrune()
+      return updated
+    }
+  )
 
   ipcMain.handle(IpcChannels.groupLeave, (_event, groupId: unknown) => {
     if (typeof groupId === 'string' && groupId.length <= 64) groups?.leaveGroup(groupId)
@@ -2227,6 +2486,7 @@ if (!gotLock) {
       CAPS.tableText,
       CAPS.transferWait,
       CAPS.groupRoles,
+      CAPS.avatarImages,
       ...updateCaps
     ])
     udpPort = envUdpPort ?? appState.config.udpPort
@@ -2288,6 +2548,21 @@ if (!gotLock) {
       callback({ error: -6 })
     })
 
+    // pantry-avatar://<sha256> —— 只映射受管目录中的已校验 WebP，不暴露任意本地路径。
+    protocol.registerFileProtocol('pantry-avatar', (request, callback) => {
+      try {
+        const hash = new URL(request.url).hostname
+        void avatarStore
+          .resolvePath(hash)
+          .then((path) => callback(path ? { path } : { error: -6 }))
+          .catch(() => callback({ error: -6 }))
+        return
+      } catch {
+        // fallthrough
+      }
+      callback({ error: -6 })
+    })
+
     createMainWindow()
     tray = setupTray({
       showWindow: showMainWindow,
@@ -2333,6 +2608,7 @@ if (!gotLock) {
     discovery = null
     if (pruneTimer) clearInterval(pruneTimer)
     if (persistTimer) clearTimeout(persistTimer)
+    if (avatarPruneTimer) clearTimeout(avatarPruneTimer)
     void files?.stop()
     try {
       if (registry && peersRepo) peersRepo.upsertMany(registry.values()) // 离场前最后一次落库

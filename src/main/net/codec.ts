@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+  AVATAR_MAX_BYTES,
   GROUP_IMG_AUTO_ACCEPT,
   GROUP_MAX_MEMBERS,
   LIMITS,
@@ -14,6 +15,7 @@ import {
   UDP_MAX_INBOUND,
   UPDATE_PACKAGE_MAX_BYTES,
   type AckPayload,
+  type AvatarPayload,
   type Envelope,
   type FileCtlOffer,
   type FileCtlPayload,
@@ -26,6 +28,7 @@ import {
   type ScanRangesPayload,
   type UpdateReqPayload
 } from '../../shared/protocol'
+import { isAvatarHash } from '../../shared/protocol'
 import { PEERS_PER_PACKET } from '../../shared/protocol'
 import { isPkGame, isPkRef } from '../../shared/pk'
 import { normalizeCidr } from './cidr'
@@ -85,6 +88,7 @@ export function validateProfile(p: unknown): p is Profile {
   if (!isStrAllowEmpty(p.dept, LIMITS.dept)) return false
   if (!isStrAllowEmpty(p.team, LIMITS.team)) return false
   if (!isInt(p.avatar) || p.avatar < -1 || p.avatar > 999) return false
+  if (p.avatarHash !== undefined && !isAvatarHash(p.avatarHash)) return false
   if (!isInt(p.profileRev) || p.profileRev < 0) return false
   if (!isStr(p.host, LIMITS.host)) return false
   if (p.platform !== 'win' && p.platform !== 'mac' && p.platform !== 'linux') return false
@@ -190,6 +194,13 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
         if (!meta.adminIds.every((id) => members.includes(id))) return false
       }
       if (
+        meta.avatarHash !== undefined &&
+        meta.avatarHash !== '' &&
+        !isAvatarHash(meta.avatarHash)
+      ) {
+        return false
+      }
+      if (
         meta.adminSecretHash !== undefined &&
         !(
           meta.adminSecretHash === '' ||
@@ -207,6 +218,23 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
         return false
       }
       return true
+    }
+    case MSG_TYPES.avatar: {
+      if (!isRecord(payload)) return false
+      const avatar = payload as Partial<AvatarPayload>
+      if (!isAvatarHash(avatar.hash)) return false
+      if (avatar.groupId !== undefined && !isStr(avatar.groupId, LIMITS.id)) return false
+      if (avatar.op === 'get') {
+        return Object.keys(payload).every((key) => key === 'op' || key === 'hash' || key === 'groupId')
+      }
+      if (avatar.op !== 'data' || typeof avatar.bytesBase64 !== 'string') return false
+      if (!Object.keys(payload).every((key) =>
+        key === 'op' || key === 'hash' || key === 'bytesBase64' || key === 'groupId'
+      )) {
+        return false
+      }
+      if (!isStrictBase64(avatar.bytesBase64)) return false
+      return Buffer.from(avatar.bytesBase64, 'base64').length <= AVATAR_MAX_BYTES
     }
     case MSG_TYPES.ack: {
       if (!isRecord(payload)) return false
@@ -340,6 +368,13 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
     default:
       return isRecord(payload)
   }
+}
+
+function isStrictBase64(value: string): boolean {
+  if (value.length === 0 || value.length > Math.ceil(AVATAR_MAX_BYTES / 3) * 4) return false
+  if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return Buffer.from(value, 'base64').length === (value.length / 4) * 3 - padding
 }
 
 export function decode(buf: Buffer): DecodeResult {

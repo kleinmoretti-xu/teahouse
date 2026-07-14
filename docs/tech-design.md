@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.39；群成员批量邀请弹窗（决议 #242）；v0.41.0 开发中 |
+| 状态 | v1.40；自定义用户与群头像（决议 #243）；v0.42.0 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -53,6 +53,7 @@ Naive UI 接入约束（决议 #215）：
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
 - 群成员批量邀请（决议 #242）：从 `GroupCreator` 抽取纯 renderer 的共享成员选择组件，统一多字段过滤、紧凑联系人行、跨搜索选择、已选标签与上限门禁；`GroupInviteDialog` 过滤当前群成员并把剩余名额作为可选上限，一次调用既有 `group:update invite`。弹窗通过 Teleport 挂到 `body`，沿用全局遮罩、焦点回收和 Esc 契约；协议、IPC、store 数据形状与数据库均不扩展。
+- 自定义头像（决议 #243）：renderer 共享 `AvatarCropDialog` 与纯函数裁剪几何，使用 Chrome 108 Canvas 将本地静态图片生成 192×192、≤32KiB WebP；主进程 `AvatarStore` 重新校验格式、尺寸、字节数和 SHA-256，原子写入 `userData/data/avatars`。元数据只携带哈希，`AvatarService` 通过可靠 `avatar` 报文按需取图、校验、去重与重试；`pantry-avatar://` 仅按合法哈希映射受管目录。用户头像以数字头像回退，群头像以现有群组图标回退；无第三方图片处理依赖、无外网请求。
 - 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
 - 设置分组图标（决议 #239）：新增 `SettingsNavIcon.vue` 作为设置动态入口专属叶组件，按既有 `Section` id 映射 7 组 24×24 viewBox 的线性 SVG path，继承 `PantryIcon` 的 `currentColor`、1.6px stroke 与圆角端点契约。专属组件避免设置路径进入多窗口共享 `PantryIcon` chunk；导航按钮改为 flex 横排，图标 18px、间距 9px，hover / active 颜色由按钮祖先继承。无单独图片请求、位图解码、组件实例状态、IPC 或依赖变化。
 - 端口编辑保护（决议 #240）：`SettingsApp.vue` 维护 `pendingPortEdit` 与 `unlockedPort` 两个纯 renderer 状态。原生 number input 以 `readonly` 作为默认门禁；focus 时立即 blur 并打开固定定位确认层，确认后在 `nextTick` 中只解除当前字段只读并调用原生 `focus()` / `select()`。输入框 blur 复用既有 `autoSavePorts()` 的 1–65535 校验与 `saveAppSettings`，完成后重新锁定。取消、遮罩和 Esc 只清理待确认状态，不改表单值。确认层沿用本地 `PantryIcon warning` 与已加载的 Naive `NButton`，危险操作使用 `type="error"`，不新增组件库模块、IPC、配置字段或定时器。
@@ -167,12 +168,12 @@ src/
 | `nwt:*`（后续实现时在 `shared/ipc.ts` 固化） | 内网通兼容模式：启停、独立网段扫描、兼容节点列表、普通文本发送、兼容能力投影、实验附件 offer；详见 [nwt-compat-design.md](nwt-compat-design.md) |
 | `shot:start` | 触发截图流程 |
 
-事件（main → renderer，`webContents.send`）：`peers:updated`、`msg:new`、`msg:status`（发送中/已送达/排队/失败）、`msg:nudge-received`、`transfer:progress`（节流 ≤4 次/s）、`transfer:done|failed`、`group:updated`、`net:state`（在线/端口冲突/网卡变化）、`net:scan-progress`（主界面全局网段刷新进度，节流推送）、`badge:update`。
+事件（main → renderer，`webContents.send`）：`peers:updated`、`msg:new`、`msg:status`（发送中/已送达/排队/失败）、`msg:nudge-received`、`transfer:progress`（节流 ≤4 次/s）、`transfer:done|failed`、`group:updated`、`avatar:ready`、`net:state`（在线/端口冲突/网卡变化）、`net:scan-progress`（主界面全局网段刷新进度，节流推送）、`badge:update`。
 
 ## 5. 数据库设计（SQLite，WAL）
 
 ```sql
-peers(node_id TEXT PK, nick, remark, company, dept, team, avatar INT, host, platform,
+peers(node_id TEXT PK, nick, remark, company, dept, team, avatar INT, avatar_hash TEXT, host, platform,
       ip, udp_port INT, tcp_port INT, profile_rev INT, caps TEXT, ver TEXT,
       first_seen INT, last_seen INT)                        -- online 状态只存内存
 conversations(id TEXT PK, type TEXT,            -- 'single'|'group'
@@ -185,7 +186,7 @@ messages(id TEXT PK,                            -- 协议 msgId，全局唯一
       status TEXT)                              -- sending|sent|queued|failed|recalled
 messages_fts(fts5: msg_id UNINDEXED, text)      -- 入库时中文按字空格预切；查询 phrase 匹配
 groups(group_id TEXT PK, name, members TEXT, rev INT, updated_by, updated_ts INT,
-      creator_ip TEXT, creator_id TEXT, owner_id TEXT, admin_ids TEXT,
+      creator_ip TEXT, creator_id TEXT, owner_id TEXT, admin_ids TEXT, avatar_hash TEXT,
       admin_secret_hash TEXT, admin_hint TEXT)
 transfers(transfer_id TEXT PK, msg_id, peer_id, direction, files TEXT,
       status, bytes_done INT, total INT, ts INT)
@@ -256,11 +257,12 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 **备份包 `.pantry-bak`**（即 zip）：
 
 ```
-manifest.json    # {formatVer, exportedBy: nodeId, nick, range, counts}
+manifest.json    # {formatVer, exportedBy: nodeId, nick, avatarHash?, range, counts}
 messages.jsonl   # 一行一条（流式读写，不怕大）
 peers.json / groups.json / stickers.json
 media/transfers/... # 消息引用的图片/表情媒体；普通文件不打包（仅保留文件名记录）
 media/stickers/...  # 自定义表情包媒体
+media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头像
 ```
 
 - **导入身份映射**（决议 #19）：`is_mine=1` 的消息 `sender_id` → 重写为本机 nodeId；其余保持原值。peer 资料按 `last_seen` 新者胜合并。
@@ -468,3 +470,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.37 决议 #240：端口输入框默认 readonly；renderer 确认层以 `pendingPortEdit` / `unlockedPort` 管理单字段解锁，取消不改值，确认后聚焦全选，失焦复用原校验保存并重新锁定。版本 0.39.11 → **0.39.12**。
 - 2026-07-14 v1.38 决议 #241：groups v11 增加 `owner_id/admin_ids`；协议元数据、备份和 IPC 视图同步角色字段，服务层按单操作权限矩阵校验本地与远端变更，群主退出执行确定性转让，renderer 展示角色与兼容提示。版本 0.39.12 → **0.40.0**。
 - 2026-07-14 v1.39 决议 #242：抽取建群/邀请共用的成员搜索多选组件，新增 Teleport 全局邀请弹窗；批量确认复用既有 `invite memberIds[]`，无协议、IPC、数据库或依赖变化。版本 0.40.0 → **0.41.0**。
+- 2026-07-14 v1.40 决议 #243：新增内容寻址 `AvatarStore/AvatarService`、`av1` 可靠按需取图、`pantry-avatar://` 受限读取通道与 renderer 共用裁剪弹窗；SQLite v12 为联系人和群增加头像哈希，备份携带引用头像，群头像变更沿用改名权限和 LWW 校验。版本 0.41.0 → **0.42.0**。

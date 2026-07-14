@@ -15,6 +15,14 @@ export const TEXT_UDP_LIMIT = 800
 export const TEXT_TCP_LIMIT = 4096
 /** 局域网自更新单包硬上限（决议 #208）。 */
 export const UPDATE_PACKAGE_MAX_BYTES = 512 * 1024 * 1024
+/** 自定义头像源文件读取上限（决议 #243）。 */
+export const AVATAR_SOURCE_MAX_BYTES = 20 * 1024 * 1024
+/** 自定义头像源图单边上限。 */
+export const AVATAR_MAX_DIMENSION = 8192
+/** 自定义头像固定输出边长。 */
+export const AVATAR_OUTPUT_SIZE = 192
+/** 自定义头像编码后硬上限，确保 base64 信封低于 TCP 64KiB 控制帧。 */
+export const AVATAR_MAX_BYTES = 32 * 1024
 
 /** 时序参数（protocol §9）。测试中可整体注入缩短。 */
 export const TIMINGS = {
@@ -90,7 +98,8 @@ export const LIMITS = {
   ip: 45,
   groupAdminPassword: 64,
   groupAdminHint: 40,
-  groupAdminHash: 64
+  groupAdminHash: 64,
+  avatarHash: 64
 }
 
 export type Platform = 'win' | 'mac' | 'linux'
@@ -105,6 +114,8 @@ export interface Profile {
   team: string
   /** 头像模板编号；-1 = 昵称色块，>=0 = 背景色下标 * 20 + emoji 下标 */
   avatar: number
+  /** 自定义头像内容 SHA-256；缺省/空串时使用数字头像。 */
+  avatarHash?: string
   /** 资料版本号，每次修改 +1；presence 携带，用于失配刷新 */
   profileRev: number
   host: string
@@ -129,7 +140,9 @@ export const CAPS = {
   /** 支持 TCP wait 排队帧；作为发送方时对端取消后保留供流授权，允许断点重拉（决议 #211）。 */
   transferWait: 'tw1',
   /** 支持讨论组群主/管理员角色、普通成员邀请与角色权限校验（决议 #241）。 */
-  groupRoles: 'gr1'
+  groupRoles: 'gr1',
+  /** 支持资料/群头像哈希与可靠 avatar 按需取图（决议 #243）。 */
+  avatarImages: 'av1'
 } as const
 
 /** 报文信封（protocol §4） */
@@ -244,6 +257,8 @@ export interface GroupMeta {
   ownerId: string
   /** 管理员 nodeId 列表；必须属于 members 且不含 ownerId，旧包可缺省 */
   adminIds: string[]
+  /** 自定义群头像 SHA-256；空串表示默认群图标，旧包可缺省。 */
+  avatarHash?: string
   /** 管理密码摘要；空串表示无密码，密码明文不入库、不入协议 */
   adminSecretHash: string
   /** 管理密码提示；仅用于 UI 展示，不参与鉴权 */
@@ -253,6 +268,11 @@ export interface GroupMeta {
 export type GroupPayload =
   | { op: 'info'; group: GroupMeta }
   | { op: 'need'; groupId: string }
+
+/** 自定义头像按需取图（决议 #243）；groupId 缺省表示用户头像。 */
+export type AvatarPayload =
+  | { op: 'get'; hash: string; groupId?: string }
+  | { op: 'data'; hash: string; bytesBase64: string; groupId?: string }
 
 /** ACK 载荷（§7.2） */
 export interface AckPayload {
@@ -388,6 +408,11 @@ export const MSG_TYPES = {
   ack: 'ack',
   fileCtl: 'file-ctl',
   group: 'group',
+  avatar: 'avatar',
   update: 'update'
 } as const
+
+export function isAvatarHash(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+}
 import type { PkGame, PkResult } from './pk'

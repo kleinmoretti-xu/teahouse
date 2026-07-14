@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v0.43，主协议保持自有 JSON；内网通兼容模式另见独立设计文档 |
+| 状态 | v0.44，主协议保持自有 JSON；内网通兼容模式另见独立设计文档 |
 | 日期 | 2026-07-14 |
 | 关系 | 本文是**茶话间主协议**的唯一事实来源；功能取舍依据 [requirements.md](requirements.md)（决议 #5：借鉴 ipmsg/iptux 机制、主协议报文自有、不加密；决议 #194/#195：内网通兼容模式走独立适配器，并在适配器内评估文件 / 图片 / 震动能力） |
 
@@ -20,7 +20,7 @@
 | 通道 | 传输 | 默认端口 | 承载 |
 |---|---|---|---|
 | 控制/消息 | UDP（广播 + 单播） | 17878 | 发现、心跳、资料、gossip、短消息、ACK、文件控制 |
-| 数据 | TCP | 17879 | 文件/图片字节流、长消息、批量补发 |
+| 数据 | TCP | 17879 | 文件/图片字节流、头像响应、长消息、批量补发 |
 
 - UDP 单包载荷上限 **1200 字节**（避免 IP 分片）；装不下的内容一律走 TCP。
 - 两个端口默认值已拍板（决议 #6），可在设置中修改，全网节点须一致。
@@ -49,7 +49,7 @@
 }
 ```
 
-**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`tbl1` 表格图片文字视图**（决议 #190，支持 `file-ctl offer.tableText/tableTextTruncated`，图片气泡可在图片 / 原始 TSV 文本间切换）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`tw1` 传输排队与可恢复取消**（决议 #211，支持接收 TCP `wait` 帧；作为发送方时收到对端 cancel 后保留供流授权，允许接收方此后凭原 transferId 断点重拉）、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
+**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`av1` 自定义头像**（决议 #243，理解资料/群元数据头像哈希与 `avatar` 按需取图）、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`tbl1` 表格图片文字视图**（决议 #190，支持 `file-ctl offer.tableText/tableTextTruncated`，图片气泡可在图片 / 原始 TSV 文本间切换）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`tw1` 传输排队与可恢复取消**（决议 #211，支持接收 TCP `wait` 帧；作为发送方时收到对端 cancel 后保留供流授权，允许接收方此后凭原 transferId 断点重拉）、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
 
 ## 4. 报文信封（UDP 与 TCP 控制帧通用）
 
@@ -82,6 +82,7 @@
 | `file-ctl` | 单播 | UDP | 文件控制：offer / accept / decline / cancel / direct（`direct` 为发送方在私聊文件卡片上请求直接发送；`offer.purpose:"update"` 为自更新包，见 §8） |
 | `update` | 单播 | UDP/TCP | 局域网自更新：可靠控制报文；`req` 请求对端发来其平台安装包（决议 #166/#170，见 §8） |
 | `group` | 单播 | UDP | 群元数据：info / need（见 §7.4） |
+| `avatar` | 单播 | UDP/TCP | 自定义头像按 SHA-256 请求 / 返回（见 §7.5） |
 
 ## 6. 发现、在线与跨网段
 
@@ -201,14 +202,21 @@ UI 概念，协议上不存在：对每个收件人各发一条独立 `msg`，�
 
 ### 7.4 讨论组（群聊）
 
-- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, ownerId?, adminIds?, adminSecretHash, adminHint}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 保留建群者身份；`ownerId` 表示当前群主，`adminIds` 表示管理员 nodeId 列表，二者为 v0.43 可兼容缺省字段。旧报文缺角色字段时，新端优先保留本地已知角色；首次接收旧群时按仍在群内的 `creatorId`、`updatedBy`、首位成员依次推导群主，管理员为空。
+- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, ownerId?, adminIds?, avatarHash?, adminSecretHash, adminHint}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 保留建群者身份；`ownerId` 表示当前群主，`adminIds` 表示管理员 nodeId 列表，三者为可兼容缺省字段。`avatarHash` 为 64 位小写 SHA-256，空串表示恢复默认群头像；旧报文缺该字段时新端保留本地已知头像。旧报文缺角色字段时，新端优先保留本地已知角色；首次接收旧群时按仍在群内的 `creatorId`、`updatedBy`、首位成员依次推导群主，管理员为空。
 - 群文本 = 向 members 逐个单播 `msg(kind:"group-text", groupId, groupRev)`，离线成员走 §7.2 补发。群 PK = 向当前在线 members 逐个单播 `msg(kind:"pk", groupId, groupRev)`，离线成员不入队、不补发。
 - 群图片/文件 = 向在线 members 逐个单播 `file-ctl{op:"offer", msgId, groupId, groupRev}`，每个收件人一条独立 transfer，但同一条群媒体消息复用同一 `msgId`；离线成员不入队（决议 #4/#32/#188）。发送端本地只插一条群消息，`fileRef.transferIds[]` 汇总各成员 transfer；收端按 `groupId` 插入群会话，若不认识该 groupId 或 rev 落后，复用 `group{op:"need"}` 向发送者索要元数据。群图片只有单图 ≤10MB 时允许携带 `purpose:"image"`，超限图片不带 purpose，按普通文件卡片展示与手动接收（决议 #33）。
 - 收端不认识该 groupId 或本地 rev 落后 → 向发送者发 `group{op:"need", groupId}`，对方回 `group{op:"info", …全量元数据}`。
-- 成员增删 = 修改元数据（rev+1）后向**新旧成员全集**发 `group{op:"info"}`（被移出者借此得知）。每次 `group:update` 只允许一种操作：`rename`、`invite`、`remove`、`set-admin`；任意现有成员可执行 `invite`，其他操作按角色/管理密码校验。
+- 成员、群名、角色或群头像变更 = 修改元数据（rev+1）后向**新旧成员全集**发 `group{op:"info"}`（被移出者借此得知）。每次 `group:update` 只允许一种操作：`rename`、`invite`、`remove`、`set-admin`、`set-avatar`；任意现有成员可执行 `invite`，头像变更与改名使用相同角色/管理密码权限，其余操作按角色/管理密码校验。
 - 上限 **200 人/组**（决议 #198，原 50）。群主可任免管理员、改名、移出管理员或普通成员；管理员可改名、移出普通成员；管理密码持有者可改名、移出普通成员；群主和管理员免密码。群主退出时按成员顺序优先选首位管理员，否则选首位剩余成员，新群主从 `adminIds` 移除。普通成员与管理员自行退出不需要管理权限，退出时同步清理管理员身份。
 - 收端合并远端 `group.info` 前按本地/远端元数据差异分类校验：纯新增成员要求 `updatedBy` 是原群成员；管理员列表变化要求 `updatedBy` 是原群主；改名与移出普通成员接受群主、管理员或保持相同管理密码摘要的合法变更；移出管理员只接受群主；自行退出只允许移除 `updatedBy` 自己；群主退出还必须满足确定性的自动转让结果。未知组合拒绝。角色字段缺省的旧报文不得清空本地已知角色。LWW 规则维持不变。
 - `profile.caps` 新增 `gr1`，表示理解群角色字段、普通成员邀请和新权限校验。新端发现群内旧成员未声明该能力时只做升级提示，仍投递兼容 `group.info`；旧端可能无法同步管理员发起的管理变更或普通成员发起的邀请。
+
+### 7.5 自定义头像（决议 #243）
+
+- `Profile` 增加可选 `avatarHash`；原 `avatar:number` 始终保留，供旧端、离线、下载失败和缓存未命中时显示。头像哈希变化随 `profileRev` 递增，通过既有资料刷新传播。
+- `avatar` 为可靠控制报文，载荷只允许两种判别联合：请求 `{op:"get", hash, groupId?}`，响应 `{op:"data", hash, bytesBase64, groupId?}`。无 `groupId` 表示用户头像；携带 `groupId` 表示群头像。哈希固定 64 位小写十六进制；解码后图片固定 192×192 WebP 且不超过 32768B，base64 与信封合计须低于 TCP 控制帧 64KiB 上限。
+- 新端只向声明 `av1` 的在线来源请求未知哈希，同一哈希并发请求合并。用户头像只向资料所属节点请求，来源仅在哈希等于自己的当前 `Profile.avatarHash` 时返回。群头像优先向发送群元数据的成员请求，失败后尝试其他在线 `av1` 群成员；请求方与响应方都必须是当前成员，且本地群元数据哈希与请求一致。
+- 接收数据后重新计算 SHA-256，并校验 WebP 类型、静态 192×192 尺寸和 32768B 上限；校验通过后原子写入受管缓存。异常响应只丢弃当前头像数据，不影响聊天和节点在线状态。未知头像报文或旧端缺字段按向前兼容规则忽略。
 
 ## 8. 文件传输（TCP，拉取式）
 
@@ -280,6 +288,9 @@ sequenceDiagram
 | GROUP_MAX_MEMBERS | 200 | 决议 #198，原 50 |
 | GROUP_ADMIN_PASSWORD | ≤ 64 字符 | 可空；只生成摘要，不传明文 |
 | GROUP_ADMIN_HINT | ≤ 40 字符 | 可空；仅在有管理密码时展示，不作为鉴权依据 |
+| AVATAR_SOURCE_MAX | 20971520 B（20 MiB） | 本地头像源文件读取上限 |
+| AVATAR_MAX_DIMENSION | 8192 px | 本地头像源图单边上限 |
+| AVATAR_ENCODED_MAX | 32768 B（32 KiB） | 192×192 静态 WebP 与局域网响应上限 |
 | TRANSFER_CONCURRENCY | 3（可配） | |
 | PULL_WAIT_HEARTBEAT | 20 s | 发送端排队 / 哈希收尾期间 `wait` 帧保活间隔（决议 #211） |
 | PULL_IDLE_TIMEOUT | 60 s | 接收端拉取空闲超时，超时判失败、可断点续传重试（决议 #211） |
@@ -356,3 +367,4 @@ sequenceDiagram
 - 2026-07-10 v0.41 决议 #211：§3 caps 新增 `tw1`；§8 TCP 帧型新增 `wait`（排队 / 哈希收尾保活，仅发给声明 `tw1` 的对端）；接收端新增 60 秒拉取空闲超时；取消语义修订为「接收方取消可恢复（发送方保留供流授权、`.part` 保留可断点重拉）、发送方取消才是终态」。§9 常量新增 PULL_WAIT_HEARTBEAT / PULL_IDLE_TIMEOUT。版本 0.33.1 → **0.33.2**。
 - 2026-07-13 v0.42 决议 #213：Windows 发布新增 ia32（32 位）安装版与便携版；`update{op:"req"}.arch` 白名单扩展为 `x64|ia32|arm64`，32 位 Windows 客户端按 `win-ia32-setup.exe` 精确索包，避免与 x64 包混用。版本仍为 **0.34.0**，与决议 #212 合并发布。
 - 2026-07-14 v0.43 决议 #241：群元数据新增可选 `ownerId/adminIds`，caps 新增 `gr1`；`group:update` 收敛为单操作，所有成员可直接邀请，群主/管理员/管理密码按权限矩阵执行改名、踢人与管理员任免；群主退出自动转让。全局信封版本仍为 `v:1`。版本 0.39.12 → **0.40.0**。
+- 2026-07-14 v0.44 决议 #243：`Profile/GroupMeta` 新增可选 `avatarHash`，caps 新增 `av1`，新增可靠 `avatar` 请求/数据报文；自定义头像统一为 192×192、≤32KiB 静态 WebP，以 SHA-256 校验并按需在局域网获取。`group:update` 增加独立 `set-avatar` 操作，权限与改群名一致。全局信封仍为 `v:1`。版本 0.41.0 → **0.42.0**。

@@ -4,6 +4,7 @@ import {
   IpcEvents,
   type AppInfo,
   type AppSettingsPatch,
+  type AvatarSourcePick,
   type ConversationMessageHit,
   type ConversationSearchOptions,
   type ConversationView,
@@ -25,6 +26,7 @@ import {
   type PantryApi,
   type PeerView,
   type ProfileSubmit,
+  type ProfileAvatarChoice,
   type SearchResult,
   type ScanProgressView,
   type SettingsView,
@@ -83,6 +85,10 @@ const api: PantryApi = {
   getSettings: (): Promise<SettingsView> => ipcRenderer.invoke(IpcChannels.settingsGet),
   saveProfile: (submit: ProfileSubmit): Promise<SettingsView> =>
     ipcRenderer.invoke(IpcChannels.settingsSaveProfile, submit),
+  pickAvatarSource: (): Promise<AvatarSourcePick | null> =>
+    ipcRenderer.invoke(IpcChannels.avatarPickSource),
+  setProfileAvatar: (choice: ProfileAvatarChoice): Promise<SettingsView> =>
+    ipcRenderer.invoke(IpcChannels.profileSetAvatar, choice),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(IpcChannels.settingsPickDir),
   pickFiles: (directory: boolean): Promise<string[] | null> =>
     ipcRenderer.invoke(IpcChannels.filePick, directory),
@@ -173,6 +179,12 @@ const api: PantryApi = {
     ipcRenderer.invoke(IpcChannels.groupCreate, name, memberIds, adminPassword, adminHint),
   updateGroup: (groupId: string, patch: GroupPatch): Promise<GroupView | null> =>
     ipcRenderer.invoke(IpcChannels.groupUpdate, groupId, patch),
+  setGroupAvatar: (
+    groupId: string,
+    bytes: ArrayBuffer | null,
+    adminPassword?: string
+  ): Promise<GroupView | null> =>
+    ipcRenderer.invoke(IpcChannels.groupSetAvatar, groupId, bytes, adminPassword),
   leaveGroup: (groupId: string): Promise<void> => ipcRenderer.invoke(IpcChannels.groupLeave, groupId),
   getGroup: (groupId: string): Promise<GroupView | null> =>
     ipcRenderer.invoke(IpcChannels.groupGet, groupId),
@@ -210,6 +222,7 @@ const api: PantryApi = {
   onCaptured: (listener) => subscribe<ArrayBuffer>(IpcEvents.captured, listener),
   onOpenConv: (listener) => subscribe<string>(IpcEvents.openConv, listener),
   onSettingsUpdated: (listener) => subscribe<SettingsView>(IpcEvents.settingsUpdated, listener),
+  onAvatarReady: (listener) => subscribe<string>(IpcEvents.avatarReady, listener),
   onSettingsWindowState: (listener) =>
     subscribe<boolean>(IpcEvents.settingsWindowState, listener),
   onScanProgress: (listener) => subscribe<ScanProgressView>(IpcEvents.netScanProgress, listener),

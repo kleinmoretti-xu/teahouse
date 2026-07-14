@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { GroupPatch, GroupView } from '../../../shared/ipc'
+import type { AvatarSourcePick, GroupPatch, GroupView } from '../../../shared/ipc'
 import { CAPS, GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
@@ -14,6 +14,8 @@ import {
 } from '../utils/group-admin'
 import PantryIcon from './PantryIcon.vue'
 import AvatarMark from './AvatarMark.vue'
+import AvatarCropDialog from './AvatarCropDialog.vue'
+import GroupAvatar from './GroupAvatar.vue'
 import GroupInviteDialog from './GroupInviteDialog.vue'
 
 // 群成员面板（ui-design §5）：角色徽标 / 任免管理员 / 移除 / 开放邀请 / 改名 / 退出。
@@ -31,6 +33,9 @@ const showInviteDialog = ref(false)
 const adminPassword = ref('')
 const adminFeedback = ref('')
 const adminBusy = ref(false)
+const avatarSource = ref<Extract<AvatarSourcePick, { ok: true }> | null>(null)
+const avatarBusy = ref(false)
+const avatarFeedback = ref('')
 
 const atMemberCap = computed(() => props.group.members.length >= GROUP_MAX_MEMBERS)
 const canShowAdmin = computed(() => canRenameGroup(props.group))
@@ -60,6 +65,79 @@ function avatarOf(id: string): number {
   // 自己不在 peersStore 里，头像取自己的真实设置（决议 #83）
   if (id === props.selfId) return chatStore.selfAvatar
   return peersStore.byId(id)?.avatar ?? -1
+}
+function avatarHashOf(id: string): string {
+  if (id === props.selfId) return chatStore.selfAvatarHash
+  return peersStore.byId(id)?.avatarHash ?? ''
+}
+
+function groupAdminPassword(): string | undefined {
+  if (props.group.canManage) return undefined
+  const password = adminPassword.value.trim()
+  if (!password) {
+    avatarFeedback.value = '请输入管理密码'
+    return undefined
+  }
+  return password
+}
+
+async function pickGroupAvatar(): Promise<void> {
+  if (avatarBusy.value || !canShowAdmin.value) return
+  if (!props.group.canManage && !adminPassword.value.trim()) {
+    avatarFeedback.value = '请输入管理密码'
+    return
+  }
+  const source = await window.pantry.pickAvatarSource()
+  if (!source) return
+  if (!source.ok) {
+    avatarFeedback.value = source.error
+    return
+  }
+  avatarFeedback.value = ''
+  avatarSource.value = source
+}
+
+async function applyGroupAvatar(bytes: ArrayBuffer): Promise<void> {
+  if (avatarBusy.value) return
+  const password = groupAdminPassword()
+  if (!props.group.canManage && !password) return
+  avatarBusy.value = true
+  avatarFeedback.value = ''
+  try {
+    const updated = await window.pantry.setGroupAvatar(props.group.groupId, bytes, password)
+    if (!updated) {
+      avatarFeedback.value = props.group.hasAdminPassword
+        ? '密码不正确，请重新输入'
+        : '保存群头像失败'
+      return
+    }
+    groupsStore.byId[updated.groupId] = updated
+    avatarSource.value = null
+  } catch {
+    avatarFeedback.value = '保存群头像失败，请稍后重试'
+  } finally {
+    avatarBusy.value = false
+  }
+}
+
+async function restoreGroupAvatar(): Promise<void> {
+  if (avatarBusy.value || !props.group.avatarHash) return
+  const password = groupAdminPassword()
+  if (!props.group.canManage && !password) return
+  avatarBusy.value = true
+  avatarFeedback.value = ''
+  try {
+    const updated = await window.pantry.setGroupAvatar(props.group.groupId, null, password)
+    if (!updated) {
+      avatarFeedback.value = props.group.hasAdminPassword
+        ? '密码不正确，请重新输入'
+        : '恢复群头像失败'
+      return
+    }
+    groupsStore.byId[updated.groupId] = updated
+  } finally {
+    avatarBusy.value = false
+  }
 }
 
 async function rename(): Promise<void> {
@@ -146,6 +224,31 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       </button>
     </div>
 
+    <div class="group-identity">
+      <GroupAvatar class="group-avatar-large" :avatar-hash="group.avatarHash" :icon-size="28" />
+      <div class="group-avatar-copy">
+        <strong>群头像</strong>
+        <span>{{ group.avatarHash ? '自定义图片' : '默认群组图标' }}</span>
+      </div>
+      <button
+        v-if="canShowAdmin"
+        class="avatar-action"
+        :disabled="avatarBusy || adminBusy"
+        @click="pickGroupAvatar"
+      >
+        {{ group.avatarHash ? '更换' : '设置' }}
+      </button>
+      <button
+        v-if="canShowAdmin && group.avatarHash"
+        class="avatar-action secondary"
+        :disabled="avatarBusy || adminBusy"
+        @click="restoreGroupAvatar"
+      >
+        恢复默认
+      </button>
+    </div>
+    <div v-if="avatarFeedback" class="admin-feedback">{{ avatarFeedback }}</div>
+
     <div class="count">成员 {{ group.members.length }} / {{ GROUP_MAX_MEMBERS }}</div>
     <div v-if="adminTip" class="admin-tip">{{ adminTip }}</div>
     <div v-if="hasLegacyMembers" class="compat-tip">群内有旧版本成员，角色或邀请可能无法完整同步，请提醒升级</div>
@@ -165,6 +268,7 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
         <AvatarMark
           class="m-avatar"
           :avatar="avatarOf(id)"
+          :avatar-hash="avatarHashOf(id)"
           :name="nameOf(id)"
           :presence="id === selfId ? undefined : ((peersStore.byId(id)?.online ?? false) ? 'online' : 'offline')"
         />
@@ -210,6 +314,15 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       v-if="showInviteDialog && group.amMember"
       :group="group"
       @close="showInviteDialog = false"
+    />
+    <AvatarCropDialog
+      v-if="avatarSource"
+      :source="avatarSource"
+      title="调整群头像"
+      :busy="avatarBusy"
+      :error="avatarFeedback"
+      @close="avatarSource = null"
+      @apply="applyGroupAvatar"
     />
   </aside>
 </template>
@@ -278,6 +391,50 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
 .count {
   font-size: 11px;
   color: var(--text-3);
+}
+.group-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.group-avatar-large {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+}
+.group-avatar-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.group-avatar-copy strong {
+  font-size: 13px;
+}
+.group-avatar-copy span {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.avatar-action {
+  flex: 0 0 auto;
+  height: 26px;
+  border: 1px solid var(--primary);
+  border-radius: 5px;
+  padding: 0 7px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+.avatar-action.secondary {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text-2);
+}
+.avatar-action:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .admin-tip {
   font-size: 11px;

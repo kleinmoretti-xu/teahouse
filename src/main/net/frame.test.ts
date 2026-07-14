@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import {
+  AVATAR_MAX_BYTES,
+  MSG_TYPES,
+  type AvatarPayload,
+  type TcpFrame
+} from '../../shared/protocol'
+import { makeEnvelope } from './codec'
 import { FrameReader, encodeFrame } from './frame'
-import type { TcpFrame } from '../../shared/protocol'
 
 const SHA256 = 'a'.repeat(64)
 
@@ -70,6 +76,24 @@ describe('FrameReader', () => {
     head.writeUInt32BE(10 * 1024 * 1024)
     reader.feed(head)
     expect(errors).toEqual(['bad-frame-length'])
+  })
+
+  it('32 KiB 头像响应可完整落在单个 TCP 控制帧内', () => {
+    const envelope = makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-avatar', {
+      op: 'data',
+      hash: 'b'.repeat(64),
+      bytesBase64: Buffer.alloc(AVATAR_MAX_BYTES).toString('base64')
+    })
+    const wire = encodeFrame({ type: 'msg', envelope })
+    expect(wire.readUInt32BE(0)).toBeLessThanOrEqual(64 * 1024)
+    const frames: TcpFrame[] = []
+    const reader = new FrameReader(
+      (frame) => frames.push(frame),
+      () => undefined,
+      () => undefined
+    )
+    reader.feed(wire)
+    expect(frames).toHaveLength(1)
   })
 
   it.each([

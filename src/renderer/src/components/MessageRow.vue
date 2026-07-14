@@ -18,6 +18,7 @@ const props = defineProps<{
   isGroupConv: boolean
   senderName: string
   senderAvatar: number
+  senderAvatarHash: string
   highlighted: boolean
   canSendPk: boolean
   pkDisabledReason: string
@@ -66,6 +67,7 @@ function openTextLink(url: string): void {
       v-if="showGroupSender"
       class="msg-avatar"
       :avatar="props.senderAvatar"
+      :avatar-hash="props.senderAvatarHash"
       :name="props.senderName"
     />
     <span class="message-stack">

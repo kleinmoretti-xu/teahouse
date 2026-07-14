@@ -1,13 +1,14 @@
 import type DatabaseT from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { DataExportOptions, DataImportResult, ExportFormat } from '../../shared/ipc'
-import { GROUP_MAX_MEMBERS } from '../../shared/protocol'
+import { GROUP_MAX_MEMBERS, isAvatarHash } from '../../shared/protocol'
 import { parsePkRef, pkResultText, pkTitle } from '../../shared/pk'
 import { toFtsTokens } from '../store/fts'
 import { isPathInsideAny } from '../util/path-policy'
 import { readZip, writeStoreZip, type ZipEntry } from '../util/zip-store'
+import { avatarHashOf, isValidAvatarBytes } from './avatar-store'
 
 interface MessageDump {
   id: string
@@ -40,6 +41,7 @@ interface PeerDump {
   dept: string
   team: string
   avatar: number
+  avatarHash?: string
   host: string
   platform: string
   ip: string
@@ -57,6 +59,7 @@ interface Manifest {
   exportedAt: number
   exportedBy: string
   nick: string
+  avatarHash?: string
   counts: {
     conversations: number
     messages: number
@@ -79,6 +82,7 @@ interface GroupDump {
   creatorId?: string
   ownerId?: string
   adminIds?: string[]
+  avatarHash?: string
   adminSecretHash?: string
   adminHint?: string
 }
@@ -131,7 +135,9 @@ export class PorterService {
     private readonly selfId: string,
     private readonly nick: string,
     private readonly mediaDir: string,
-    private readonly extraMediaRoots: string[] = []
+    private readonly extraMediaRoots: string[] = [],
+    private readonly avatarDir = '',
+    private readonly selfAvatarHash = ''
   ) {}
 
   private managedMediaRoots(): string[] {
@@ -159,6 +165,7 @@ export class PorterService {
     const groups = this.parseJsonl<GroupDump>(entries.get('groups.jsonl'))
     const stickers = this.parseJsonl<StickerDump>(entries.get('stickers.jsonl'))
     const transfers = this.parseJsonl<TransferDump>(entries.get('transfers.jsonl'))
+    this.restoreAvatars(entries, this.avatarHashes(peers, groups, manifest.avatarHash))
     const statements = this.prepareImportStatements()
     let nextSeq =
       ((statements.maxMessageSeq.get() as { seq?: number } | undefined)?.seq ?? 0) + 1
@@ -181,7 +188,15 @@ export class PorterService {
       }
       return { imported, skipped }
     })
-    return tx() as DataImportResult
+    const result = tx() as DataImportResult
+    if (
+      isAvatarHash(manifest.avatarHash) &&
+      this.avatarDir &&
+      existingFile(join(this.avatarDir, `${manifest.avatarHash}.webp`))
+    ) {
+      result.profileAvatarHash = manifest.avatarHash
+    }
+    return result
   }
 
   private exportBackup(path: string, options?: DataExportOptions): void {
@@ -191,15 +206,20 @@ export class PorterService {
     const groups = this.groups()
     const stickers = this.stickers()
     const transfers = this.transfers(messages)
+    const avatarHashes = this.avatarHashes(peers, groups, this.selfAvatarHash)
     const mediaEntries = new Set(transfers.filter((t) => t.archivePath).map((t) => t.archivePath as string))
     for (const sticker of stickers) {
       if (sticker.archivePath) mediaEntries.add(sticker.archivePath)
+    }
+    for (const hash of avatarHashes) {
+      if (this.avatarEntry(hash)) mediaEntries.add(`media/avatars/${hash}.webp`)
     }
     const manifest: Manifest = {
       formatVer: 1,
       exportedAt: Date.now(),
       exportedBy: this.selfId,
       nick: this.nick,
+      ...(isAvatarHash(this.selfAvatarHash) ? { avatarHash: this.selfAvatarHash } : {}),
       counts: {
         conversations: conversations.length,
         messages: messages.length,
@@ -224,6 +244,10 @@ export class PorterService {
     }
     for (const sticker of stickers) {
       if (sticker.archivePath) this.addMediaEntry(entries, sticker.archivePath, sticker.path)
+    }
+    for (const hash of avatarHashes) {
+      const entry = this.avatarEntry(hash)
+      if (entry) entries.push(entry)
     }
     writeStoreZip(path, entries)
   }
@@ -256,7 +280,8 @@ export class PorterService {
     return this.db
       .prepare(
         `SELECT node_id AS nodeId, nick, COALESCE(remark, '') AS remark, company, dept, team,
-                avatar, host, platform, ip, udp_port AS udpPort, tcp_port AS tcpPort,
+                avatar, avatar_hash AS avatarHash, host, platform, ip,
+                udp_port AS udpPort, tcp_port AS tcpPort,
                 profile_rev AS profileRev, caps, ver, first_seen AS firstSeen, last_seen AS lastSeen
          FROM peers ORDER BY last_seen ASC`
       )
@@ -269,7 +294,7 @@ export class PorterService {
         `SELECT group_id AS groupId, name, members, rev, updated_by AS updatedBy,
                 updated_ts AS updatedTs, creator_ip AS creatorIp,
                 creator_id AS creatorId,
-                owner_id AS ownerId, admin_ids AS adminIds,
+                owner_id AS ownerId, admin_ids AS adminIds, avatar_hash AS avatarHash,
                 admin_secret_hash AS adminSecretHash,
                 admin_hint AS adminHint
          FROM groups ORDER BY updated_ts ASC`
@@ -336,9 +361,9 @@ export class PorterService {
     return {
       peerUpsert: this.db.prepare(
         `INSERT INTO peers
-         (node_id, nick, remark, company, dept, team, avatar, host, platform, ip,
+         (node_id, nick, remark, company, dept, team, avatar, avatar_hash, host, platform, ip,
           udp_port, tcp_port, profile_rev, caps, ver, first_seen, last_seen)
-         VALUES (@nodeId, @nick, @remark, @company, @dept, @team, @avatar, @host, @platform, @ip,
+         VALUES (@nodeId, @nick, @remark, @company, @dept, @team, @avatar, @avatarHash, @host, @platform, @ip,
                  @udpPort, @tcpPort, @profileRev, @caps, @ver, @firstSeen, @lastSeen)
          ON CONFLICT(node_id) DO UPDATE SET
            nick = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.nick ELSE peers.nick END,
@@ -346,6 +371,7 @@ export class PorterService {
            dept = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.dept ELSE peers.dept END,
            team = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.team ELSE peers.team END,
            avatar = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.avatar ELSE peers.avatar END,
+           avatar_hash = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.avatar_hash ELSE peers.avatar_hash END,
            host = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.host ELSE peers.host END,
            platform = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.platform ELSE peers.platform END,
            ip = CASE WHEN excluded.last_seen >= peers.last_seen THEN excluded.ip ELSE peers.ip END,
@@ -360,9 +386,9 @@ export class PorterService {
       groupUpsert: this.db.prepare(
         `INSERT INTO groups (
            group_id, name, members, rev, updated_by, updated_ts,
-           creator_ip, creator_id, owner_id, admin_ids, admin_secret_hash, admin_hint
+           creator_ip, creator_id, owner_id, admin_ids, avatar_hash, admin_secret_hash, admin_hint
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(group_id) DO UPDATE SET
            name = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
@@ -387,6 +413,9 @@ export class PorterService {
            admin_ids = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
              THEN excluded.admin_ids ELSE groups.admin_ids END,
+           avatar_hash = CASE
+             WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
+             THEN excluded.avatar_hash ELSE groups.avatar_hash END,
            admin_secret_hash = CASE
              WHEN excluded.rev > groups.rev OR (excluded.rev = groups.rev AND excluded.updated_ts >= groups.updated_ts)
              THEN excluded.admin_secret_hash ELSE groups.admin_secret_hash END,
@@ -425,7 +454,10 @@ export class PorterService {
 
   private importPeer(peer: PeerDump, statements: ImportStatements): void {
     if (!peer.nodeId || peer.nodeId === this.selfId) return
-    statements.peerUpsert.run(peer)
+    statements.peerUpsert.run({
+      ...peer,
+      avatarHash: isAvatarHash(peer.avatarHash) ? peer.avatarHash : ''
+    })
   }
 
   private importGroup(group: GroupDump, exportedBy: string, statements: ImportStatements): void {
@@ -456,6 +488,7 @@ export class PorterService {
       typeof creatorId === 'string' ? creatorId.slice(0, 64) : updatedBy,
       ownerId,
       JSON.stringify(adminIds),
+      isAvatarHash(group.avatarHash) ? group.avatarHash : '',
       adminSecretHash,
       adminHint
     )
@@ -554,6 +587,53 @@ export class PorterService {
     if (!this.isManagedMediaPath(sourcePath)) return
     if (entries.some((entry) => entry.name === archivePath)) return
     entries.push({ name: archivePath, data: readFileSync(sourcePath) })
+  }
+
+  private avatarHashes(
+    peers: PeerDump[],
+    groups: GroupDump[],
+    additional?: string
+  ): string[] {
+    return [...new Set([
+      ...peers.map((peer) => peer.avatarHash),
+      ...groups.map((group) => group.avatarHash),
+      additional
+    ].filter(isAvatarHash))]
+  }
+
+  private avatarEntry(hash: string): ZipEntry | null {
+    if (!this.avatarDir || !isAvatarHash(hash)) return null
+    const path = join(this.avatarDir, `${hash}.webp`)
+    if (!existingFile(path)) return null
+    try {
+      const data = readFileSync(path)
+      if (!isValidAvatarBytes(data) || avatarHashOf(data) !== hash) return null
+      return { name: `media/avatars/${hash}.webp`, data }
+    } catch {
+      return null
+    }
+  }
+
+  private restoreAvatars(entries: Map<string, Buffer>, hashes: string[]): void {
+    if (!this.avatarDir) return
+    mkdirSync(this.avatarDir, { recursive: true })
+    for (const hash of hashes) {
+      const data = entries.get(`media/avatars/${hash}.webp`)
+      if (!data || !isValidAvatarBytes(data) || avatarHashOf(data) !== hash) continue
+      const target = join(this.avatarDir, `${hash}.webp`)
+      try {
+        if (existsSync(target)) {
+          const current = readFileSync(target)
+          if (isValidAvatarBytes(current) && avatarHashOf(current) === hash) continue
+          unlinkSync(target)
+        }
+        const temporary = join(this.avatarDir, `${hash}.${randomUUID()}.tmp`)
+        writeFileSync(temporary, data, { flag: 'wx' })
+        renameSync(temporary, target)
+      } catch {
+        // 单个头像损坏或写入失败不阻断聊天记录导入。
+      }
+    }
   }
 
   private isManagedMediaPath(path: string | null): path is string {

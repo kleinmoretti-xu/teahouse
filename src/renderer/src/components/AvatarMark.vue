@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useAvatarsStore } from '../stores/avatars'
 import { avatarEmojiIndex, avatarStyle, avatarText } from '../utils/avatar'
 import AvatarGlyph from './AvatarGlyph.vue'
 
 const props = defineProps<{
   avatar: number
   name: string
+  avatarHash?: string
   offline?: boolean
   // 在线状态点：'online' 绿 / 'offline' 灰；不传则不显示任何点。
   // 不能用 boolean —— Vue 对未传的 Boolean prop 会强制转成 false（而非 undefined），
@@ -13,17 +15,41 @@ const props = defineProps<{
   presence?: 'online' | 'offline'
 }>()
 
+const avatarsStore = useAvatarsStore()
+avatarsStore.init()
+const failedKey = ref('')
 const glyphIndex = computed(() => avatarEmojiIndex(props.avatar))
+const version = computed(() => avatarsStore.versionOf(props.avatarHash ?? ''))
+const imageKey = computed(() => `${props.avatarHash ?? ''}:${version.value}`)
+const imageSrc = computed(() =>
+  props.avatarHash ? `pantry-avatar://${props.avatarHash}?v=${version.value}` : ''
+)
+const showImage = computed(
+  () => Boolean(imageSrc.value) && failedKey.value !== imageKey.value
+)
 const markStyle = computed(() => {
   if (props.offline) return { backgroundColor: 'var(--offline)', color: '#fff' }
   return avatarStyle(props.avatar, props.name)
+})
+
+watch(imageKey, () => {
+  failedKey.value = ''
 })
 </script>
 
 <template>
   <span class="avatar-mark">
-    <span class="avatar-face" :style="markStyle">
-      <AvatarGlyph v-if="glyphIndex >= 0" :index="glyphIndex" />
+    <span class="avatar-face" :class="{ 'custom-offline': offline && showImage }" :style="markStyle">
+      <img
+        v-if="showImage"
+        :key="imageKey"
+        :src="imageSrc"
+        alt=""
+        draggable="false"
+        decoding="async"
+        @error="failedKey = imageKey"
+      />
+      <AvatarGlyph v-else-if="glyphIndex >= 0" :index="glyphIndex" />
       <span v-else class="avatar-initial">{{ avatarText(avatar, name) }}</span>
     </span>
     <span
@@ -55,6 +81,15 @@ const markStyle = computed(() => {
 }
 .avatar-initial {
   line-height: 1;
+}
+.avatar-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar-face.custom-offline img {
+  filter: grayscale(1);
+  opacity: 0.72;
 }
 /* 在线状态点（决议 #81）：右下角绿/灰圆点 + 描窗口底色细边，浮在头像外缘。
    尺寸按头像比例自适配，clamp 兜住极小/极大头像。 */

@@ -17,6 +17,7 @@ function group(overrides: Partial<GroupView> = {}): GroupView {
     creatorIp: '10.0.0.1',
     ownerId: 'node-self',
     adminIds: [],
+    avatarHash: '',
     selfRole: 'owner',
     hasAdminPassword: false,
     adminHint: '',

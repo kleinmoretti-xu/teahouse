@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { decode, decodeTcpEnvelopeObject, encode, makeEnvelope } from './codec'
 import {
+  AVATAR_MAX_BYTES,
   GROUP_IMG_AUTO_ACCEPT,
   GROUP_MAX_MEMBERS,
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
   UDP_MAX_INBOUND,
+  type AvatarPayload,
   type FileCtlPayload,
   type GroupPayload,
   type MsgPayload,
@@ -45,6 +47,51 @@ describe('codec', () => {
     expect(result.env.type).toBe('entry')
     expect(result.env.from).toBe('node-aaaa')
     expect((result.env.payload as ProfilePayload).profile.nick).toBe('张三')
+  })
+
+  it('资料头像哈希可选，非法哈希拒收', () => {
+    const hash = 'a'.repeat(64)
+    const withAvatar = makeEnvelope<ProfilePayload>(MSG_TYPES.entry, 'node-aaaa', {
+      profile: makeProfile({ avatarHash: hash, caps: ['av1'] })
+    })
+    expect(decode(encode(withAvatar))).toMatchObject({ ok: true, known: true })
+    expect(
+      decode(
+        encode(
+          makeEnvelope<ProfilePayload>(MSG_TYPES.entry, 'node-aaaa', {
+            profile: makeProfile({ avatarHash: '../avatar.webp' })
+          })
+        )
+      )
+    ).toEqual({ ok: false, reason: 'bad-payload:entry' })
+  })
+
+  it('avatar 请求与响应执行哈希、base64 和大小白名单校验', () => {
+    const hash = 'b'.repeat(64)
+    const get = makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-aaaa', {
+      op: 'get',
+      hash,
+      groupId: 'group-1'
+    })
+    expect(decodeTcpEnvelopeObject(get)).toMatchObject({ ok: true, known: true })
+
+    const data = makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-aaaa', {
+      op: 'data',
+      hash,
+      bytesBase64: Buffer.from('avatar').toString('base64')
+    })
+    expect(decodeTcpEnvelopeObject(data)).toMatchObject({ ok: true, known: true })
+
+    for (const payload of [
+      { op: 'get', hash: 'bad' },
+      { op: 'data', hash, bytesBase64: '***=' },
+      { op: 'data', hash, bytesBase64: Buffer.alloc(AVATAR_MAX_BYTES + 1).toString('base64') },
+      { op: 'get', hash, extra: true }
+    ]) {
+      expect(
+        decodeTcpEnvelopeObject(makeEnvelope(MSG_TYPES.avatar, 'node-aaaa', payload))
+      ).toEqual({ ok: false, reason: 'bad-payload:avatar' })
+    }
   })
 
   it('update 自更新请求报文：合法往返 + 坏报文白名单拒绝', () => {
@@ -234,6 +281,7 @@ describe('codec', () => {
       creatorId: 'node-aaaa',
       ownerId: 'node-aaaa',
       adminIds: ['node-bbbb'],
+      avatarHash: 'c'.repeat(64),
       adminSecretHash: '',
       adminHint: ''
     }
@@ -245,7 +293,13 @@ describe('codec', () => {
 
     const legacy = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
       op: 'info',
-      group: { ...group, creatorId: undefined, ownerId: undefined, adminIds: undefined }
+      group: {
+        ...group,
+        creatorId: undefined,
+        ownerId: undefined,
+        adminIds: undefined,
+        avatarHash: undefined
+      }
     })
     expect(decode(encode(legacy))).toMatchObject({ ok: true, known: true })
 
@@ -263,7 +317,8 @@ describe('codec', () => {
       { ...group, adminIds: ['node-bbbb', 'node-bbbb'] },
       { ...group, adminIds: ['node-missing'] },
       { ...group, adminIds: ['node-aaaa'] },
-      { ...group, ownerId: 'node-missing' }
+      { ...group, ownerId: 'node-missing' },
+      { ...group, avatarHash: 'invalid' }
     ]) {
       const invalid = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
         op: 'info',

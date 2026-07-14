@@ -342,6 +342,7 @@ onUnmounted(() => {
         <AvatarMark
           class="avatar"
           :avatar="settings?.avatar ?? -1"
+          :avatar-hash="settings?.avatarHash"
           :name="settings?.nick ?? '茶'"
         />
         <div class="self-card" aria-hidden="true">
@@ -349,6 +350,7 @@ onUnmounted(() => {
             <AvatarMark
               class="self-card-avatar"
               :avatar="settings?.avatar ?? -1"
+              :avatar-hash="settings?.avatarHash"
               :name="settings?.nick ?? '茶'"
             />
             <div class="self-card-title">

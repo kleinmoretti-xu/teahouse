@@ -286,6 +286,7 @@ function isReliableControlType(type: string): boolean {
     type === MSG_TYPES.msg ||
     type === MSG_TYPES.fileCtl ||
     type === MSG_TYPES.group ||
+    type === MSG_TYPES.avatar ||
     type === MSG_TYPES.update
   )
 }

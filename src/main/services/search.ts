@@ -68,6 +68,7 @@ export class SearchService {
         dept: r.profile.dept,
         team: r.profile.team,
         avatar: r.profile.avatar,
+        avatarHash: r.profile.avatarHash ?? '',
         host: r.profile.host,
         platform: r.profile.platform,
         ip: r.ip,

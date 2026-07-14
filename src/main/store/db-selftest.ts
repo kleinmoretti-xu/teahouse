@@ -3,7 +3,8 @@
 // 用 node:assert 而非 vitest —— vitest 跑在开发机新版 Node 上，加载不了 Electron ABI 的原生模块。
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -47,6 +48,21 @@ function makePeer(name: string, rev = 1): PeerRecord {
   }
 }
 
+function avatarWebp(): Buffer {
+  const bytes = Buffer.alloc(30)
+  bytes.write('RIFF', 0, 'ascii')
+  bytes.writeUInt32LE(22, 4)
+  bytes.write('WEBP', 8, 'ascii')
+  bytes.write('VP8 ', 12, 'ascii')
+  bytes.writeUInt32LE(10, 16)
+  bytes[23] = 0x9d
+  bytes[24] = 0x01
+  bytes[25] = 0x2a
+  bytes.writeUInt16LE(192, 26)
+  bytes.writeUInt16LE(192, 28)
+  return bytes
+}
+
 const dir = mkdtempSync(join(tmpdir(), 'pantry-dbtest-'))
 const db = openDatabase(join(dir, 'chat.db'))
 
@@ -54,7 +70,7 @@ try {
   console.log(`[db-selftest] runtime node=${process.versions.node} abi=${process.versions.modules}`)
 
   // 1. 迁移就位
-  assert.equal(db.pragma('user_version', { simple: true }), 11, '迁移版本应为 11')
+  assert.equal(db.pragma('user_version', { simple: true }), 12, '迁移版本应为 12')
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal', '应为 WAL 模式')
   const messageIndexes = new Set(
     (
@@ -88,11 +104,22 @@ try {
     ''
   )
   applyMigrations(legacyDb)
-  assert.equal(legacyDb.pragma('user_version', { simple: true }), 11, 'v10 数据库应迁移至 v11')
+  assert.equal(legacyDb.pragma('user_version', { simple: true }), 12, 'v10 数据库应迁移至 v12')
   const migratedGroup = new GroupRepo(legacyDb).get('g-v10')
   assert.equal(migratedGroup?.ownerId, 'node-creator', '旧群优先以仍在群内的创建者作为群主')
   assert.deepEqual(migratedGroup?.adminIds, [], '旧群管理员默认应为空')
   legacyDb.close()
+
+  const legacyV11 = new Database(join(dir, 'legacy-v11.db'))
+  for (let index = 0; index < 11; index += 1) legacyV11.exec(MIGRATIONS[index])
+  legacyV11.pragma('user_version = 11')
+  applyMigrations(legacyV11)
+  assert.equal(legacyV11.pragma('user_version', { simple: true }), 12, 'v11 数据库应迁移至 v12')
+  const peerColumns = legacyV11.pragma('table_info(peers)') as Array<{ name: string }>
+  const groupColumns = legacyV11.pragma('table_info(groups)') as Array<{ name: string }>
+  assert.equal(peerColumns.some((column) => column.name === 'avatar_hash'), true)
+  assert.equal(groupColumns.some((column) => column.name === 'avatar_hash'), true)
+  legacyV11.close()
 
   // 2. 联系人 upsert / 载入往返
   const repo = new PeersRepo(db)
@@ -110,11 +137,15 @@ try {
   db.prepare('UPDATE peers SET remark = ? WHERE node_id = ?').run('备注-爱丽丝', 'node-alice')
   const updated = makePeer('alice', 2)
   updated.profile.nick = 'alice-改名'
+  const avatarBytes = avatarWebp()
+  const avatarHash = createHash('sha256').update(avatarBytes).digest('hex')
+  updated.profile.avatarHash = avatarHash
   repo.upsertMany([updated])
   loaded = repo.loadAll()
   const alice = loaded.find((p) => p.profile.nodeId === 'node-alice')
   assert.equal(alice?.profile.nick, 'alice-改名')
   assert.equal(alice?.profile.profileRev, 2)
+  assert.equal(alice?.profile.avatarHash, avatarHash, '联系人头像哈希应往返')
   const rowAfter = db
     .prepare('SELECT first_seen, remark FROM peers WHERE node_id = ?')
     .get('node-alice') as { first_seen: number; remark: string }
@@ -410,6 +441,7 @@ try {
     creatorId: 'node-self',
     ownerId: 'node-self',
     adminIds: ['node-bob'],
+    avatarHash,
     adminSecretHash: 'a'.repeat(64),
     adminHint: '项目代号'
   }
@@ -441,6 +473,7 @@ try {
     'LWW：更高 rev 采纳'
   )
   assert.equal(groupRepo.get('g-1')?.name, '新名')
+  assert.equal(groupRepo.get('g-1')?.avatarHash, avatarHash, '群头像哈希应往返')
   assert.equal(convRepo.ensureGroup('g-1'), 'group:g-1')
   assert.equal(convRepo.get('group:g-1')?.type, 'group')
 
@@ -482,7 +515,18 @@ try {
   stickerRepo.insert('s-media', stickerPath, 64, 64, false)
 
   const backupPath = join(dir, 'pantry.pantry-bak')
-  new PorterService(db, 'node-self', '我', join(dir, 'restore-src'), [dir]).export(
+  const exportAvatarDir = join(dir, 'avatars-export')
+  mkdirSync(exportAvatarDir, { recursive: true })
+  writeFileSync(join(exportAvatarDir, `${avatarHash}.webp`), avatarBytes)
+  new PorterService(
+    db,
+    'node-self',
+    '我',
+    join(dir, 'restore-src'),
+    [dir],
+    exportAvatarDir,
+    avatarHash
+  ).export(
     'backup',
     backupPath
   )
@@ -502,10 +546,17 @@ try {
         return typeof value === 'function' ? value.bind(target) : value
       }
     }) as typeof db2
-    const result = new PorterService(instrumentedDb, 'node-new', '新我', join(dir, 'restored')).importBackup(
-      backupPath
-    )
+    const restoredAvatarDir = join(dir, 'avatars-restored')
+    const result = new PorterService(
+      instrumentedDb,
+      'node-new',
+      '新我',
+      join(dir, 'restored'),
+      [],
+      restoredAvatarDir
+    ).importBackup(backupPath)
     assert.equal(maxSeqPrepareCount, 1, '备份导入应只 prepare 一次 MAX(seq) 取号语句')
+    assert.equal(result.profileAvatarHash, avatarHash, '备份中的本机头像引用应恢复')
     assert.ok(result.imported >= 1, '备份导入应至少带入新增图片消息')
     const importedMsg = db2.prepare('SELECT * FROM messages WHERE id = ?').get('m-img') as {
       sender_id: string
@@ -531,6 +582,12 @@ try {
     assert.deepEqual(importedGroup?.adminIds, ['node-bob'])
     assert.equal(importedGroup?.adminSecretHash, 'a'.repeat(64))
     assert.equal(importedGroup?.adminHint, '项目代号')
+    assert.equal(importedGroup?.avatarHash, avatarHash)
+    assert.equal(
+      existsSync(join(restoredAvatarDir, `${avatarHash}.webp`)),
+      true,
+      '备份引用的头像文件应恢复到受管目录'
+    )
     const importedLargeGroup = new GroupRepo(db2).get('g-large')
     assert.equal(importedLargeGroup?.members.length, 121, '备份导入不得截断 120 人大群成员表')
     assert.ok(importedLargeGroup?.members.includes('node-new'), '旧机器的我应映射进大群成员表')
@@ -628,6 +685,7 @@ try {
     const importedLegacyGroup = new GroupRepo(db3).get('g-legacy-backup')
     assert.equal(importedLegacyGroup?.ownerId, 'node-new', '旧备份缺角色字段时应映射并推导群主')
     assert.deepEqual(importedLegacyGroup?.adminIds, [], '旧备份缺角色字段时管理员应为空')
+    assert.equal(importedLegacyGroup?.avatarHash, '', '旧备份缺头像字段时应使用默认群头像')
   } finally {
     db3.close()
   }

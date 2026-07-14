@@ -166,6 +166,12 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   `
   ALTER TABLE groups ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
   ALTER TABLE groups ADD COLUMN admin_ids TEXT NOT NULL DEFAULT '[]';
+  `,
+
+  // v12：自定义用户/群头像内容哈希（决议 #243）
+  `
+  ALTER TABLE peers ADD COLUMN avatar_hash TEXT NOT NULL DEFAULT '';
+  ALTER TABLE groups ADD COLUMN avatar_hash TEXT NOT NULL DEFAULT '';
   `
 ]
 

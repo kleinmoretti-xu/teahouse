@@ -260,6 +260,48 @@ describe('GroupsService 群管理权限', () => {
     ).toBeNull()
   })
 
+  it('群头像沿用改名权限，单次设置只递增一次版本', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('头像组', ['node-admin', 'node-member'], 's3cret')!
+    owner.updateGroup(group.groupId, {
+      kind: 'set-admin',
+      memberId: 'node-admin',
+      enabled: true
+    })
+    const hashA = 'a'.repeat(64)
+    const hashB = 'b'.repeat(64)
+    const before = repo.get(group.groupId)!.rev
+
+    const updated = owner.updateGroup(group.groupId, { kind: 'set-avatar', avatarHash: hashA })
+    expect(updated).toMatchObject({ avatarHash: hashA, rev: before + 1 })
+    expect(owner.updateGroup(group.groupId, { kind: 'set-avatar', avatarHash: hashA })?.rev).toBe(
+      before + 1
+    )
+
+    const admin = service({ selfId: 'node-admin', selfIp: '10.0.0.2', groupRepo: repo })
+    expect(admin.updateGroup(group.groupId, { kind: 'set-avatar', avatarHash: hashB })?.avatarHash).toBe(
+      hashB
+    )
+
+    const member = service({ selfId: 'node-member', selfIp: '10.0.0.3', groupRepo: repo })
+    expect(member.updateGroup(group.groupId, { kind: 'set-avatar', avatarHash: hashA })).toBeNull()
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'set-avatar',
+        avatarHash: hashA,
+        adminPassword: 's3cret'
+      })?.avatarHash
+    ).toBe(hashA)
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'set-avatar',
+        avatarHash: '',
+        adminPassword: 's3cret'
+      })?.avatarHash
+    ).toBe('')
+  })
+
   it('拒绝夹带其他操作字段的混合变更', () => {
     const repo = new FakeGroupRepo()
     const member = service({ selfId: 'node-member', selfIp: '10.0.0.2', groupRepo: repo })
@@ -442,6 +484,78 @@ describe('GroupsService 群管理权限', () => {
     expect(repo.get(local.groupId)?.members).toContain('node-new')
   })
 
+  it('远端群头像只接受群主或管理员的独立变更', () => {
+    const repo = new FakeGroupRepo()
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-self', selfIp: '10.0.0.8', groupRepo: repo, messenger })
+    const local: GroupMeta = {
+      groupId: 'g-avatar',
+      name: '头像组',
+      members: ['node-owner', 'node-admin', 'node-member', 'node-self'],
+      rev: 1,
+      updatedBy: 'node-owner',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-owner',
+      ownerId: 'node-owner',
+      adminIds: ['node-admin'],
+      avatarHash: '',
+      adminSecretHash: '',
+      adminHint: ''
+    }
+    repo.save(local)
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-member', {
+        op: 'info',
+        group: {
+          ...local,
+          avatarHash: 'a'.repeat(64),
+          rev: 2,
+          updatedBy: 'node-member',
+          updatedTs: 2000
+        }
+      }),
+      { address: '10.0.0.3' }
+    )
+    expect(repo.get(local.groupId)?.avatarHash).toBe('')
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-admin', {
+        op: 'info',
+        group: {
+          ...local,
+          avatarHash: 'b'.repeat(64),
+          rev: 2,
+          updatedBy: 'node-admin',
+          updatedTs: 2100
+        }
+      }),
+      { address: '10.0.0.2' }
+    )
+    expect(repo.get(local.groupId)?.avatarHash).toBe('b'.repeat(64))
+
+    const current = repo.get(local.groupId)!
+    messenger.emit(
+      'incoming',
+      makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-admin', {
+        op: 'info',
+        group: {
+          ...current,
+          name: '夹带改名',
+          avatarHash: 'c'.repeat(64),
+          rev: 3,
+          updatedBy: 'node-admin',
+          updatedTs: 3000
+        }
+      }),
+      { address: '10.0.0.2' }
+    )
+    expect(repo.get(local.groupId)).toMatchObject({ name: '头像组', avatarHash: 'b'.repeat(64), rev: 2 })
+  })
+
   it('旧报文缺角色字段时保留本地角色，夹带邀请和改名的入站变更拒绝', () => {
     const repo = new FakeGroupRepo()
     const messenger = new FakeMessenger()
@@ -618,7 +732,7 @@ function groupInfos(messenger: FakeMessenger): Envelope[] {
     .map((s) => s.env)
 }
 
-describe('GroupsService 群变更系统提示（决议 #87/#241/#242）', () => {
+describe('GroupsService 群变更系统提示（决议 #87/#241/#242/#243）', () => {
   function member(
     selfId: string,
     selfIp: string,
@@ -711,6 +825,19 @@ describe('GroupsService 群变更系统提示（决议 #87/#241/#242）', () => 
       '你将阿明设为管理员',
       '你取消了阿明的管理员身份',
       '你将阿明移出群聊'
+    ])
+  })
+
+  it('设置和恢复群头像分别生成一条幂等系统提示', () => {
+    const a = member('node-a', '10.0.0.1')
+    const g = a.svc.createGroup('研发组', ['node-b'])!
+    a.svc.updateGroup(g.groupId, { kind: 'set-avatar', avatarHash: 'a'.repeat(64) })
+    a.svc.updateGroup(g.groupId, { kind: 'set-avatar', avatarHash: 'a'.repeat(64) })
+    a.svc.updateGroup(g.groupId, { kind: 'set-avatar', avatarHash: '' })
+
+    expect(a.msgRepo.inserted.filter((m) => m.kind === 'system').map((m) => m.content)).toEqual([
+      '你修改了群头像',
+      '你恢复了默认群头像'
     ])
   })
 

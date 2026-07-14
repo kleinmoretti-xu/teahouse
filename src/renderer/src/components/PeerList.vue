@@ -143,6 +143,7 @@ function displayName(peer: PeerView): string {
             class="peer-avatar"
             :class="{ off: !row.peer!.online }"
             :avatar="row.peer!.avatar"
+            :avatar-hash="row.peer!.avatarHash"
             :name="displayName(row.peer!)"
             :offline="!row.peer!.online"
           />

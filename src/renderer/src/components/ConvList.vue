@@ -8,7 +8,7 @@ import { listTime } from '../utils/time'
 import { splitEmojiText } from '../utils/compat-emoji'
 import AvatarMark from './AvatarMark.vue'
 import CompatEmoji from './CompatEmoji.vue'
-import PantryIcon from './PantryIcon.vue'
+import GroupAvatar from './GroupAvatar.vue'
 
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
@@ -98,13 +98,16 @@ function confirmRemove(): void {
         @click="chatStore.openConv(conv.id)"
         @contextmenu.prevent.stop="openMenu($event, conv)"
       >
-        <span v-if="conv.type === 'group'" class="conv-avatar grp">
-          <PantryIcon v-if="conv.type === 'group'" name="users" :size="18" />
-        </span>
+        <GroupAvatar
+          v-if="conv.type === 'group'"
+          class="conv-avatar grp"
+          :avatar-hash="groupsStore.byId[conv.peerId]?.avatarHash"
+        />
         <AvatarMark
           v-else
           class="conv-avatar"
           :avatar="peersStore.byId(conv.peerId)?.avatar ?? -1"
+          :avatar-hash="peersStore.byId(conv.peerId)?.avatarHash"
           :name="nickOf(conv.peerId)"
           :presence="(peersStore.byId(conv.peerId)?.online ?? false) ? 'online' : 'offline'"
         />

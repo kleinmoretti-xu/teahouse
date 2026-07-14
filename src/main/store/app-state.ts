@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { atomicWriteJson } from '../util/atomic-write'
-import { DEFAULT_TCP_PORT, DEFAULT_UDP_PORT, type Platform, type Profile } from '../../shared/protocol'
+import {
+  DEFAULT_TCP_PORT,
+  DEFAULT_UDP_PORT,
+  isAvatarHash,
+  type Platform,
+  type Profile
+} from '../../shared/protocol'
 
 // 本地状态：identity.json（节点身份，永不变）+ config.json（资料与应用设置）。
 // 读写走原子写，避免异常退出留下半截 JSON。
@@ -19,6 +25,7 @@ export interface ConfigFile {
   dept: string
   team: string
   avatar: number
+  avatarHash: string
   profileRev: number
   /** 首次启动向导是否已完成（F-SYS-6） */
   setupDone: boolean
@@ -139,6 +146,7 @@ export interface ProfilePatch {
   dept: string
   team: string
   avatar: number
+  avatarHash?: string
   fileDir: string
 }
 
@@ -148,18 +156,26 @@ export interface ProfilePatch {
  */
 export function saveProfile(state: AppState, patch: ProfilePatch): void {
   const { config, profile } = state
+  const nextAvatarHash =
+    patch.avatarHash !== undefined
+      ? patch.avatarHash
+      : patch.avatar !== config.avatar
+        ? ''
+        : config.avatarHash
   const profileChanged =
     patch.nick !== config.nick ||
     patch.company !== config.company ||
     patch.dept !== config.dept ||
     patch.team !== config.team ||
-    patch.avatar !== config.avatar
+    patch.avatar !== config.avatar ||
+    nextAvatarHash !== config.avatarHash
 
   config.nick = patch.nick
   config.company = patch.company
   config.dept = patch.dept
   config.team = patch.team
   config.avatar = patch.avatar
+  config.avatarHash = nextAvatarHash
   config.fileDir = patch.fileDir
   config.setupDone = true
   if (profileChanged) config.profileRev += 1
@@ -170,6 +186,7 @@ export function saveProfile(state: AppState, patch: ProfilePatch): void {
   profile.dept = config.dept
   profile.team = config.team
   profile.avatar = config.avatar
+  profile.avatarHash = config.avatarHash || undefined
   profile.profileRev = config.profileRev
 }
 
@@ -306,6 +323,7 @@ export function loadAppState(
       dept: '',
       team: '',
       avatar: -1,
+      avatarHash: '',
       profileRev: 1,
       setupDone: false,
       fileDir: '',
@@ -338,6 +356,7 @@ export function loadAppState(
     config.avatar <= 999
       ? config.avatar
       : -1
+  config.avatarHash = isAvatarHash(config.avatarHash) ? config.avatarHash : ''
   config.setupDone = config.setupDone === true
   config.fileDir = typeof config.fileDir === 'string' ? config.fileDir : ''
   config.notifications = config.notifications !== false
@@ -431,6 +450,7 @@ export function loadAppState(
     dept: config.dept,
     team: config.team,
     avatar: config.avatar,
+    avatarHash: config.avatarHash || undefined,
     profileRev: config.profileRev,
     host: hostname(),
     platform: detectPlatform(),
