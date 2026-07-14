@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.29；滚动媒体惰性加载（决议 #232）；v0.39.4 开发中 |
+| 状态 | v1.30；主窗口标准表单复用（决议 #233）；v0.39.5 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -30,6 +30,7 @@ Naive UI 接入约束（决议 #215）：
 
 - 精确锁 `naive-ui@2.43.2`；2.44.x 的 `engines.node >=20` 与 Node 16 / CI Node 18 基线冲突，禁止升级到该线。
 - 仅由 renderer 动态根组件引用。设置页组件进入 `SettingsApp.vue` 动态闭包，主窗口搜索与主要按钮进入 `App.vue` 动态闭包；公共 `main.ts` 不静态 import Naive UI，保持 200 KiB 公共启动门禁。
+- `GroupCreator` 与 `ProfileCard` 复用 `App.vue` 已加载的 Provider、Input 与 Button 组件能力；组件内部不新建 Provider。密集成员勾选和已选标签继续使用原生轻量节点，避免扩大高频列表组件实例数（决议 #233）。
 - 主题集中由 `renderer/src/ui/naive-theme.ts` 提供，颜色、字体、圆角与高度映射 `tokens.css`；组件内禁止散落另一套品牌色。
 - 保持 named imports 与 tree-shaking；不使用 vfonts、xicons、CDN 或远程素材。依赖只参与本地构建，运行时不发起外网请求。
 
@@ -235,7 +236,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 - **状态流**：pinia store 是 main 数据的**只读投影** + 乐观更新（发消息先插 `sending` 态，`msg:status` 事件校正）；窗口重载（开发期热更）时全量拉取重建。会话打开额外携带渲染层滚动意图（latest / target，`restore` 仅保留为内部显式选项）：会话列表、联系人、通知、托盘、震动直达与回到最新都走 latest，强制重载最新 50 条并贴到底部，不复用历史搜索上下文窗口或旧 scrollTop；历史搜索跳转走 target 交给高亮消息居中。当前会话新增消息仅在用户本来贴近底部或自己发送时跟随到底，避免阅读历史时被打断（决议 #111/#133/#192）。渲染层 `chatStore` 对已加载会话额外维护内存级 `MessageCache`（`Set<msgId>` + `Map<msgId, MessageView>`），用于追加去重、状态事件 O(1) 定位、历史页去重和删除会话后的缓存清理；文件 / 图片 / 表情发送完成后按返回的 `MessageView.convId` 回填，避免发送期间切换会话造成列表错位（决议 #130）。联系人在线计数、单聊 peer 查找、群在线收件人数、群添加成员候选和群发文件卡片传输统计均避免重复数组遍历或临时数组分配，联系人 / 群成员规模上升时仍保持按既有状态投影单次计算（决议 #131）。该状态只在 renderer 内存中存在，不写库、不经 IPC。
 - **PK 渲染状态**：`MessageView.kind` 增加 `pk`，并携带 `pkRef`。`ChatPane` 对他人的 PK 消息始终渲染气泡外侧参与按钮：猜拳为「我也来」，骰子为「掷一下」；自己的 PK 消息不显示按钮。按钮可反复点击，每次都走 `msg:pk` 发送新的独立消息，不建参与状态表、不按回合聚合。按钮 enabled 由当前在线状态决定：单聊对方在线才可点；群聊至少一位其他成员在线才可点，否则灰显并提示「PK 只能和在线的人玩」。动画播放状态只存在组件内存中：新发 / 新收消息播放一次约 1.5s，分页历史直接显示最终结果，`prefers-reduced-motion` 直接跳到结果。骰子用 CSS/SVG 自绘真实点数组合；猜拳使用本地 Twemoji 原色手势资源（缺资源时补 SVG 并同步署名）。工具栏 PK 入口、玩法浮层和参与按钮均复用现有 `PantryIcon` / CSS token，不新增依赖；动效只用 transform / opacity。不引入 GIF、第三方动画库、远程图片或远程字体。
 - **输入提示层级**：渲染层所有 `input/textarea::placeholder` 统一读取 `--text-placeholder`（决议 #38），该 token 低于 `--text-3`，用于占位 hint；真实输入、标签、错误仍使用既有文字 token，避免把提示当内容。
-- **联系人详情交互**：`PeerList` 向主壳分别发出 `select` 与 `chat` 事件（决议 #40）。单击只更新右侧 `ProfileCard` 投影；双击复用主壳 `chatWith -> chatStore.openPeer`，沿用既有会话打开与探活流程，不新增 IPC 或协议。
+- **联系人详情交互**：`PeerList` 向主壳分别发出 `select` 与 `chat` 事件（决议 #40/#233）。单击只更新右侧 `ProfileCard` 投影；双击复用主壳 `chatWith -> chatStore.openPeer`，沿用既有会话打开与探活流程，不新增 IPC 或协议。资料页本地备注使用主题化 Input，保存备注与发消息使用常规 Button，字段长度、回车保存、状态提示和业务调用保持。
 - **左侧导航悬停层（决议 #116/#117/#118/#119/#121）**：主壳 `App.vue` 内维护 `activeRailHint` 与延迟 timer，不经 IPC。按钮 tooltip 只用一个 `::after` 圆角标签，取消独立箭头 `::before` 和位移动画；显示态由 `pointermove` 后计时触发，不再使用 CSS `:hover` / `:focus-visible`，避免默认焦点和窗口打开在静止鼠标下方时误弹。启动后若原生焦点落在 rail 按钮则主动 blur，点击 rail 按钮后也释放焦点，避免系统黄色焦点框残留。自己信息卡仅绑定头像 `:hover`，不使用 `focus-within`，避免启动焦点造成误弹。可见文本来自本地 `SettingsView` / `AppInfo` 投影。原生 `title` 改为 `aria-label`，既避免系统 tooltip 抢占，又保留辅助语义。
 - **通知与 Release 验证（决议 #108/#120）**：Linux / Windows 桌面通知显式传本地应用图标，`notificationIconPath` 按目标平台选择 `path.posix` / `path.win32`，避免在 Windows runner 上为 Linux 产物生成反斜杠路径。Release workflow 的平台五连验证必须命令失败即阻断后续构建/发布；Windows PowerShell 步骤逐条检查外部命令退出码，macOS/Linux 显式使用 shell 失败即退出策略。
 - token 全部走 `styles/tokens.css` CSS 变量（深色主题 v0.4 只换变量表）。
@@ -448,3 +449,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.27 决议 #230：`ForwardDialog` 使用 Teleport 脱离聊天区局部层叠上下文，补全局 overlay 层级、焦点、Esc 与 reduced-motion 契约，并新增源码回归测试。版本 0.39.1 → **0.39.2**。
 - 2026-07-14 v1.28 决议 #231：Win7 / Linux 的软渲染条件通过 `AppInfo` 下发 renderer，关闭浮层磨砂并停用小图自动 OCR；图片大文件 I/O 改为异步；四窗口增加完整静态 JS / CSS 闭包预算，renderer 品牌图与文件 atlas 分别收敛到 256px / 512px。版本 0.39.2 → **0.39.3**。
 - 2026-07-14 v1.29 决议 #232：保留主窗口 Naive UI 混合接入；聊天图片 / 表情消息、记录搜索缩略图与表情包网格启用原生惰性加载和异步解码。版本 0.39.3 → **0.39.4**。
+- 2026-07-14 v1.30 决议 #233：`GroupCreator` 与 `ProfileCard` 复用主窗口已加载的 Naive UI Input / Button 与集中主题；密集成员勾选和专用结构保持原生轻量节点。版本 0.39.4 → **0.39.5**。

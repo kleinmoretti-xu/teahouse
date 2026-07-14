@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { NButton, NInput } from 'naive-ui'
 import type { PeerView } from '../../../shared/ipc'
 import PantryIcon from './PantryIcon.vue'
 import AvatarMark from './AvatarMark.vue'
@@ -131,12 +132,13 @@ function lastSeenLabel(peer: PeerView): string {
         </div>
         <div class="remark-line">
           <label for="peer-remark">本地备注</label>
-          <input
-            id="peer-remark"
-            v-model="remark"
+          <NInput
+            v-model:value="remark"
+            class="remark-input"
             maxlength="32"
             placeholder="仅自己可见，重名时好认"
-            @input="onRemarkInput"
+            :input-props="{ id: 'peer-remark' }"
+            @update:value="onRemarkInput"
             @keydown.enter.prevent="saveRemark"
           />
         </div>
@@ -169,14 +171,19 @@ function lastSeenLabel(peer: PeerView): string {
 
       <footer class="profile-actions">
         <span class="save-state" :class="{ error: error }">{{ error || (saved ? '已保存' : '') }}</span>
-        <button class="ghost" :disabled="saving || !remarkChanged" @click="saveRemark">
-          <PantryIcon name="check" :size="14" />
+        <NButton
+          secondary
+          :disabled="saving || !remarkChanged"
+          :loading="saving"
+          @click="saveRemark"
+        >
+          <template #icon><PantryIcon name="check" :size="14" /></template>
           {{ saving ? '保存中' : '保存备注' }}
-        </button>
-        <button class="primary" @click="emit('chat', peer.nodeId)">
-          <PantryIcon name="chat" :size="15" />
+        </NButton>
+        <NButton type="primary" @click="emit('chat', peer.nodeId)">
+          <template #icon><PantryIcon name="chat" :size="15" /></template>
           发消息
-        </button>
+        </NButton>
       </footer>
     </article>
   </div>
@@ -305,25 +312,9 @@ h2 {
   color: var(--text-3);
   font-size: 13px;
 }
-.remark-line input {
+.remark-input {
   width: 100%;
   min-width: 0;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--bg-window);
-  color: var(--text-1);
-  padding: 0 10px;
-  font-size: 13px;
-  outline: none;
-  user-select: text;
-}
-.remark-line input::placeholder {
-  color: var(--text-placeholder);
-}
-.remark-line input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(61, 139, 107, 0.1);
 }
 .helper {
   margin: 9px 0 0 84px;
@@ -365,40 +356,6 @@ h2 {
 }
 .save-state.error {
   color: var(--danger);
-}
-button {
-  height: 34px;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-button:disabled {
-  cursor: default;
-  opacity: 0.48;
-}
-.ghost {
-  border: 1px solid var(--line);
-  background: var(--bg-window);
-  color: var(--text-2);
-  padding: 0 13px;
-}
-.ghost:not(:disabled):hover {
-  border-color: rgba(61, 139, 107, 0.35);
-  color: var(--primary);
-}
-.primary {
-  border: none;
-  background: var(--primary);
-  color: #fff;
-  padding: 0 16px;
-}
-.primary:hover {
-  filter: brightness(0.96);
 }
 @media (max-width: 760px) {
   .profile-sheet {

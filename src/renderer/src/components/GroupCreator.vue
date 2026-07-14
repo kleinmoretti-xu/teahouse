@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NButton, NInput } from 'naive-ui'
 import type { PeerView } from '../../../shared/ipc'
 import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
@@ -124,12 +125,14 @@ async function create(): Promise<void> {
       </header>
 
       <section v-if="step === 'members'" class="page">
-        <input
-          v-model="query"
+        <NInput
+          v-model:value="query"
           class="search"
+          size="small"
           maxlength="40"
           autofocus
           placeholder="搜索联系人、部门、团队或 IP"
+          :input-props="{ 'aria-label': '搜索讨论组成员' }"
         />
         <div class="pick-list">
           <label
@@ -157,32 +160,48 @@ async function create(): Promise<void> {
       </section>
 
       <section v-else class="page">
-        <label class="field">
-          <span>组名</span>
-          <input v-model="name" maxlength="32" :placeholder="fallbackName" />
-        </label>
-        <label class="field">
-          <span>管理密码</span>
-          <input
-            v-model="adminPassword"
+        <div class="field">
+          <label for="group-name">组名</label>
+          <NInput
+            v-model:value="name"
+            class="form-input"
+            maxlength="32"
+            :placeholder="fallbackName"
+            :input-props="{ id: 'group-name' }"
+          />
+        </div>
+        <div class="field">
+          <label for="group-admin-password">管理密码</label>
+          <NInput
+            v-model:value="adminPassword"
+            class="form-input"
             maxlength="64"
             type="password"
             placeholder="选填；留空仅创建 IP 可管理"
+            :input-props="{ id: 'group-admin-password' }"
           />
-        </label>
-        <label class="field">
-          <span>确认密码</span>
-          <input
-            v-model="adminPasswordConfirm"
+        </div>
+        <div class="field">
+          <label for="group-admin-password-confirm">确认密码</label>
+          <NInput
+            v-model:value="adminPasswordConfirm"
+            class="form-input"
             maxlength="64"
             type="password"
             placeholder="再次输入管理密码"
+            :input-props="{ id: 'group-admin-password-confirm' }"
           />
-        </label>
-        <label class="field">
-          <span>密码提示</span>
-          <input v-model="adminHint" maxlength="40" placeholder="选填；成员输入密码时显示" />
-        </label>
+        </div>
+        <div class="field">
+          <label for="group-admin-hint">密码提示</label>
+          <NInput
+            v-model:value="adminHint"
+            class="form-input"
+            maxlength="40"
+            placeholder="选填；成员输入密码时显示"
+            :input-props="{ id: 'group-admin-hint' }"
+          />
+        </div>
         <p v-if="passwordError" class="error">{{ passwordError }}</p>
         <p v-else class="hint">管理密码不会保存明文；提示只用于帮成员回忆密码。</p>
       </section>
@@ -204,15 +223,32 @@ async function create(): Promise<void> {
       </div>
 
       <div class="foot">
-        <button class="ghost" @click="step === 'settings' ? (step = 'members') : emit('close')">
+        <NButton
+          size="small"
+          secondary
+          @click="step === 'settings' ? (step = 'members') : emit('close')"
+        >
           {{ step === 'settings' ? '上一步' : '取消' }}
-        </button>
-        <button v-if="step === 'members'" class="primary" :disabled="!canNext" @click="nextStep">
+        </NButton>
+        <NButton
+          v-if="step === 'members'"
+          type="primary"
+          size="small"
+          :disabled="!canNext"
+          @click="nextStep"
+        >
           下一步
-        </button>
-        <button v-else class="primary" :disabled="!canCreate" @click="create">
+        </NButton>
+        <NButton
+          v-else
+          type="primary"
+          size="small"
+          :disabled="!canCreate"
+          :loading="creating"
+          @click="create"
+        >
           {{ creating ? '创建中' : '创建' }}
-        </button>
+        </NButton>
       </div>
     </div>
   </div>
@@ -263,20 +299,7 @@ h3 {
 }
 .search {
   width: 100%;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0 10px;
-  font-size: 13px;
-  outline: none;
   margin-bottom: 10px;
-  user-select: text;
-  color: var(--text-1);
-  background: var(--bg-window);
-}
-.search:focus,
-.field input:focus {
-  border-color: var(--primary);
 }
 .pick-list {
   max-height: 274px;
@@ -354,16 +377,8 @@ h3 {
   font-size: 12px;
   color: var(--text-2);
 }
-.field input {
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0 10px;
-  font-size: 13px;
-  color: var(--text-1);
-  background: var(--bg-window);
-  outline: none;
-  user-select: text;
+.form-input {
+  width: 100%;
 }
 .hint,
 .error {
@@ -421,27 +436,5 @@ h3 {
   align-items: center;
   gap: 8px;
   margin-top: 12px;
-}
-.primary {
-  border: none;
-  background: var(--primary);
-  color: #fff;
-  font-size: 13px;
-  padding: 6px 18px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.primary:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.ghost {
-  border: 1px solid var(--line);
-  background: transparent;
-  border-radius: 4px;
-  font-size: 13px;
-  padding: 6px 14px;
-  cursor: pointer;
-  color: var(--text-2);
 }
 </style>
