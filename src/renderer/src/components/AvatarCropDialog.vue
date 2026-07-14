@@ -14,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; apply: [bytes: ArrayBuffer] }>()
 
 const dialog = ref<HTMLElement | null>(null)
+const cropStage = ref<HTMLElement | null>(null)
 const image = ref<HTMLImageElement | null>(null)
 const imageLoaded = ref(false)
 const imageUrl = ref('')
@@ -23,6 +24,7 @@ const offsetY = ref(0)
 const localError = ref('')
 const dragging = ref(false)
 let dragStart: { x: number; y: number; offsetX: number; offsetY: number } | null = null
+let activePointerId: number | null = null
 const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 
 const cropState = computed<AvatarCropState>(() => ({
@@ -85,22 +87,39 @@ function setZoom(next: number, event?: WheelEvent): void {
 }
 
 function startDrag(event: PointerEvent): void {
-  if (props.busy || event.button !== 0) return
+  if (props.busy || !imageLoaded.value || event.button !== 0 || activePointerId !== null) return
+  event.preventDefault()
   dragging.value = true
+  activePointerId = event.pointerId
   dragStart = { x: event.clientX, y: event.clientY, offsetX: offsetX.value, offsetY: offsetY.value }
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  cropStage.value?.setPointerCapture(event.pointerId)
 }
 
 function moveDrag(event: PointerEvent): void {
-  if (!dragStart) return
+  if (!dragStart || event.pointerId !== activePointerId) return
+  event.preventDefault()
   offsetX.value = dragStart.offsetX + event.clientX - dragStart.x
   offsetY.value = dragStart.offsetY + event.clientY - dragStart.y
   clampOffsets()
 }
 
-function endDrag(): void {
+function clearDrag(): void {
   dragging.value = false
   dragStart = null
+  activePointerId = null
+}
+
+function endDrag(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId) return
+  const pointerId = activePointerId
+  clearDrag()
+  if (pointerId !== null && cropStage.value?.hasPointerCapture(pointerId)) {
+    cropStage.value.releasePointerCapture(pointerId)
+  }
+}
+
+function lostPointerCapture(event: PointerEvent): void {
+  if (event.pointerId === activePointerId) clearDrag()
 }
 
 function requestClose(): void {
@@ -126,12 +145,19 @@ watch(zoom, clampOffsets)
 onMounted(async () => {
   imageUrl.value = URL.createObjectURL(new Blob([props.source.bytes], { type: props.source.mime }))
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('pointermove', moveDrag)
+  window.addEventListener('pointerup', endDrag)
+  window.addEventListener('pointercancel', endDrag)
   await nextTick()
   dialog.value?.focus()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('pointermove', moveDrag)
+  window.removeEventListener('pointerup', endDrag)
+  window.removeEventListener('pointercancel', endDrag)
+  clearDrag()
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
   returnFocus?.focus()
 })
@@ -159,12 +185,11 @@ onBeforeUnmount(() => {
         </header>
 
         <div
+          ref="cropStage"
           class="crop-stage"
           :class="{ dragging }"
           @pointerdown="startDrag"
-          @pointermove="moveDrag"
-          @pointerup="endDrag"
-          @pointercancel="endDrag"
+          @lostpointercapture="lostPointerCapture"
           @wheel.prevent="setZoom(zoom + ($event.deltaY < 0 ? 0.12 : -0.12), $event)"
         >
           <img

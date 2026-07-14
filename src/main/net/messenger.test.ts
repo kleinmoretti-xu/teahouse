@@ -1,5 +1,9 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  CAPS,
   MSG_TYPES,
   type AckPayload,
   type Envelope,
@@ -14,6 +18,9 @@ import { PeerRegistry } from './peer-registry'
 import { Discovery } from './discovery'
 import { Messenger, type DedupStore, type QueueStore } from './messenger'
 import { TransferServer } from './transfer'
+import type { GroupRepo } from '../store/group-repo'
+import { AvatarStore, avatarHashOf } from '../services/avatar-store'
+import { AvatarService } from '../services/avatars'
 
 // 消息层回环集成：两套完整栈（udp+registry+discovery+messenger）在 127.0.0.1 对发。
 // 存储用内存实现 —— vitest 不碰 native 模块；SQLite 实现由 npm run test:db 验证。
@@ -178,6 +185,26 @@ async function startTcpReceiver(stack: Stack): Promise<void> {
 function textEnv(from: string, text: string): Envelope<MsgPayload> {
   return makeEnvelope<MsgPayload>(MSG_TYPES.msg, from, { kind: 'text', text })
 }
+
+function avatarWebp(size = 2048): Uint8Array {
+  const bytes = new Uint8Array(size)
+  bytes.set(Buffer.from('RIFF'), 0)
+  new DataView(bytes.buffer).setUint32(4, size - 8, true)
+  bytes.set(Buffer.from('WEBP'), 8)
+  bytes.set(Buffer.from('VP8 '), 12)
+  new DataView(bytes.buffer).setUint32(16, size - 20, true)
+  bytes[23] = 0x9d
+  bytes[24] = 0x01
+  bytes[25] = 0x2a
+  bytes[26] = 192
+  bytes[28] = 192
+  return bytes
+}
+
+const emptyGroups = {
+  get: () => undefined,
+  list: () => []
+} as unknown as GroupRepo
 
 describe('messenger 回环集成', () => {
   it('在线直达：ACK 确认，sendUserMessage 返回 sent', async () => {
@@ -344,6 +371,55 @@ describe('messenger 回环集成', () => {
       type: MSG_TYPES.update,
       payload: { op: 'req', platform: 'linux' }
     })
+  })
+
+  it('联系人头像通过 127.0.0.1 可靠请求并以 TCP 数据响应落入对端缓存', async () => {
+    nextPort += 20
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'pantry-avatar-loop-source-'))
+    const targetRoot = await mkdtemp(join(tmpdir(), 'pantry-avatar-loop-target-'))
+    try {
+      const a = await makeStack('avatar-source', nextPort)
+      const b = await makeStack('avatar-target', nextPort + 5, [
+        { host: '127.0.0.1', port: a.port }
+      ])
+      const bytes = avatarWebp()
+      const hash = avatarHashOf(bytes)
+      a.profile.avatarHash = hash
+      a.profile.caps = [CAPS.avatarImages]
+      b.profile.caps = [CAPS.avatarImages]
+      const sourceStore = new AvatarStore(sourceRoot)
+      const targetStore = new AvatarStore(targetRoot)
+      expect(await sourceStore.import(hash, bytes)).toBe(true)
+
+      await startTcpReceiver(a)
+      await startTcpReceiver(b)
+      new AvatarService({
+        selfId: a.profile.nodeId,
+        messenger: a.messenger,
+        registry: a.registry,
+        groupRepo: emptyGroups,
+        store: sourceStore,
+        getSelfProfile: () => a.profile
+      })
+      const targetAvatars = new AvatarService({
+        selfId: b.profile.nodeId,
+        messenger: b.messenger,
+        registry: b.registry,
+        groupRepo: emptyGroups,
+        store: targetStore,
+        getSelfProfile: () => b.profile
+      })
+      const ready = new Promise<string>((resolve) => targetAvatars.once('ready', resolve))
+
+      a.discovery.start()
+      b.discovery.start()
+
+      await expect(ready).resolves.toBe(hash)
+      expect(await targetStore.read(hash)).toEqual(Buffer.from(bytes))
+    } finally {
+      await rm(sourceRoot, { recursive: true, force: true })
+      await rm(targetRoot, { recursive: true, force: true })
+    }
   })
 
   it('离线入队 → 对方上线自动补发（含跨"重启"）', async () => {

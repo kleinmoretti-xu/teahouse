@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { avatarImageUrl } from '../../../shared/avatar-url'
 import { useAvatarsStore } from '../stores/avatars'
 import PantryIcon from './PantryIcon.vue'
 
@@ -11,9 +12,7 @@ avatarsStore.init()
 const failedKey = ref('')
 const version = computed(() => avatarsStore.versionOf(props.avatarHash ?? ''))
 const imageKey = computed(() => `${props.avatarHash ?? ''}:${version.value}`)
-const src = computed(() =>
-  props.avatarHash ? `pantry-avatar://${props.avatarHash}?v=${version.value}` : ''
-)
+const src = computed(() => avatarImageUrl(props.avatarHash ?? '', version.value))
 const showImage = computed(() => Boolean(src.value) && failedKey.value !== imageKey.value)
 
 watch(imageKey, () => {

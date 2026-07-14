@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { avatarImageUrl } from '../../../shared/avatar-url'
 import { useAvatarsStore } from '../stores/avatars'
 import { avatarEmojiIndex, avatarStyle, avatarText } from '../utils/avatar'
 import AvatarGlyph from './AvatarGlyph.vue'
@@ -21,9 +22,7 @@ const failedKey = ref('')
 const glyphIndex = computed(() => avatarEmojiIndex(props.avatar))
 const version = computed(() => avatarsStore.versionOf(props.avatarHash ?? ''))
 const imageKey = computed(() => `${props.avatarHash ?? ''}:${version.value}`)
-const imageSrc = computed(() =>
-  props.avatarHash ? `pantry-avatar://${props.avatarHash}?v=${version.value}` : ''
-)
+const imageSrc = computed(() => avatarImageUrl(props.avatarHash ?? '', version.value))
 const showImage = computed(
   () => Boolean(imageSrc.value) && failedKey.value !== imageKey.value
 )

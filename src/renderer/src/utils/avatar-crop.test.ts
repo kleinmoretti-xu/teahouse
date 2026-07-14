@@ -53,4 +53,17 @@ describe('头像裁剪几何', () => {
       })
     ).toEqual({ x: 175, y: 75, size: 50 })
   })
+
+  it('方图放大后允许在两个方向拖动并映射到不同裁剪位置', () => {
+    const state = {
+      imageWidth: 400,
+      imageHeight: 400,
+      viewportSize: 200,
+      zoom: 2,
+      offsetX: 60,
+      offsetY: -40
+    }
+    expect(clampAvatarOffset(state)).toEqual({ x: 60, y: -40 })
+    expect(avatarCropSourceRect(state)).toEqual({ x: 40, y: 140, size: 200 })
+  })
 })

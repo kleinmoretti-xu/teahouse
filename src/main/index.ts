@@ -66,6 +66,7 @@ import {
   type UpdateReqPayload
 } from '../shared/protocol'
 import { isAvatarHash } from '../shared/protocol'
+import { avatarHashFromUrl } from '../shared/avatar-url'
 import { inspectImageMetadata } from '../shared/image-metadata'
 import { DEFAULT_IMAGE_EXTENSION, IMAGE_FILE_EXTENSIONS } from '../shared/media'
 import {
@@ -137,6 +138,12 @@ const SOFTWARE_RENDERING =
 if (SOFTWARE_RENDERING) {
   app.disableHardwareAcceleration()
 }
+
+// 受管头像使用固定 authority + 哈希路径；提前登记为标准安全 scheme，确保 Chrome 108
+// 在 Windows / Linux / macOS 上按同一规则解析后再交给受限文件协议处理器。
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'pantry-avatar', privileges: { standard: true, secure: true } }
+])
 
 // 纯内网 IP 工具：全局禁用代理、强制直连（决议 #78）。不走系统/环境代理，
 // 也不开放任何代理配置——代理对内网通信无意义，只会增加连接失败与信息泄漏面。
@@ -2541,10 +2548,14 @@ if (!gotLock) {
       callback({ error: -6 })
     })
 
-    // pantry-avatar://<sha256> —— 只映射受管目录中的已校验 WebP，不暴露任意本地路径。
+    // pantry-avatar://asset/<sha256> —— 只映射受管目录中的已校验 WebP，不暴露任意本地路径。
     protocol.registerFileProtocol('pantry-avatar', (request, callback) => {
       try {
-        const hash = new URL(request.url).hostname
+        const hash = avatarHashFromUrl(request.url)
+        if (!hash) {
+          callback({ error: -6 })
+          return
+        }
         void avatarStore
           .resolvePath(hash)
           .then((path) => callback(path ? { path } : { error: -6 }))

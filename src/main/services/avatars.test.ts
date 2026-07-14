@@ -91,9 +91,13 @@ class FakeGroupRepo {
   }
 }
 
-async function settle(): Promise<void> {
-  await Promise.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 0))
+async function waitFor(check: () => boolean, timeout = 1000): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (check()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('waitFor 超时')
 }
 
 describe('AvatarService', () => {
@@ -122,7 +126,7 @@ describe('AvatarService', () => {
       expect(messenger.sent).toHaveLength(0)
       registry.get('node-peer')!.online = true
       registry.emit('online', 'node-peer')
-      await settle()
+      await waitFor(() => messenger.sent.length === 1)
       await service.ensurePeer('node-peer')
       expect(messenger.sent).toHaveLength(1)
       expect(messenger.sent[0]).toMatchObject({ peerId: 'node-peer', env: { type: MSG_TYPES.avatar } })
@@ -196,7 +200,7 @@ describe('AvatarService', () => {
           groupId: 'group-1'
         })
       )
-      await settle()
+      await waitFor(() => messenger.sent.length === 1)
       expect(messenger.sent).toHaveLength(1)
       expect(messenger.sent[0].peerId).toBe('node-member')
       expect(messenger.sent[0].env.payload).toMatchObject({ op: 'data', hash, groupId: 'group-1' })
