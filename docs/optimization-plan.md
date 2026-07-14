@@ -1,4 +1,4 @@
-# 茶话间代码优化方案（决议 #200）
+# 茶话间代码优化方案（决议 #200/#231）
 
 > 审查基线：`main` @ `36823fc`（v0.32.3，2026-07-09）。全部行号引用以该版本为准，执行时如有漂移以描述定位。
 > 本文是**优化工作的唯一待办清单**：跟进优化的 AI 代理从这里开工，逐项执行、逐项回写状态。
@@ -300,6 +300,17 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 
 ---
 
+### OPT-19 【P1·低性能平台】Win7 / UOS 第一批渲染、OCR、图片 I/O 与资源预算收敛
+
+- 状态：已完成（v0.39.3 / 本提交）
+- 涉及：`src/main/index.ts`、`src/shared/ipc.ts`、renderer 根组件 / 样式 / 资源、`scripts/check-renderer-bundles.mjs`、`scripts/gen-app-icons.mjs`；难度：中；commit 类型：`fix:`
+- **问题**：Win7 与 Linux 已默认禁硬件加速，但 renderer 无法获知该画像，剩余浮层仍运行 blur 与大阴影；图片查看器会在小图加载后自动初始化约 18 MiB 的 OCR 资源；图片发送暂存、OCR 图源读取与另存仍有同步大文件 I/O；构建只约束公共 bootstrap，未约束四个根窗口的完整静态 JS / CSS 闭包；renderer 品牌图和文件 atlas 超出实际展示所需尺寸，增加安装体积与解码内存。
+- **方案**：`AppInfo` 下发统一 `softwareRendering`；软渲染画像关闭浮层 blur、收紧阴影，小图 OCR 改为手动；图片暂存 / OCR 读取 / 另存切换到 `node:fs/promises`；构建门禁对四个动态根分别计算完整静态闭包并设 JS / CSS 预算；品牌图降到 256px，atlas 降到 512px，同时把品牌派生写入生成脚本。
+- **验收**：纯函数测试覆盖运行时画像与 OCR 策略；源码测试锁定异步 I/O 和软渲染 CSS；bundle gate 测试覆盖完整闭包、共享依赖去重和超预算报错；PNG 头测试锁定 256 / 512 RGBA；五连验证全过。Win7 / UOS 实机流畅度与 OCR 手动入口留给目标平台发布前复测。
+- **边界**：不改 Electron / Node / Chrome 基线，不新增依赖，不改协议 / 数据库 / 网络，不移除 OCR 功能，不调整正常硬件加速平台的小图自动 OCR。
+
+---
+
 ## 3. 建议执行顺序
 
 | 批次 | 条目 | 说明 |
@@ -309,6 +320,7 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 | C | OPT-8 → OPT-9 → OPT-10 | 渲染层；严格按序（互有依赖），OPT-9 改动大可单独排期 |
 | D | OPT-11 → OPT-12 → OPT-13 → OPT-14 → OPT-15 | 网络/主进程收敛，彼此独立、可乱序 |
 | E | OPT-16 → OPT-17 → OPT-18 | 文档与质量，随时可插队 |
+| F（低性能平台） | OPT-19 | 软渲染画像、OCR 策略、图片 I/O、资源与构建预算一次闭环 |
 
 每批做完向用户汇报一次（完成项、版本号轨迹、验证结果），再进下一批。
 
@@ -325,3 +337,5 @@ CREATE INDEX idx_messages_conv_seq ON messages(conv_id, seq);
 - 2026-07-09 v1.1 决议 #201：工作流程改为直接在 main 分支执行（dev-claude 已废弃删除）。
 - 2026-07-09 v1.2 执行完成：18 项由 GPT 逐项落地（13758e9…fad9333，v0.32.4 → v0.32.20，共 18 commit）。
 - 2026-07-09 v1.3 **验收通过**（Claude 复核）：逐项对照代码 diff 与验收标准检查——P0 四项修复正确且回环测试齐全；迁移 v10 只追加；porter 导入 2 万条 93ms（db-selftest 实测）；渲染层 ChatPane 撤回倒计时已收敛到菜单开启期、MessageRow 行组件行为等价、样式逐字搬移；协议 / 依赖 / 构建基线零触碰；测试新增 15+ 用例且全部遵守 127.0.0.1 + 空广播纪律；五连验证（test 213 过 / test:db PASS / typecheck / build / smoke exit 0）全过。状态行补记各 commit 短哈希；OPT-11 留一条 generation 中止的语义备注（见该条目）。
+- 2026-07-14 v1.4 决议 #231：在第二轮代码扫描后追加 OPT-19，聚焦 Win7 / UOS 软渲染画像、OCR 自动策略、图片 I/O、renderer 位图与四窗口完整启动闭包预算。
+- 2026-07-14 v1.5 OPT-19 完成：345 项测试、数据库自测、Node 16 / Chrome 108 类型检查、构建与 smoke 全过；四窗口完整静态闭包预算启用，renderer 两张位图合计由 726,604 字节降至 281,015 字节。

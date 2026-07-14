@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ImageViewer from './components/ImageViewer.vue'
+import { allowsAutomaticOcr, applyPerformanceProfile } from './utils/performance-profile'
 
 const params = computed(() => {
   const query = location.hash.includes('?') ? location.hash.slice(location.hash.indexOf('?') + 1) : ''
@@ -9,6 +10,18 @@ const params = computed(() => {
 
 const transferId = computed(() => params.value.get('transferId') ?? '')
 const src = computed(() => (transferId.value ? `pantry-img://${transferId.value}` : ''))
+const runtimeReady = ref(false)
+const automaticOcr = ref(false)
+
+onMounted(async () => {
+  try {
+    const info = await window.pantry.getAppInfo()
+    applyPerformanceProfile(info)
+    automaticOcr.value = allowsAutomaticOcr(info)
+  } finally {
+    runtimeReady.value = true
+  }
+})
 
 function closeViewer(): void {
   void window.pantry.closeWindow()
@@ -17,12 +30,13 @@ function closeViewer(): void {
 
 <template>
   <ImageViewer
-    v-if="transferId"
+    v-if="transferId && runtimeReady"
     :src="src"
     :transfer-id="transferId"
+    :automatic-ocr="automaticOcr"
     @close="closeViewer"
   />
-  <main v-else class="missing">
+  <main v-else-if="!transferId" class="missing">
     <span>图片不可用</span>
   </main>
 </template>

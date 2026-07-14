@@ -26,8 +26,8 @@ describe('品牌位图图标链路', () => {
       colorType: 6
     })
     expect(readPngHeader(new URL('../assets/brand/teahouse-app-icon.png', import.meta.url))).toEqual({
-      width: 512,
-      height: 512,
+      width: 256,
+      height: 256,
       bitDepth: 8,
       colorType: 6
     })
@@ -42,6 +42,8 @@ describe('品牌位图图标链路', () => {
 
   it('平台图标与彩色托盘都从位图母版生成', () => {
     expect(appScriptText).toContain("pantry-logo-icon-master.png")
+    expect(appScriptText).toContain("teahouse-app-icon.png")
+    expect(appScriptText).toContain("['-z', '256', '256'")
     expect(appScriptText).not.toContain("pantry-logo-icon.svg')")
     expect(trayScriptText).toContain("pantry-logo-icon.png")
     expect(trayScriptText).toContain("pantry-logo-mono.svg")

@@ -27,11 +27,18 @@ function createFixture(transform = (manifest) => manifest) {
       ]
     },
     '_vendor.js': { file: 'assets/vendor.js' },
-    'src/App.vue': { file: 'assets/App.js', src: 'src/App.vue', isDynamicEntry: true },
+    'src/App.vue': {
+      file: 'assets/App.js',
+      src: 'src/App.vue',
+      isDynamicEntry: true,
+      imports: ['_shared.js'],
+      css: ['assets/App.css']
+    },
     'src/SettingsApp.vue': {
       file: 'assets/SettingsApp.js',
       src: 'src/SettingsApp.vue',
-      isDynamicEntry: true
+      isDynamicEntry: true,
+      imports: ['_shared.js']
     },
     'src/CaptureApp.vue': {
       file: 'assets/CaptureApp.js',
@@ -42,7 +49,8 @@ function createFixture(transform = (manifest) => manifest) {
       file: 'assets/ImageViewerApp.js',
       src: 'src/ImageViewerApp.vue',
       isDynamicEntry: true
-    }
+    },
+    '_shared.js': { file: 'assets/shared.js', css: ['assets/shared.css'] }
   })
 
   mkdirSync(join(outDir, '.vite'), { recursive: true })
@@ -50,6 +58,7 @@ function createFixture(transform = (manifest) => manifest) {
   writeFileSync(join(outDir, '.vite', 'manifest.json'), JSON.stringify(manifest))
   for (const item of Object.values(manifest)) {
     if (item.file) writeFileSync(join(outDir, item.file), 'x'.repeat(item.file.includes('vendor') ? 80 : 20))
+    for (const css of item.css ?? []) writeFileSync(join(outDir, css), 'x'.repeat(css.includes('shared') ? 7 : 5))
   }
   return { outDir, manifest }
 }
@@ -60,7 +69,13 @@ describe('checkRendererBundles', () => {
 
     expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 })).toEqual({
       errors: [],
-      bootstrapBytes: 100
+      bootstrapBytes: 100,
+      roots: {
+        'App.vue': { js: 140, css: 12 },
+        'SettingsApp.vue': { js: 140, css: 7 },
+        'CaptureApp.vue': { js: 120, css: 0 },
+        'ImageViewerApp.vue': { js: 120, css: 0 }
+      }
     })
   })
 
@@ -101,6 +116,24 @@ describe('checkRendererBundles', () => {
     const result = checkRendererBundles({ outDir, maxBootstrapBytes: 99 })
     expect(result.bootstrapBytes).toBe(100)
     expect(result.errors.join('\n')).toContain('超过 99 字节预算')
+  })
+
+  it('按窗口统计完整静态闭包并对共享依赖去重', () => {
+    const { outDir } = createFixture()
+
+    const result = checkRendererBundles({ outDir })
+    expect(result.roots['App.vue']).toEqual({ js: 140, css: 12 })
+  })
+
+  it('报告窗口完整静态 JS 与 CSS 闭包超过预算', () => {
+    const { outDir } = createFixture()
+
+    const result = checkRendererBundles({
+      outDir,
+      rootBudgets: { 'App.vue': { js: 139, css: 11 } }
+    })
+    expect(result.errors.join('\n')).toContain('App.vue 完整静态 JS 闭包 140 字节，超过 139 字节预算')
+    expect(result.errors.join('\n')).toContain('App.vue 完整静态 CSS 闭包 12 字节，超过 11 字节预算')
   })
 
   it('报告静态依赖闭包中的缺失文件', () => {

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.27；转发弹窗全局层级已修复（决议 #230）；v0.39.2 开发中 |
+| 状态 | v1.28；低性能平台第一批优化（决议 #231）；v0.39.3 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -35,7 +35,7 @@ Naive UI 接入约束（决议 #215）：
 
 视觉实现约束（决议 #216，#219 修订）：
 
-- 结构材质只使用 CSS 半透明背景、内描边和有色阴影；`backdrop-filter` **只允许用于真正压住内容的浮层**（菜单 / popover / 模态遮罩 / toast），并排结构面板一律不加——其背后是纯色，blur 无视觉收益，Win7 禁硬件加速下是纯软渲染开销（决议 #219）。`prefers-reduced-transparency` 为 Chrome 118+ 特性，108 基线上不生效，相关降级仅作浮层的前向增强，不作为可访问性承诺。
+- 结构材质只使用 CSS 半透明背景、内描边和有色阴影；`backdrop-filter` 只允许用于真正压住内容的浮层（菜单 / popover / 模态遮罩 / toast），并排结构面板一律不加（决议 #219）。主进程沿用 Win7 / Linux 禁硬件加速条件计算 `softwareRendering`，通过 `AppInfo` 下发给各窗口；renderer 在根节点写入性能画像后，浮层改用实色表面、关闭 blur、缩短阴影，图片查看器停用小图自动 OCR，手动识别入口保持（决议 #231）。`prefers-reduced-transparency` 为 Chrome 118+ 特性，108 基线上不生效，相关降级仅作浮层的前向增强，不作为可访问性承诺。
 - 可点击控件在 `:active` 阶段提供 0.97-0.98 缩放反馈；状态过渡只使用 `transform` / `opacity` / color，`prefers-reduced-motion` 下移除位移和缩放。
 - token 增加 `material-*`、`surface-hover`、`surface-selected` 与 shadow 语义，浅色 / 深色同时定义；组件不得直接复制另一套灰阶。
 - 主窗口、设置窗口仍是独立动态根，Provider 随各自根加载。不得把 Naive UI 放进 renderer 公共启动闭包。
@@ -43,9 +43,9 @@ Naive UI 接入约束（决议 #215）：
 - 设置页二选一偏好（决议 #223）统一使用 `SettingsApp.vue` 自绘双段滑块，头像样式、主题与发送键共享相同 DOM / CSS 契约；选中块只用 `transform` 位移，太阳 / 月亮复用本地 `PantryIcon`，不引入 xicons。Naive UI RadioGroup / RadioButton 不再进入设置动态闭包，其余标准表单控件继续使用 Naive UI。
 - 发送键滑块（决议 #224）根据已加载的 `AppInfo.platform` 选择修饰键图标：`darwin` 使用 `key-command`，其他平台使用 `key-control`，并与 `key-enter` 组合。平台信息仅影响展示与 `aria-label`，设置值继续使用 `enter | ctrlEnter`，ChatPane 的 `ctrlKey || metaKey` 判定不变。
 - 分发许可（决议 #225/#229）：0.37.0 起项目自身代码与二进制采用 `GPL-3.0-only`，根目录 `LICENSE` 为唯一许可正文；electron-builder 只在全局 `build.extraResources` 声明一次该文件，配置继承后随 Windows、Linux、macOS 应用资源目录分发。平台专属 `extraResources` 不重复声明同一目标路径，避免 macOS 合并配置时复制冲突。0.36.8 及更早版本的 MIT 授权继续有效，第三方代码与图形资源继续遵循 `THIRD_PARTY_NOTICES.md` 中各自的许可证。
-- 品牌位图管线（决议 #226）：`build/icons/pantry-logo-icon-master.png` 是彩色品牌唯一母版，固定 1024×1024 RGBA；`gen-app-icons.mjs` 不再渲染彩色 SVG，直接校验母版尺寸 / alpha 后生成 `pantry-logo-icon.png`、ICO、ICNS，并链式生成 Linux hicolor 与独立窗口图标。renderer 使用同源 512px PNG；Windows / Linux 托盘从母版生成 32px RGBA，macOS 菜单栏继续从 `pantry-logo-mono.svg` 生成 Template Image。旧彩色 SVG 只保留为历史资料，不进入彩色运行时链路。
+- 品牌位图管线（决议 #226/#231）：`build/icons/pantry-logo-icon-master.png` 是彩色品牌唯一母版，固定 1024×1024 RGBA；`gen-app-icons.mjs` 不再渲染彩色 SVG，直接校验母版尺寸 / alpha 后生成 `pantry-logo-icon.png`、ICO、ICNS，并链式生成 Linux hicolor、独立窗口图标与 renderer 同源 256px PNG。Windows / Linux 托盘从母版生成 32px RGBA，macOS 菜单栏继续从 `pantry-logo-mono.svg` 生成 Template Image。旧彩色 SVG 只保留为历史资料，不进入彩色运行时链路。
 - 私聊头部交互（决议 #84/#227）：`ChatPane` 的 `.title-button` 保留完整点击热区与 `focus-visible` 轮廓，用于打开联系人资料浮层；pointer hover / 弹窗激活只修改内部 `.title` 的 `color`，不得给宽按钮增加背景、阴影或 transform 按压反馈。昵称颜色以 150ms 过渡，`prefers-reduced-motion` 下关闭。
-- 消息与文件表面（决议 #228）：`MessageRow` 文字气泡不再叠加 `--highlight-edge`，peer 只保留轻外阴影，mine 无阴影；`FileCard.card` 与文字 `.bubble` 均使用四角 14px。文件类型资源固定为 `renderer/assets/file-types/file-type-atlas.png`（1024×1024 RGBA、4×4 等分单元格），`FileTypeIcon` 只维护扩展名 → 类型 → atlas 坐标映射，并用 CSS background-position 缩放到请求尺寸。资源随 renderer 本地打包，不经网络、不新增运行时依赖；新增 PNG 头、类型覆盖和源码约束测试。
+- 消息与文件表面（决议 #228/#231）：`MessageRow` 文字气泡不再叠加 `--highlight-edge`，peer 只保留轻外阴影，mine 无阴影；`FileCard.card` 与文字 `.bubble` 均使用四角 14px。文件类型资源固定为 `renderer/assets/file-types/file-type-atlas.png`（512×512 RGBA、4×4 等分单元格），`FileTypeIcon` 只维护扩展名 → 类型 → atlas 坐标映射，并用 CSS background-position 缩放到请求尺寸。单元格 128px 足以覆盖当前 36px 最大显示位的高 DPI 展示，解码内存由 4 MiB 降至 1 MiB。资源随 renderer 本地打包，不经网络、不新增运行时依赖；PNG 头、类型覆盖和源码约束测试锁定该契约。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 - 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
@@ -445,3 +445,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.25 决议 #228：文字气泡移除顶部内高光，文件卡与文字气泡统一四角 14px；文件类型图标从内联 SVG 切换为本地透明 4×4 PNG atlas，保持原扩展名映射 API。版本 0.38.1 → **0.39.0**。
 - 2026-07-14 v1.26 决议 #229：macOS 专属 `extraResources` 移除与全局配置重复的 `LICENSE`，避免 electron-builder 合并后向同一路径复制两次；全局配置继续覆盖三端许可分发。版本 0.39.0 → **0.39.1**。
 - 2026-07-14 v1.27 决议 #230：`ForwardDialog` 使用 Teleport 脱离聊天区局部层叠上下文，补全局 overlay 层级、焦点、Esc 与 reduced-motion 契约，并新增源码回归测试。版本 0.39.1 → **0.39.2**。
+- 2026-07-14 v1.28 决议 #231：Win7 / Linux 的软渲染条件通过 `AppInfo` 下发 renderer，关闭浮层磨砂并停用小图自动 OCR；图片大文件 I/O 改为异步；四窗口增加完整静态 JS / CSS 闭包预算，renderer 品牌图与文件 atlas 分别收敛到 256px / 512px。版本 0.39.2 → **0.39.3**。

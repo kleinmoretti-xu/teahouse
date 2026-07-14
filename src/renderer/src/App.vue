@@ -21,6 +21,7 @@ import WindowDragStrip from './components/WindowDragStrip.vue'
 import { useGroupsStore } from './stores/groups'
 import type { PeerView } from '../../shared/ipc'
 import { applyAppearance } from './utils/appearance'
+import { applyPerformanceProfile } from './utils/performance-profile'
 import AvatarMark from './components/AvatarMark.vue'
 import { randomQuote } from './utils/quotes'
 import {
@@ -293,6 +294,7 @@ onMounted(async () => {
   void updateStore.init()
   document.addEventListener('visibilitychange', onVisibilityChange)
   info.value = await window.pantry.getAppInfo()
+  applyPerformanceProfile(info.value)
   settings.value = await window.pantry.getSettings()
   applyAppearance(settings.value)
   applyWindowTitle(settings.value)

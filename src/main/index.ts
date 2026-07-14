@@ -14,7 +14,8 @@ import {
   type Tray
 } from 'electron'
 import { networkInterfaces, release } from 'node:os'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, extname, join, resolve } from 'node:path'
 import {
@@ -118,8 +119,10 @@ import {
 } from './services/updater'
 
 // Win7（NT 6.1）终端为统一 VM 部署，虚拟显卡驱动不可靠；UOS/Debian 目标机多国产 GPU 或旧驱动，
-// GPU 进程频报 ContextResult::kTransientFailure —— 两者默认软渲染（tech-design §9，决议 #55）
-if ((process.platform === 'win32' && release().startsWith('6.1')) || process.platform === 'linux') {
+// GPU 进程频报 ContextResult::kTransientFailure —— 两者默认软渲染（tech-design §9，决议 #55/#231）
+const SOFTWARE_RENDERING =
+  (process.platform === 'win32' && release().startsWith('6.1')) || process.platform === 'linux'
+if (SOFTWARE_RENDERING) {
   app.disableHardwareAcceleration()
 }
 
@@ -297,15 +300,15 @@ if (!gotLock) {
   const managedMediaRoots = (): string[] => [imagesDir(), importedMediaDir(), stickersDir()]
   const managedStickerRoots = (): string[] => [stickersDir(), importedMediaDir()]
 
-  function stageOutgoingImagePath(sourcePath: string): string | null {
+  async function stageOutgoingImagePath(sourcePath: string): Promise<string | null> {
     try {
       const ext = IMAGE_EXTS.has(extname(sourcePath).toLowerCase())
         ? extname(sourcePath).toLowerCase()
         : DEFAULT_IMAGE_EXTENSION
       const dir = join(imagesDir(), 'out')
-      mkdirSync(dir, { recursive: true })
+      await mkdir(dir, { recursive: true })
       const staged = join(dir, `${randomUUID()}${ext}`)
-      copyFileSync(sourcePath, staged)
+      await copyFile(sourcePath, staged)
       return staged
     } catch {
       return null
@@ -335,11 +338,11 @@ if (!gotLock) {
     return IMAGE_EXTS.has(ext) ? ext : DEFAULT_IMAGE_EXTENSION
   }
 
-  function stageImageBytes(name: string, bytes: ArrayBuffer): string {
+  async function stageImageBytes(name: string, bytes: ArrayBuffer): Promise<string> {
     const dir = join(imagesDir(), 'out')
-    mkdirSync(dir, { recursive: true })
+    await mkdir(dir, { recursive: true })
     const path = join(dir, `${randomUUID()}${outgoingImageExt(name)}`)
-    writeFileSync(path, Buffer.from(bytes))
+    await writeFile(path, Buffer.from(bytes))
     return path
   }
 
@@ -362,7 +365,7 @@ if (!gotLock) {
     if (!targetId || !name || !bytes) return null
     const tableTextMeta = parseTableTextMeta(tableText)
     if (tableTextMeta === null) return null
-    const path = stageImageBytes(name, bytes)
+    const path = await stageImageBytes(name, bytes)
     return (await offer(targetId, [path], tableTextMeta)) ?? null
   }
 
@@ -376,7 +379,7 @@ if (!gotLock) {
     const path = parseImageOfferPath(pathValue)
     if (!targetId || !path) return null
     if (!rendererPathGrants.consume(senderId, [path])) return null
-    const staged = stageOutgoingImagePath(path)
+    const staged = await stageOutgoingImagePath(path)
     if (!staged) return null
     return (await offer(targetId, [staged])) ?? null
   }
@@ -1316,6 +1319,7 @@ if (!gotLock) {
       chrome: process.versions.chrome,
       node: process.versions.node,
       platform: process.platform,
+      softwareRendering: SOFTWARE_RENDERING,
       nodeId: appState?.nodeId ?? '',
       localIp: currentLocalIpv4()
     }
@@ -1875,14 +1879,14 @@ if (!gotLock) {
     return fit.scale
   })
 
-  ipcMain.handle(IpcChannels.imgOcrSource, (event, transferId: unknown): ImageOcrSource | null => {
+  ipcMain.handle(IpcChannels.imgOcrSource, async (event, transferId: unknown): Promise<ImageOcrSource | null> => {
     if (typeof transferId !== 'string' || transferId.length === 0 || transferId.length > 64) return null
     if (!event.sender.getURL().includes('#/image-viewer?')) return null
     const view = managedTransferMediaView(transferId)
     if (!view) return null
     if (view.totalSize <= 0 || view.totalSize > OCR_SOURCE_MAX_BYTES) return null
     try {
-      const buf = readFileSync(view.savedPath)
+      const buf = await readFile(view.savedPath)
       if (buf.length === 0 || buf.length > OCR_SOURCE_MAX_BYTES) return null
       const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
       return { name: view.name, size: buf.length, bytes }
@@ -2095,7 +2099,7 @@ if (!gotLock) {
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return false
     try {
-      copyFileSync(view.savedPath, result.filePath)
+      await copyFile(view.savedPath, result.filePath)
       return true
     } catch (err) {
       console.warn('[files] 图片另存失败：', err)

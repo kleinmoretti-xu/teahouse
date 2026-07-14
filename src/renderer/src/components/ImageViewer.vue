@@ -16,7 +16,7 @@ import {
 } from '../utils/image-viewer-geometry'
 import PantryIcon from './PantryIcon.vue'
 
-const props = defineProps<{ src: string; transferId: string }>()
+const props = defineProps<{ src: string; transferId: string; automaticOcr: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const MIN_ZOOM = 0.005
@@ -288,7 +288,7 @@ function applyOcrResult(result: OcrResult): void {
 }
 
 function maybeStartAutoOcr(): void {
-  if (ocrAutoStarted || !canUseImage.value) return
+  if (!props.automaticOcr || ocrAutoStarted || !canUseImage.value) return
   if (natural.value.width * natural.value.height > OCR_AUTO_MAX_PIXELS) return
   ocrAutoStarted = true
   void startOcr('auto')

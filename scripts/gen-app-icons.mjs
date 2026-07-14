@@ -12,6 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = join(root, 'build/icons')
 const master = join(dir, 'pantry-logo-icon-master.png')
 const png = join(dir, 'pantry-logo-icon.png')
+const rendererPng = join(root, 'src/renderer/src/assets/brand/teahouse-app-icon.png')
 
 // 母版必须自带 alpha，防止打包后出现生图底色或非方形拉伸。
 const input = readFileSync(master)
@@ -31,6 +32,10 @@ writeFileSync(png, input)
 writeFileSync(join(dir, 'pantry-logo-icon.ico'), png2icons.createICO(input, png2icons.BICUBIC, 0, false))
 writeFileSync(join(dir, 'pantry-logo-icon.icns'), png2icons.createICNS(input, png2icons.BICUBIC, 0))
 console.log('已生成 pantry-logo-icon.png(1024) / .ico / .icns')
+
+// renderer 最大展示位为 92px；256px 保留高 DPI 余量，同时避免每个窗口解码 512px 位图。
+execFileSync('sips', ['-z', '256', '256', master, '--out', rendererPng], { stdio: 'pipe' })
+console.log('已生成 renderer 品牌图 teahouse-app-icon.png(256)')
 
 // Linux 多尺寸 hicolor + 窗口图标（复用既有脚本，源就是上面这张 png）
 execFileSync('node', [join(root, 'scripts/gen-linux-icons.mjs')], { stdio: 'inherit' })

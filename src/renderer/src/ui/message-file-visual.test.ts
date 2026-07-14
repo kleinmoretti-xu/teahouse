@@ -35,10 +35,10 @@ describe('消息与文件视觉统一', () => {
     expect(ruleBody(fileCardSource, '.card')).toContain('border-radius: 14px')
   })
 
-  it('文件类型 atlas 是 1024 RGBA PNG', () => {
+  it('文件类型 atlas 是 512 RGBA PNG', () => {
     expect(
       readPngHeader(new URL('../assets/file-types/file-type-atlas.png', import.meta.url))
-    ).toEqual({ width: 1024, height: 1024, bitDepth: 8, colorType: 6 })
+    ).toEqual({ width: 512, height: 512, bitDepth: 8, colorType: 6 })
   })
 
   it('文件类型组件使用 atlas 并覆盖全部类型', () => {

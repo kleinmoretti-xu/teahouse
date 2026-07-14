@@ -4,6 +4,12 @@ import { fileURLToPath } from 'node:url'
 
 const REQUIRED_ROOTS = ['App.vue', 'SettingsApp.vue', 'CaptureApp.vue', 'ImageViewerApp.vue']
 const DEFAULT_MAX_BOOTSTRAP_BYTES = 200 * 1024
+const DEFAULT_ROOT_BUDGETS = {
+  'App.vue': { js: 640 * 1024, css: 96 * 1024 },
+  'SettingsApp.vue': { js: 704 * 1024, css: 40 * 1024 },
+  'CaptureApp.vue': { js: 112 * 1024, css: 12 * 1024 },
+  'ImageViewerApp.vue': { js: 160 * 1024, css: 20 * 1024 }
+}
 
 function sourceBaseName(key, item) {
   const source = String(item?.src ?? key).replace(/\\/g, '/')
@@ -69,20 +75,43 @@ function fileSize(outDir, file, errors) {
   return statSync(path).size
 }
 
+function closureSizes(outDir, manifest, keys, errors) {
+  const jsFiles = new Set()
+  const cssFiles = new Set()
+  let js = 0
+  let css = 0
+
+  for (const key of keys) {
+    const item = manifest[key]
+    if (!item) continue
+    if (typeof item.file === 'string' && item.file.endsWith('.js') && !jsFiles.has(item.file)) {
+      jsFiles.add(item.file)
+      js += fileSize(outDir, item.file, errors)
+    }
+    for (const cssFile of item.css ?? []) {
+      if (cssFiles.has(cssFile)) continue
+      cssFiles.add(cssFile)
+      css += fileSize(outDir, cssFile, errors)
+    }
+  }
+  return { js, css }
+}
+
 export function checkRendererBundles({
   outDir = resolve(process.cwd(), 'out/renderer'),
-  maxBootstrapBytes = DEFAULT_MAX_BOOTSTRAP_BYTES
+  maxBootstrapBytes = DEFAULT_MAX_BOOTSTRAP_BYTES,
+  rootBudgets = DEFAULT_ROOT_BUDGETS
 } = {}) {
   const errors = []
   const manifest = readManifest(resolve(outDir, '.vite/manifest.json'), errors)
-  if (!manifest) return { errors, bootstrapBytes: 0 }
+  if (!manifest) return { errors, bootstrapBytes: 0, roots: {} }
 
   const entryKeys = Object.entries(manifest)
     .filter(([, item]) => item?.isEntry === true)
     .map(([key]) => key)
   if (entryKeys.length !== 1) {
     errors.push(`renderer manifest 必须且只能包含一个公共入口，当前为 ${entryKeys.length} 个`)
-    return { errors, bootstrapBytes: 0 }
+    return { errors, bootstrapBytes: 0, roots: {} }
   }
 
   const staticClosure = collectStaticClosure(manifest, entryKeys[0], errors)
@@ -123,7 +152,22 @@ export function checkRendererBundles({
     errors.push(`renderer 公共启动闭包 ${bootstrapBytes} 字节，超过 ${maxBootstrapBytes} 字节预算`)
   }
 
-  return { errors, bootstrapBytes }
+  const roots = {}
+  for (const [rootName, { key }] of rootEntries) {
+    const closure = collectStaticClosure(manifest, key, errors)
+    for (const commonKey of staticClosure) closure.add(commonKey)
+    const sizes = closureSizes(outDir, manifest, closure, errors)
+    roots[rootName] = sizes
+    const budget = rootBudgets[rootName]
+    if (budget?.js !== undefined && sizes.js > budget.js) {
+      errors.push(`${rootName} 完整静态 JS 闭包 ${sizes.js} 字节，超过 ${budget.js} 字节预算`)
+    }
+    if (budget?.css !== undefined && sizes.css > budget.css) {
+      errors.push(`${rootName} 完整静态 CSS 闭包 ${sizes.css} 字节，超过 ${budget.css} 字节预算`)
+    }
+  }
+
+  return { errors, bootstrapBytes, roots }
 }
 
 function main() {
@@ -134,6 +178,10 @@ function main() {
     return
   }
   console.log(`[renderer-bundles] 四入口检查通过，公共启动闭包 ${result.bootstrapBytes} 字节`)
+  for (const rootName of REQUIRED_ROOTS) {
+    const sizes = result.roots[rootName]
+    console.log(`[renderer-bundles] ${rootName} 完整静态闭包 JS ${sizes.js} 字节 / CSS ${sizes.css} 字节`)
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

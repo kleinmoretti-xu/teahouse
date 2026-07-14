@@ -131,6 +131,8 @@ export interface AppInfo {
   chrome: string
   node: string
   platform: string
+  /** Win7 / Linux 默认禁用硬件加速时为 true，renderer 据此收敛高开销效果。 */
+  softwareRendering: boolean
   /** 本机节点 ID（群成员面板等需区分"我"） */
   nodeId: string
   /** 当前用于局域网身份展示的本机 IPv4。 */

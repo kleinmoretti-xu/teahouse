@@ -23,6 +23,7 @@ import {
 } from '../../shared/ipc'
 import { DEFAULT_TCP_PORT, DEFAULT_UDP_PORT } from '../../shared/protocol'
 import { applyAppearance } from './utils/appearance'
+import { applyPerformanceProfile } from './utils/performance-profile'
 import {
   AVATAR_COLORS,
   AVATAR_EMOJIS,
@@ -207,6 +208,7 @@ const conversationOptions = computed(() => [
 
 onMounted(async () => {
   info.value = await window.pantry.getAppInfo()
+  applyPerformanceProfile(info.value)
   await reload()
   stopSettings = window.pantry.onSettingsUpdated((s) => {
     syncForm(s)

@@ -27,19 +27,19 @@
 > 当前补充：2026-07-14（**v0.38.1 开发中，决议 #227 私聊头部 hover 回归修复**）：聊天顶部对方资料入口移除整块 hover 背景与按下缩放，只保留昵称茶青高亮；点击热区、资料弹窗和键盘焦点轮廓保持不变，并补源码回归测试。
 > 当前补充：2026-07-14（**v0.39.0 开发中，决议 #228 消息 / 文件视觉统一**）：文字消息气泡移除顶部高光，文件卡与文字气泡统一为四角 14px；Word / Excel / PPT 等文件类型图标改为内置 ImageGen 生成、洋红键色去背并归一化的本地 4×4 PNG atlas，原扩展名映射与文件传输行为保持。
 > 当前补充：2026-07-14（**v0.39.1 开发中，决议 #229 macOS 许可资源打包修复**）：`LICENSE` 只保留在全局 electron-builder `extraResources`，macOS 专属列表不再重复声明，修复配置合并后向同一路径复制两次触发的 `EEXIST`；Windows / Linux / macOS 继续随包携带 GPLv3 全文。
-> 当前补充：2026-07-14（**v0.39.2 开发中，决议 #230 转发弹窗层级修复**）：`ForwardDialog` 通过 Teleport 挂到 renderer 全局顶层，脱离聊天区的局部层叠与裁剪上下文；补完整遮罩、稳定 overlay 层级、初始焦点、Esc 退出和 reduced-motion 降级，消息列表不再覆盖转发弹窗。
+> 当前补充：2026-07-14（**v0.39.3 开发中，决议 #231 低性能平台第一批优化**）：Win7 / Linux 的既有软渲染判定进入 renderer 性能画像，浮层关闭磨砂并收紧阴影，小图 OCR 只保留手动触发；图片暂存、OCR 图源读取和另存改为异步文件 I/O；构建增加四窗口完整静态闭包预算，renderer 品牌图与文件类型 atlas 降采样到实际显示所需尺寸。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #230）→ [protocol.md](protocol.md)（主协议 v0.40）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #231）→ [protocol.md](protocol.md)（主协议 v0.40）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.39.2**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.39.3**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
@@ -79,7 +79,7 @@ npm run smoke     # 启动 1.5s 干净退出（PANTRY_SMOKE 钩子，CI 同款�
 ```
 
 - 本机三客户端联调：懒人入口用 `npm run dev:2` 一次拉起前两个、`npm run dev:3` 一次拉起三个；也可分别在三个终端跑 `npm run dev:client1`、`npm run dev:client2`、`npm run dev:client3`。三个实例使用 `/tmp/pantry-dev1..3` 和 `17878/27878/37878` UDP 端口、`17879/27879/37879` TCP 端口。
-- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #230，续 #231+）；协议改动必须 protocol.md 先行。
+- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #231，续 #232+）；协议改动必须 protocol.md 先行。
 - 与用户协作：**全程中文**；用户技术方向不在网络/协议——技术细节直接定但落档、**不要追问底层**；产品可感知取舍（功能形态/默认参数）用 2-4 个带推荐的选项问他。
 
 ## 3. 代码地图（src/，分层铁律见 AGENTS.md #7）
