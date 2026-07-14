@@ -26,7 +26,7 @@ describe('项目主许可元数据', () => {
       from: 'LICENSE',
       to: 'LICENSE'
     })
-    expect(packageJson.build?.mac?.extraResources).toContainEqual({
+    expect(packageJson.build?.mac?.extraResources).not.toContainEqual({
       from: 'LICENSE',
       to: 'LICENSE'
     })
