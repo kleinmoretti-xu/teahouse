@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.34；建群成员列表紧凑化（决议 #237）；v0.39.9 开发中 |
+| 状态 | v1.35；设置侧栏精简与个人信息卡悬停修复（决议 #238）；v0.39.10 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -52,6 +52,7 @@ Naive UI 接入约束（决议 #215）：
 - 图片选择授权（决议 #235）：`file:pick` 继续只服务普通文件 / 文件夹；`img:pick` 固定使用 `openFile + multiSelections` 和 PNG/JPG/JPEG/GIF/WebP/BMP 对话框过滤器。主进程收到对话框结果后再次通过 `IMAGE_FILE_EXTENSIONS` 白名单过滤，再写入 `PathGrantStore`；renderer 的发送图片按钮只调用 `pickImages -> img:offer-path`，不接入普通文件发送分支。实际文件内容继续由决议 #234 的暂存后元数据门禁复核。
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
+- 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
 - 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
@@ -241,7 +242,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 - **PK 渲染状态**：`MessageView.kind` 增加 `pk`，并携带 `pkRef`。`ChatPane` 对他人的 PK 消息始终渲染气泡外侧参与按钮：猜拳为「我也来」，骰子为「掷一下」；自己的 PK 消息不显示按钮。按钮可反复点击，每次都走 `msg:pk` 发送新的独立消息，不建参与状态表、不按回合聚合。按钮 enabled 由当前在线状态决定：单聊对方在线才可点；群聊至少一位其他成员在线才可点，否则灰显并提示「PK 只能和在线的人玩」。动画播放状态只存在组件内存中：新发 / 新收消息播放一次约 1.5s，分页历史直接显示最终结果，`prefers-reduced-motion` 直接跳到结果。骰子用 CSS/SVG 自绘真实点数组合；猜拳使用本地 Twemoji 原色手势资源（缺资源时补 SVG 并同步署名）。工具栏 PK 入口、玩法浮层和参与按钮均复用现有 `PantryIcon` / CSS token，不新增依赖；动效只用 transform / opacity。不引入 GIF、第三方动画库、远程图片或远程字体。
 - **输入提示层级**：渲染层所有 `input/textarea::placeholder` 统一读取 `--text-placeholder`（决议 #38），该 token 低于 `--text-3`，用于占位 hint；真实输入、标签、错误仍使用既有文字 token，避免把提示当内容。
 - **联系人详情交互**：`PeerList` 向主壳分别发出 `select` 与 `chat` 事件（决议 #40/#233）。单击只更新右侧 `ProfileCard` 投影；双击复用主壳 `chatWith -> chatStore.openPeer`，沿用既有会话打开与探活流程，不新增 IPC 或协议。资料页本地备注使用主题化 Input，保存备注与发消息使用常规 Button，字段长度、回车保存、状态提示和业务调用保持。
-- **左侧导航悬停层（决议 #116/#117/#118/#119/#121）**：主壳 `App.vue` 内维护 `activeRailHint` 与延迟 timer，不经 IPC。按钮 tooltip 只用一个 `::after` 圆角标签，取消独立箭头 `::before` 和位移动画；显示态由 `pointermove` 后计时触发，不再使用 CSS `:hover` / `:focus-visible`，避免默认焦点和窗口打开在静止鼠标下方时误弹。启动后若原生焦点落在 rail 按钮则主动 blur，点击 rail 按钮后也释放焦点，避免系统黄色焦点框残留。自己信息卡仅绑定头像 `:hover`，不使用 `focus-within`，避免启动焦点造成误弹。可见文本来自本地 `SettingsView` / `AppInfo` 投影。原生 `title` 改为 `aria-label`，既避免系统 tooltip 抢占，又保留辅助语义。
+- **左侧导航悬停层（决议 #116/#117/#118/#119/#121/#238）**：主壳 `App.vue` 内维护 `activeRailHint` 与延迟 timer，不经 IPC。按钮 tooltip 只用一个 `::after` 圆角标签，取消独立箭头 `::before` 和位移动画；显示态由 `pointermove` 后计时触发，不再使用 CSS `:hover` / `:focus-visible`，避免默认焦点和窗口打开在静止鼠标下方时误弹。启动后若原生焦点落在 rail 按钮则主动 blur，点击 rail 按钮后也释放焦点，避免系统黄色焦点框残留。自己信息卡仅使用鼠标 `:hover`，头像、透明桥接区与作为绝对定位子元素的卡片共同维持祖先悬停态，不使用 `focus-within`；120ms 出现等待用于过滤快速掠过。可见文本来自本地 `SettingsView` / `AppInfo` 投影。原生 `title` 改为 `aria-label`，既避免系统 tooltip 抢占，又保留辅助语义。
 - **通知与 Release 验证（决议 #108/#120）**：Linux / Windows 桌面通知显式传本地应用图标，`notificationIconPath` 按目标平台选择 `path.posix` / `path.win32`，避免在 Windows runner 上为 Linux 产物生成反斜杠路径。Release workflow 的平台五连验证必须命令失败即阻断后续构建/发布；Windows PowerShell 步骤逐条检查外部命令退出码，macOS/Linux 显式使用 shell 失败即退出策略。
 - token 全部走 `styles/tokens.css` CSS 变量（深色主题 v0.4 只换变量表）。
 - 性能预算（NFR 对照）：通讯录树重聚合 ≤16ms（1000 节点，主进程聚合好再推）；搜索请求防抖 200ms；`transfer:progress` 节流后 UI 才消费。
@@ -458,3 +459,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.32 决议 #235：新增 `img:pick` 专用图片选择 IPC，对话框与主进程授权层双重限制支持扩展名；发送图片按钮取消普通文件发送分支。版本 0.39.6 → **0.39.7**。
 - 2026-07-14 v1.33 决议 #236：文件发送方主动取消时同步写入 `canceled` 消息终态，并在传输、消息状态两层拦截迟到失败覆盖；renderer 区分“发送取消”与“已取消”。版本 0.39.7 → **0.39.8**。
 - 2026-07-14 v1.34 决议 #237：`GroupCreator` 联系人项改为姓名与组织路径同一 flex 行，组织字段本地组合并在剩余空间内省略；传输与数据层无变化。版本 0.39.8 → **0.39.9**。
+- 2026-07-14 v1.35 决议 #238：`SettingsApp` 侧栏删除账号摘要；`App` 个人信息卡使用 120ms CSS 延迟、透明命中桥和显示态 pointer events 组成连续悬停范围。无新增响应状态、timer、IPC 或数据字段。版本 0.39.9 → **0.39.10**。

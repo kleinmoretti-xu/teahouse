@@ -644,6 +644,19 @@ onUnmounted(() => {
   margin-bottom: 11px;
   outline: none;
 }
+.avatar-wrap::after {
+  /* 只在头像已悬停后接通到资料卡的 12px 间隙，避免横向移动时提前收起（决议 #238）。 */
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 38px;
+  width: 18px;
+  height: 56px;
+  pointer-events: none;
+}
+.avatar-wrap:hover::after {
+  pointer-events: auto;
+}
 .avatar {
   width: 38px;
   height: 38px;
@@ -681,9 +694,10 @@ onUnmounted(() => {
 }
 .avatar-wrap:hover .self-card {
   opacity: 1;
+  pointer-events: auto;
   visibility: visible;
   transform: translateX(0) scale(1);
-  transition-delay: 420ms, 420ms, 0s;
+  transition-delay: 120ms, 120ms, 0s;
 }
 .self-card-head {
   display: flex;

@@ -639,14 +639,6 @@ async function confirmRemove(cidr: string): Promise<void> {
     <WindowDragStrip />
     <WindowControls buttons="close" />
     <aside class="sidebar">
-      <div class="account-card">
-        <AvatarMark class="account-avatar" :avatar="avatar" :name="nick || '茶'" />
-        <div class="account-copy">
-          <strong>{{ nick || '未命名' }}</strong>
-          <span>{{ company || '未填写公司' }}</span>
-        </div>
-      </div>
-
       <nav class="nav" aria-label="设置分组">
         <button
           v-for="item in sections"
@@ -1339,53 +1331,6 @@ async function confirmRemove(cidr: string): Promise<void> {
   padding: 38px 12px 14px; /* 顶部让出拖拽带与 mac 红绿灯 */
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-
-.account-card {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-  padding: var(--sp-3);
-  border-radius: 12px;
-  background: var(--surface-hover);
-  box-shadow: var(--highlight-edge);
-}
-
-.account-avatar {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-}
-
-.account-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.account-copy strong,
-.account-copy span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-copy strong {
-  font-size: var(--fs-body);
-  line-height: 1.4;
-}
-
-.account-copy span {
-  color: var(--text-3);
-  font-size: var(--fs-aux);
 }
 
 .nav {
