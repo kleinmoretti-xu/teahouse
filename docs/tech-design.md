@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.26；macOS 许可证资源重复复制已修复（决议 #229）；v0.39.1 开发中 |
+| 状态 | v1.27；转发弹窗全局层级已修复（决议 #230）；v0.39.2 开发中 |
 | 日期 | 2026-07-14 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -47,6 +47,7 @@ Naive UI 接入约束（决议 #215）：
 - 私聊头部交互（决议 #84/#227）：`ChatPane` 的 `.title-button` 保留完整点击热区与 `focus-visible` 轮廓，用于打开联系人资料浮层；pointer hover / 弹窗激活只修改内部 `.title` 的 `color`，不得给宽按钮增加背景、阴影或 transform 按压反馈。昵称颜色以 150ms 过渡，`prefers-reduced-motion` 下关闭。
 - 消息与文件表面（决议 #228）：`MessageRow` 文字气泡不再叠加 `--highlight-edge`，peer 只保留轻外阴影，mine 无阴影；`FileCard.card` 与文字 `.bubble` 均使用四角 14px。文件类型资源固定为 `renderer/assets/file-types/file-type-atlas.png`（1024×1024 RGBA、4×4 等分单元格），`FileTypeIcon` 只维护扩展名 → 类型 → atlas 坐标映射，并用 CSS background-position 缩放到请求尺寸。资源随 renderer 本地打包，不经网络、不新增运行时依赖；新增 PNG 头、类型覆盖和源码约束测试。
 - Teleport 浮层、焦点回收、Esc、无标题窗口拖拽带与 Chrome 108 兼容性必须逐批验证；未迁移的自绘组件行为保持不变。
+- 转发弹窗层级（决议 #230）：`ForwardDialog` 通过 Vue `Teleport` 挂到 `body`，脱离 `ChatPane.chat` 的 `isolation` / `overflow` 局部层叠上下文；全窗 mask 固定使用全局 overlay 层级，弹窗进入时获得焦点并监听 `Esc`，卸载时移除监听。遮罩不使用 blur，动画只改变 opacity / transform，`prefers-reduced-motion` 下关闭。
 
 ## 2. 进程与窗口模型
 
@@ -443,3 +444,4 @@ media/stickers/...  # 自定义表情包媒体
 - 2026-07-14 v1.24 决议 #227：修复私聊头部资料入口 hover 回归；移除宽按钮背景与 transform 反馈，保留昵称颜色过渡、完整点击热区和键盘焦点轮廓。版本 0.38.0 → **0.38.1**。
 - 2026-07-14 v1.25 决议 #228：文字气泡移除顶部内高光，文件卡与文字气泡统一四角 14px；文件类型图标从内联 SVG 切换为本地透明 4×4 PNG atlas，保持原扩展名映射 API。版本 0.38.1 → **0.39.0**。
 - 2026-07-14 v1.26 决议 #229：macOS 专属 `extraResources` 移除与全局配置重复的 `LICENSE`，避免 electron-builder 合并后向同一路径复制两次；全局配置继续覆盖三端许可分发。版本 0.39.0 → **0.39.1**。
+- 2026-07-14 v1.27 决议 #230：`ForwardDialog` 使用 Teleport 脱离聊天区局部层叠上下文，补全局 overlay 层级、焦点、Esc 与 reduced-motion 契约，并新增源码回归测试。版本 0.39.1 → **0.39.2**。

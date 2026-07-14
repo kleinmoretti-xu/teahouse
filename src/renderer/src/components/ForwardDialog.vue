@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ForwardTarget, MessageView } from '../../../shared/ipc'
 import { usePeersStore } from '../stores/peers'
 import { useGroupsStore } from '../stores/groups'
@@ -16,6 +16,8 @@ const chatStore = useChatStore()
 const picked = ref(new Set<string>())
 const sending = ref(false)
 const result = ref('')
+const dialogRef = ref<HTMLElement | null>(null)
+let previousFocus: HTMLElement | null = null
 
 const allowGroup = computed(() => props.msg.kind === 'text')
 const groups = computed(() => Object.values(groupsStore.byId).filter((g) => g.amMember))
@@ -52,64 +54,104 @@ async function forward(): Promise<void> {
   sending.value = false
   result.value = `已转发 ${res.ok}/${res.total}`
 }
+
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  emit('close')
+}
+
+onMounted(() => {
+  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  window.addEventListener('keydown', onWindowKeydown)
+  void nextTick(() => dialogRef.value?.focus())
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onWindowKeydown)
+  if (previousFocus?.isConnected) previousFocus.focus()
+})
 </script>
 
 <template>
-  <div class="mask" @click.self="emit('close')">
-    <div class="dialog">
-      <h3>转发</h3>
-      <div class="summary">{{ summary }}</div>
-      <div class="pick-list">
-        <label v-for="p in peersStore.peers" :key="p.nodeId" class="pick">
-          <input
-            type="checkbox"
-            :checked="picked.has(`single:${p.nodeId}`)"
-            @change="toggle(`single:${p.nodeId}`)"
-          />
-          <span class="dot" :class="p.online ? 'on' : 'off'"></span>
-          <span class="nm">{{ p.remark || p.nick }}</span>
-          <em v-if="!p.online" class="off-tag">离线</em>
-        </label>
-        <label v-for="g in forwardGroups" :key="g.groupId" class="pick">
-          <input
-            type="checkbox"
-            :checked="picked.has(`group:${g.groupId}`)"
-            @change="toggle(`group:${g.groupId}`)"
-          />
-          <span class="group-dot"><PantryIcon name="users" :size="13" /></span>
-          <span class="nm">{{ g.name }}</span>
-        </label>
-        <p v-if="peersStore.peers.length === 0 && (!allowGroup || groups.length === 0)" class="empty">
-          没有可选目标
-        </p>
-      </div>
-      <div class="foot">
-        <span class="count">已选 {{ picked.size }} 个目标</span>
-        <span class="result">{{ result }}</span>
-        <button class="ghost" @click="emit('close')">取消</button>
-        <button class="primary" :disabled="!canSend" @click="forward">
-          {{ sending ? '转发中' : '转发' }}
-        </button>
-      </div>
+  <Teleport to="body">
+    <div class="mask" @mousedown.self="emit('close')">
+      <section
+        ref="dialogRef"
+        class="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="forward-dialog-title"
+        tabindex="-1"
+        @mousedown.stop
+      >
+        <h3 id="forward-dialog-title">转发</h3>
+        <div class="summary">{{ summary }}</div>
+        <div class="pick-list">
+          <label v-for="p in peersStore.peers" :key="p.nodeId" class="pick">
+            <input
+              type="checkbox"
+              :checked="picked.has(`single:${p.nodeId}`)"
+              @change="toggle(`single:${p.nodeId}`)"
+            />
+            <span class="dot" :class="p.online ? 'on' : 'off'"></span>
+            <span class="nm">{{ p.remark || p.nick }}</span>
+            <em v-if="!p.online" class="off-tag">离线</em>
+          </label>
+          <label v-for="g in forwardGroups" :key="g.groupId" class="pick">
+            <input
+              type="checkbox"
+              :checked="picked.has(`group:${g.groupId}`)"
+              @change="toggle(`group:${g.groupId}`)"
+            />
+            <span class="group-dot"><PantryIcon name="users" :size="13" /></span>
+            <span class="nm">{{ g.name }}</span>
+          </label>
+          <p
+            v-if="peersStore.peers.length === 0 && (!allowGroup || groups.length === 0)"
+            class="empty"
+          >
+            没有可选目标
+          </p>
+        </div>
+        <div class="foot">
+          <span class="count">已选 {{ picked.size }} 个目标</span>
+          <span class="result">{{ result }}</span>
+          <button class="ghost" @click="emit('close')">取消</button>
+          <button class="primary" :disabled="!canSend" @click="forward">
+            {{ sending ? '转发中' : '转发' }}
+          </button>
+        </div>
+      </section>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  padding: 24px;
+  background: rgba(18, 31, 25, 0.32);
   display: grid;
   place-items: center;
-  z-index: 16;
+  z-index: 1200;
+  animation: forward-mask-in 140ms ease-out;
 }
 .dialog {
-  width: 380px;
-  background: var(--bg-window);
-  border-radius: 8px;
+  width: min(380px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--material-strong);
+  border: 1px solid var(--line);
+  border-radius: 16px;
   padding: 18px 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  animation: forward-dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dialog:focus {
+  outline: none;
 }
 h3 {
   font-size: 15px;
@@ -119,7 +161,7 @@ h3 {
   max-height: 62px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 10px;
   padding: 8px;
   color: var(--text-2);
   font-size: 12px;
@@ -131,7 +173,7 @@ h3 {
   max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 12px;
   padding: 4px;
 }
 .pick {
@@ -141,10 +183,10 @@ h3 {
   padding: 6px 8px;
   font-size: 13px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 .pick:hover {
-  background: var(--line);
+  background: var(--surface-hover);
 }
 .dot {
   width: 7px;
@@ -205,7 +247,7 @@ h3 {
   color: #fff;
   font-size: 13px;
   padding: 6px 18px;
-  border-radius: 4px;
+  border-radius: 9px;
   cursor: pointer;
 }
 .primary:disabled {
@@ -214,10 +256,27 @@ h3 {
 .ghost {
   border: 1px solid var(--line);
   background: transparent;
-  border-radius: 4px;
+  border-radius: 9px;
   font-size: 13px;
   padding: 6px 14px;
   cursor: pointer;
   color: var(--text-2);
+}
+@keyframes forward-mask-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes forward-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mask,
+  .dialog {
+    animation: none;
+  }
 }
 </style>
