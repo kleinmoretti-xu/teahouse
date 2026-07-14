@@ -66,6 +66,21 @@ describe('codec', () => {
     ).toEqual({ ok: false, reason: 'bad-payload:entry' })
   })
 
+  it('昵称首字显式背景色头像编号可编解码', () => {
+    const env = makeEnvelope<ProfilePayload>(MSG_TYPES.profile, 'node-aaaa', {
+      profile: makeProfile({ avatar: 209 })
+    })
+    const result = decode(encode(env))
+    expect(result).toMatchObject({ ok: true, known: true })
+    if (result.ok && result.known) {
+      expect((result.env.payload as ProfilePayload).profile.avatar).toBe(209)
+    }
+    const invalid = makeEnvelope<ProfilePayload>(MSG_TYPES.profile, 'node-aaaa', {
+      profile: makeProfile({ avatar: 210 })
+    })
+    expect(decode(encode(invalid))).toEqual({ ok: false, reason: 'bad-payload:profile' })
+  })
+
   it('avatar 请求与响应执行哈希、base64 和大小白名单校验', () => {
     const hash = 'b'.repeat(64)
     const get = makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-aaaa', {

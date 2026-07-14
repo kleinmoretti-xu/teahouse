@@ -31,7 +31,9 @@ import {
   avatarColorIndex,
   avatarEmojiIndex,
   avatarStyle,
-  avatarValue
+  avatarValue,
+  initialAvatarValue,
+  isInitialAvatar
 } from './utils/avatar'
 import AvatarGlyph from './components/AvatarGlyph.vue'
 import AvatarCropDialog from './components/AvatarCropDialog.vue'
@@ -192,6 +194,8 @@ const dept = ref('')
 const team = ref('')
 const avatar = ref(-1)
 const avatarHash = ref('')
+type AvatarMode = 'animal' | 'initial' | 'custom'
+const avatarMode = ref<AvatarMode>('initial')
 const avatarSource = ref<Extract<AvatarSourcePick, { ok: true }> | null>(null)
 const avatarSaving = ref(false)
 const avatarError = ref('')
@@ -223,9 +227,11 @@ let stopSettings: (() => void) | null = null
 const selectedAvatarEmoji = computed(() => avatarEmojiIndex(avatar.value))
 const selectedAvatarColor = computed(() => avatarColorIndex(avatar.value, nick.value || '茶'))
 const avatarSummary = computed(() => {
-  if (avatarHash.value) return '自定义图片'
+  if (avatarHash.value) return '自定义头像'
   const colorName = AVATAR_COLORS[selectedAvatarColor.value]?.name ?? ''
-  return avatar.value === -1 ? `昵称首字 · ${colorName}` : `图标 · ${colorName}`
+  return isInitialAvatar(avatar.value)
+    ? `昵称首字 · ${colorName}`
+    : `动物表情 · ${colorName}`
 })
 const currentSection = computed(() => sections.find((item) => item.id === section.value) ?? sections[0])
 const isMacPlatform = computed(() => info.value?.platform === 'darwin')
@@ -278,6 +284,11 @@ async function reload(): Promise<void> {
 }
 
 function syncForm(s: SettingsView): void {
+  const keepPendingCustomMode =
+    avatarMode.value === 'custom' &&
+    !avatarHash.value &&
+    avatar.value === s.avatar &&
+    !s.avatarHash
   settings.value = s
   nick.value = s.nick
   company.value = s.company
@@ -285,6 +296,9 @@ function syncForm(s: SettingsView): void {
   team.value = s.team
   avatar.value = s.avatar
   avatarHash.value = s.avatarHash
+  if (!keepPendingCustomMode) {
+    avatarMode.value = s.avatarHash ? 'custom' : isInitialAvatar(s.avatar) ? 'initial' : 'animal'
+  }
   fileDir.value = s.fileDir
   udpPortInput.value = String(s.udpPort)
   tcpPortInput.value = String(s.tcpPort)
@@ -349,12 +363,14 @@ async function autoSaveProfile(): Promise<void> {
 }
 
 function chooseInitialAvatar(): void {
+  avatarMode.value = 'initial'
   avatarHash.value = ''
-  avatar.value = -1
+  avatar.value = initialAvatarValue(selectedAvatarColor.value)
   void autoSaveProfile()
 }
 
 function chooseAvatarEmoji(index: number): void {
+  avatarMode.value = 'animal'
   avatarHash.value = ''
   avatar.value = avatarValue(index, selectedAvatarColor.value)
   void autoSaveProfile()
@@ -362,9 +378,16 @@ function chooseAvatarEmoji(index: number): void {
 
 function chooseAvatarColor(index: number): void {
   avatarHash.value = ''
-  const emoji = selectedAvatarEmoji.value >= 0 ? selectedAvatarEmoji.value : 0
-  avatar.value = avatarValue(emoji, index)
+  avatar.value =
+    avatarMode.value === 'initial'
+      ? initialAvatarValue(index)
+      : avatarValue(selectedAvatarEmoji.value >= 0 ? selectedAvatarEmoji.value : 0, index)
   void autoSaveProfile()
+}
+
+function selectCustomAvatarMode(): void {
+  avatarMode.value = 'custom'
+  avatarError.value = ''
 }
 
 async function pickCustomAvatar(): Promise<void> {
@@ -390,18 +413,6 @@ async function applyCustomAvatar(bytes: ArrayBuffer): Promise<void> {
     flashSaved('头像已更新')
   } catch {
     avatarError.value = '保存头像失败，请稍后重试'
-  } finally {
-    avatarSaving.value = false
-  }
-}
-
-async function restoreDefaultAvatar(): Promise<void> {
-  if (avatarSaving.value) return
-  avatarSaving.value = true
-  try {
-    const next = await window.pantry.setProfileAvatar({ kind: 'preset', avatar: avatar.value })
-    syncForm(next)
-    flashSaved('已恢复默认头像')
   } finally {
     avatarSaving.value = false
   }
@@ -800,7 +811,7 @@ async function confirmRemove(cidr: string): Promise<void> {
               <h2>个人身份</h2>
               <p>昵称必填。公司、部门、团队会用于通讯录树形分组。</p>
             </div>
-            <!-- 头像编辑器（决议 #50）：大预览 + 样式分段切换 + 图标网格 + 背景色板 -->
+            <!-- 头像编辑器（决议 #50/#245）：三种模式按需展示动物、色板或上传入口 -->
             <div class="avatar-editor">
               <div class="avatar-stage">
                 <AvatarMark
@@ -820,17 +831,17 @@ async function confirmRemove(cidr: string): Promise<void> {
                   <button
                     type="button"
                     role="radio"
-                    :class="{ on: !avatarHash && avatar >= 0 }"
-                    :aria-checked="!avatarHash && avatar >= 0"
+                    :class="{ on: avatarMode === 'animal' }"
+                    :aria-checked="avatarMode === 'animal'"
                     @click="chooseAvatarEmoji(selectedAvatarEmoji >= 0 ? selectedAvatarEmoji : 0)"
                   >
-                    图标头像
+                    动物表情
                   </button>
                   <button
                     type="button"
                     role="radio"
-                    :class="{ on: !avatarHash && avatar === -1 }"
-                    :aria-checked="!avatarHash && avatar === -1"
+                    :class="{ on: avatarMode === 'initial' }"
+                    :aria-checked="avatarMode === 'initial'"
                     @click="chooseInitialAvatar"
                   >
                     昵称首字
@@ -838,66 +849,60 @@ async function confirmRemove(cidr: string): Promise<void> {
                   <button
                     type="button"
                     role="radio"
-                    :class="{ on: Boolean(avatarHash) }"
-                    :aria-checked="Boolean(avatarHash)"
-                    @click="pickCustomAvatar"
+                    :class="{ on: avatarMode === 'custom' }"
+                    :aria-checked="avatarMode === 'custom'"
+                    @click="selectCustomAvatarMode"
                   >
-                    图片头像
+                    自定义头像
                   </button>
                 </div>
                 <p class="avatar-mode-hint">
                   {{
-                    avatarHash
-                      ? '使用裁剪后的本地图片；图片只会在局域网内按需同步。'
-                      : avatar === -1
-                      ? '使用昵称第一个字作头像，背景色按昵称自动分配。'
-                      : '从下方挑一个图标，再配一个背景色。'
+                    avatarMode === 'custom'
+                      ? '上传本地图片并裁剪；图片只会在局域网内按需同步。'
+                      : avatarMode === 'initial'
+                      ? '使用昵称第一个字作头像，并从下方选择背景色。'
+                      : '从下方挑一个动物表情，再配一个背景色。'
                   }}
                 </p>
-                <div v-if="avatarHash" class="avatar-picture-actions">
-                  <button type="button" :disabled="avatarSaving" @click="pickCustomAvatar">
-                    更换图片
-                  </button>
-                  <button
-                    type="button"
-                    class="restore"
-                    :disabled="avatarSaving"
-                    @click="restoreDefaultAvatar"
-                  >
-                    恢复默认
-                  </button>
-                </div>
               </div>
-              <div v-if="!avatarHash" class="avatar-pick">
-                <span class="avatar-label">图标</span>
-                <div class="avatar-grid" aria-label="精选头像图标">
-                  <button
-                    v-for="(_, idx) in AVATAR_EMOJIS"
-                    :key="idx"
-                    type="button"
-                    class="avatar-choice"
-                    :class="{ on: selectedAvatarEmoji === idx }"
-                    :style="avatarOptionStyle(idx)"
-                    :aria-label="`头像图标 ${idx + 1}`"
-                    @click="chooseAvatarEmoji(idx)"
-                  >
-                    <AvatarGlyph :index="idx" />
-                  </button>
-                </div>
-                <span class="avatar-label">背景色</span>
-                <div class="avatar-colors" aria-label="头像背景色">
+              <div v-if="avatarMode !== 'custom'" class="avatar-pick">
+                <template v-if="avatarMode === 'animal'">
+                  <span class="avatar-label">动物表情</span>
+                  <div class="avatar-grid" aria-label="精选动物表情">
+                    <button
+                      v-for="(_, idx) in AVATAR_EMOJIS"
+                      :key="idx"
+                      type="button"
+                      class="avatar-choice"
+                      :class="{ on: selectedAvatarEmoji === idx }"
+                      :style="avatarOptionStyle(idx)"
+                      :aria-label="`动物表情 ${idx + 1}`"
+                      @click="chooseAvatarEmoji(idx)"
+                    >
+                      <AvatarGlyph :index="idx" />
+                    </button>
+                  </div>
+                </template>
+                <span class="avatar-label">背景颜色</span>
+                <div class="avatar-colors" aria-label="头像背景颜色">
                   <button
                     v-for="(color, idx) in AVATAR_COLORS"
                     :key="color.name"
                     type="button"
                     class="color-choice"
-                    :class="{ on: selectedAvatarColor === idx && avatar >= 0 }"
+                    :class="{ on: selectedAvatarColor === idx }"
                     :style="{ backgroundColor: color.bg }"
                     :title="color.name"
-                    :aria-label="`头像背景色：${color.name}`"
+                    :aria-label="`头像背景颜色：${color.name}`"
                     @click="chooseAvatarColor(idx)"
                   ></button>
                 </div>
+              </div>
+              <div v-else class="avatar-pick avatar-picture-actions">
+                <button type="button" :disabled="avatarSaving" @click="pickCustomAvatar">
+                  上传图片
+                </button>
               </div>
             </div>
             <div class="field-grid">
@@ -2017,12 +2022,6 @@ async function confirmRemove(cidr: string): Promise<void> {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-}
-
-.avatar-picture-actions button.restore {
-  border-color: var(--line);
-  background: transparent;
-  color: var(--text-2);
 }
 
 .avatar-picture-actions button:disabled {

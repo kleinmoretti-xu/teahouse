@@ -23,6 +23,22 @@ export const AVATAR_MAX_DIMENSION = 8192
 export const AVATAR_OUTPUT_SIZE = 192
 /** 自定义头像编码后硬上限，确保 base64 信封低于 TCP 64KiB 控制帧。 */
 export const AVATAR_MAX_BYTES = 32 * 1024
+/** 旧版昵称首字头像；背景颜色继续按昵称散列。 */
+export const AVATAR_LEGACY_INITIAL_VALUE = -1
+/** 动物表情头像编号上限：10 种背景色 * 20 个表情。 */
+export const AVATAR_ANIMAL_MAX_VALUE = 199
+/** 昵称首字显式背景颜色编号起点（决议 #245）。 */
+export const AVATAR_INITIAL_COLOR_BASE = 200
+export const AVATAR_INITIAL_COLOR_MAX = 209
+
+export function isAvatarPresetValue(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= AVATAR_LEGACY_INITIAL_VALUE &&
+    value <= AVATAR_INITIAL_COLOR_MAX
+  )
+}
 
 /** 时序参数（protocol §9）。测试中可整体注入缩短。 */
 export const TIMINGS = {
@@ -112,7 +128,7 @@ export interface Profile {
   company: string
   dept: string
   team: string
-  /** 头像模板编号；-1 = 昵称色块，>=0 = 背景色下标 * 20 + emoji 下标 */
+  /** -1 = 旧昵称首字；0..199 = 背景色 * 20 + 动物；200..209 = 昵称首字背景色。 */
   avatar: number
   /** 自定义头像内容 SHA-256；缺省/空串时使用数字头像。 */
   avatarHash?: string

@@ -58,6 +58,7 @@ import {
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
   TIMINGS,
+  isAvatarPresetValue,
   type Envelope,
   type Platform,
   type RuntimeArch,
@@ -1631,10 +1632,7 @@ if (!gotLock) {
       str(s.company, LIMITS.company, true) &&
       str(s.dept, LIMITS.dept, true) &&
       str(s.team, LIMITS.team, true) &&
-      typeof s.avatar === 'number' &&
-      Number.isInteger(s.avatar) &&
-      s.avatar >= -1 &&
-      s.avatar <= 999 &&
+      isAvatarPresetValue(s.avatar) &&
       (s.avatarHash === undefined || s.avatarHash === '' || isAvatarHash(s.avatarHash)) &&
       typeof s.fileDir === 'string' &&
       s.fileDir.length <= 1024
@@ -1731,12 +1729,7 @@ if (!gotLock) {
       let avatar = appState.config.avatar
       let avatarHash = ''
       if (choice.kind === 'preset') {
-        if (
-          typeof choice.avatar !== 'number' ||
-          !Number.isInteger(choice.avatar) ||
-          choice.avatar < -1 ||
-          choice.avatar > 999
-        ) {
+        if (!isAvatarPresetValue(choice.avatar)) {
           throw new Error('invalid-avatar')
         }
         avatar = choice.avatar

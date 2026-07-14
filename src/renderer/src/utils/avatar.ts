@@ -1,3 +1,9 @@
+import {
+  AVATAR_INITIAL_COLOR_BASE,
+  AVATAR_INITIAL_COLOR_MAX,
+  AVATAR_LEGACY_INITIAL_VALUE
+} from '../../../shared/protocol'
+
 export const AVATAR_EMOJIS = [
   '🐶',
   '🐱',
@@ -41,11 +47,12 @@ export function avatarText(_avatar: number, displayName: string): string {
 }
 
 export function avatarEmojiIndex(avatar: number): number {
-  if (!Number.isInteger(avatar) || avatar < 0) return -1
+  if (!Number.isInteger(avatar) || avatar < 0 || isInitialAvatar(avatar)) return -1
   return avatar % EMOJI_COUNT
 }
 
 export function avatarColorIndex(avatar: number, displayName = ''): number {
+  if (isExplicitInitialAvatar(avatar)) return avatar - AVATAR_INITIAL_COLOR_BASE
   if (Number.isInteger(avatar) && avatar >= 0) {
     return Math.floor(avatar / EMOJI_COUNT) % AVATAR_COLORS.length
   }
@@ -58,6 +65,14 @@ export function avatarValue(emojiIndex: number, colorIndex: number): number {
   return color * EMOJI_COUNT + emoji
 }
 
+export function initialAvatarValue(colorIndex: number): number {
+  return AVATAR_INITIAL_COLOR_BASE + clampIndex(colorIndex, AVATAR_COLORS.length)
+}
+
+export function isInitialAvatar(avatar: number): boolean {
+  return avatar === AVATAR_LEGACY_INITIAL_VALUE || isExplicitInitialAvatar(avatar)
+}
+
 export function avatarStyle(
   avatar: number,
   displayName = ''
@@ -68,6 +83,14 @@ export function avatarStyle(
 
 function clampIndex(value: number, length: number): number {
   return Number.isInteger(value) && value >= 0 && value < length ? value : 0
+}
+
+function isExplicitInitialAvatar(avatar: number): boolean {
+  return (
+    Number.isInteger(avatar) &&
+    avatar >= AVATAR_INITIAL_COLOR_BASE &&
+    avatar <= AVATAR_INITIAL_COLOR_MAX
+  )
 }
 
 function nameHash(text: string): number {

@@ -7,6 +7,7 @@ import {
   DEFAULT_TCP_PORT,
   DEFAULT_UDP_PORT,
   isAvatarHash,
+  isAvatarPresetValue,
   type Platform,
   type Profile
 } from '../../shared/protocol'
@@ -349,13 +350,7 @@ export function loadAppState(
     atomicWriteJson(configPath, config)
   }
   // 老配置文件升级：补默认字段
-  config.avatar =
-    typeof config.avatar === 'number' &&
-    Number.isInteger(config.avatar) &&
-    config.avatar >= -1 &&
-    config.avatar <= 999
-      ? config.avatar
-      : -1
+  config.avatar = isAvatarPresetValue(config.avatar) ? config.avatar : -1
   config.avatarHash = isAvatarHash(config.avatarHash) ? config.avatarHash : ''
   config.setupDone = config.setupDone === true
   config.fileDir = typeof config.fileDir === 'string' ? config.fileDir : ''

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   AVATAR_MAX_BYTES,
+  isAvatarPresetValue,
   GROUP_IMG_AUTO_ACCEPT,
   GROUP_MAX_MEMBERS,
   LIMITS,
@@ -87,7 +88,7 @@ export function validateProfile(p: unknown): p is Profile {
   if (!isStrAllowEmpty(p.company, LIMITS.company)) return false
   if (!isStrAllowEmpty(p.dept, LIMITS.dept)) return false
   if (!isStrAllowEmpty(p.team, LIMITS.team)) return false
-  if (!isInt(p.avatar) || p.avatar < -1 || p.avatar > 999) return false
+  if (!isAvatarPresetValue(p.avatar)) return false
   if (p.avatarHash !== undefined && !isAvatarHash(p.avatarHash)) return false
   if (!isInt(p.profileRev) || p.profileRev < 0) return false
   if (!isStr(p.host, LIMITS.host)) return false
