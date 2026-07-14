@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  darkTheme,
+  dateZhCN,
+  NButton,
+  NConfigProvider,
+  NInput,
+  NSelect,
+  NSwitch,
+  zhCN
+} from 'naive-ui'
+import {
   DEFAULT_CAPTURE_SHORTCUT,
   DEFAULT_SHOWHIDE_SHORTCUT,
   type AppInfo,
@@ -27,6 +37,10 @@ import PantryBrandLogo from './components/PantryBrandLogo.vue'
 import PantryIcon from './components/PantryIcon.vue'
 import WindowControls from './components/WindowControls.vue'
 import WindowDragStrip from './components/WindowDragStrip.vue'
+import {
+  teahouseDarkThemeOverrides,
+  teahouseLightThemeOverrides
+} from './ui/naive-theme'
 
 // 设置独立小窗（ui-design §8）：按 7 组承载本地设置（决议 #150 重组，端口归网络、发送键归聊天、去掉杂物抽屉）。
 
@@ -163,10 +177,33 @@ const avatarSummary = computed(() => {
   return avatar.value === -1 ? `昵称首字 · ${colorName}` : `图标 · ${colorName}`
 })
 const currentSection = computed(() => sections.find((item) => item.id === section.value) ?? sections[0])
+const isMacPlatform = computed(() => info.value?.platform === 'darwin')
+const modifiedSendKeyLabel = computed(() =>
+  isMacPlatform.value ? 'Command + Enter 发送' : 'Control + Enter 发送'
+)
 const activeNotice = computed(() => (section.value === 'network' ? scanTip.value : ''))
 const hasManualPeers = computed(() => (settings.value?.manualPeers.length ?? 0) > 0)
 const hasScanRanges = computed(() => (settings.value?.scanRangeItems.length ?? 0) > 0)
 const hasTransfers = computed(() => transfers.value.length > 0)
+const naiveTheme = computed(() => (settings.value?.theme === 'dark' ? darkTheme : null))
+const naiveThemeOverrides = computed(() =>
+  settings.value?.theme === 'dark' ? teahouseDarkThemeOverrides : teahouseLightThemeOverrides
+)
+const fontScaleOptions = [
+  { label: '100%', value: 100 },
+  { label: '110%', value: 110 },
+  { label: '125%', value: 125 }
+]
+const soundOptions = [
+  { label: '关闭', value: 'none' },
+  { label: '水滴', value: 'drop' },
+  { label: '木鱼', value: 'wood' },
+  { label: '叮咚', value: 'ding' }
+]
+const conversationOptions = computed(() => [
+  { label: '全部会话', value: '' },
+  ...conversations.value.map((conv) => ({ label: convLabel(conv), value: conv.id }))
+])
 
 onMounted(async () => {
   info.value = await window.pantry.getAppInfo()
@@ -284,50 +321,46 @@ async function pickFileDir(): Promise<void> {
   }
 }
 
-async function toggleNotifications(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({
-    notifications: !settings.value.notifications
-  })
+async function toggleNotifications(value: boolean): Promise<void> {
+  await saveApp({ notifications: value })
 }
 
-async function toggleHideOnCapture(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({
-    hideOnCapture: !settings.value.hideOnCapture
-  })
+async function toggleHideOnCapture(value: boolean): Promise<void> {
+  await saveApp({ hideOnCapture: value })
 }
 
-async function toggleAutoLaunch(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({ autoLaunch: !settings.value.autoLaunch })
+async function toggleAutoLaunch(value: boolean): Promise<void> {
+  await saveApp({ autoLaunch: value })
 }
 
-async function toggleCloseToTray(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({ closeToTray: !settings.value.closeToTray })
+async function toggleCloseToTray(value: boolean): Promise<void> {
+  await saveApp({ closeToTray: value })
 }
 
-async function toggleMessagePreview(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({ showMessagePreview: !settings.value.showMessagePreview })
+async function toggleMessagePreview(value: boolean): Promise<void> {
+  await saveApp({ showMessagePreview: value })
 }
 
-async function toggleDirectFileReceive(): Promise<void> {
-  if (!settings.value) return
-  await saveApp({ allowDirectFileSend: !settings.value.allowDirectFileSend })
+async function toggleDirectFileReceive(value: boolean): Promise<void> {
+  await saveApp({ allowDirectFileSend: value })
 }
 
-async function changeFontScale(event: Event): Promise<void> {
-  const value = Number((event.target as HTMLSelectElement).value)
+async function changeFontScale(value: string | number | null): Promise<void> {
   if (value === 100 || value === 110 || value === 125) await saveApp({ fontScale: value })
 }
 
-async function changeSound(event: Event): Promise<void> {
-  const value = (event.target as HTMLSelectElement).value
+async function changeSound(value: string | number | null): Promise<void> {
   if (value === 'none' || value === 'drop' || value === 'wood' || value === 'ding') {
     await saveApp({ sound: value })
   }
+}
+
+async function changeTheme(value: 'light' | 'dark'): Promise<void> {
+  await saveApp({ theme: value })
+}
+
+async function changeSendKey(value: 'enter' | 'ctrlEnter'): Promise<void> {
+  await saveApp({ sendKey: value })
 }
 
 async function resetAppSettings(): Promise<void> {
@@ -593,7 +626,13 @@ async function confirmRemove(cidr: string): Promise<void> {
 </script>
 
 <template>
-  <div class="settings">
+  <NConfigProvider
+    :theme="naiveTheme"
+    :theme-overrides="naiveThemeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
+    <div class="settings">
     <!-- 沉浸式无标题栏（决议 #49/#52）：顶部拖拽带；设置窗 Win/Linux 仅自绘关闭按钮 -->
     <WindowDragStrip />
     <WindowControls buttons="close" />
@@ -643,15 +682,28 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <span class="avatar-current">{{ avatarSummary }}</span>
               </div>
               <div class="avatar-mode-block">
-                <div class="avatar-mode" role="radiogroup" aria-label="头像样式">
+                <div
+                  class="preference-segment avatar-mode"
+                  role="radiogroup"
+                  aria-label="头像样式"
+                  :data-second="avatar === -1"
+                >
                   <button
                     type="button"
+                    role="radio"
                     :class="{ on: avatar >= 0 }"
+                    :aria-checked="avatar >= 0"
                     @click="chooseAvatarEmoji(selectedAvatarEmoji >= 0 ? selectedAvatarEmoji : 0)"
                   >
                     图标头像
                   </button>
-                  <button type="button" :class="{ on: avatar === -1 }" @click="chooseInitialAvatar">
+                  <button
+                    type="button"
+                    role="radio"
+                    :class="{ on: avatar === -1 }"
+                    :aria-checked="avatar === -1"
+                    @click="chooseInitialAvatar"
+                  >
                     昵称首字
                   </button>
                 </div>
@@ -698,19 +750,39 @@ async function confirmRemove(cidr: string): Promise<void> {
             <div class="field-grid">
               <label class="field">
                 <span>昵称</span>
-                <input v-model="nick" maxlength="32" @blur="autoSaveProfile" />
+                <NInput
+                  v-model:value="nick"
+                  maxlength="32"
+                  placeholder="请输入昵称"
+                  @blur="autoSaveProfile"
+                />
               </label>
               <label class="field">
                 <span>公司</span>
-                <input v-model="company" maxlength="32" @blur="autoSaveProfile" />
+                <NInput
+                  v-model:value="company"
+                  maxlength="32"
+                  placeholder="选填"
+                  @blur="autoSaveProfile"
+                />
               </label>
               <label class="field">
                 <span>部门</span>
-                <input v-model="dept" maxlength="32" @blur="autoSaveProfile" />
+                <NInput
+                  v-model:value="dept"
+                  maxlength="32"
+                  placeholder="选填"
+                  @blur="autoSaveProfile"
+                />
               </label>
               <label class="field">
                 <span>团队</span>
-                <input v-model="team" maxlength="32" @blur="autoSaveProfile" />
+                <NInput
+                  v-model:value="team"
+                  maxlength="32"
+                  placeholder="选填"
+                  @blur="autoSaveProfile"
+                />
               </label>
             </div>
           </div>
@@ -727,20 +799,14 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>开机自启</strong>
                 <small>登录系统后自动启动茶话间。</small>
               </div>
-              <label class="switch">
-                <input type="checkbox" :checked="settings.autoLaunch" @change="toggleAutoLaunch" />
-                <span></span>
-              </label>
+              <NSwitch :value="settings.autoLaunch" @update:value="toggleAutoLaunch" />
             </div>
             <div class="setting-line">
               <div>
                 <strong>关闭到托盘</strong>
                 <small>点关闭按钮时保持在线，仍可接收消息。</small>
               </div>
-              <label class="switch">
-                <input type="checkbox" :checked="settings.closeToTray" @change="toggleCloseToTray" />
-                <span></span>
-              </label>
+              <NSwitch :value="settings.closeToTray" @update:value="toggleCloseToTray" />
             </div>
           </div>
 
@@ -754,12 +820,31 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>主题</strong>
                 <small>深色主题适合弱光环境。</small>
               </div>
-              <div class="segmented" role="group" aria-label="主题">
-                <button type="button" :class="{ on: settings.theme === 'light' }" @click="saveApp({ theme: 'light' })">
-                  浅色
+              <div
+                class="preference-segment theme-segment"
+                role="radiogroup"
+                aria-label="主题"
+                :data-second="settings.theme === 'dark'"
+              >
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="浅色主题"
+                  :aria-checked="settings.theme === 'light'"
+                  :class="{ on: settings.theme === 'light' }"
+                  @click="changeTheme('light')"
+                >
+                  <PantryIcon name="sun" :size="16" />
                 </button>
-                <button type="button" :class="{ on: settings.theme === 'dark' }" @click="saveApp({ theme: 'dark' })">
-                  深色
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="深色主题"
+                  :aria-checked="settings.theme === 'dark'"
+                  :class="{ on: settings.theme === 'dark' }"
+                  @click="changeTheme('dark')"
+                >
+                  <PantryIcon name="moon" :size="16" />
                 </button>
               </div>
             </div>
@@ -768,14 +853,15 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>字体缩放</strong>
                 <small>适配投屏、远距离办公和高分屏。</small>
               </div>
-              <select :value="settings.fontScale" @change="changeFontScale">
-                <option :value="100">100%</option>
-                <option :value="110">110%</option>
-                <option :value="125">125%</option>
-              </select>
+              <NSelect
+                class="control-select"
+                :value="settings.fontScale"
+                :options="fontScaleOptions"
+                @update:value="changeFontScale"
+              />
             </label>
             <div class="panel-actions">
-              <button class="ghost" @click="resetAppSettings">重置应用设置</button>
+              <NButton secondary @click="resetAppSettings">重置应用设置</NButton>
             </div>
           </div>
         </section>
@@ -791,36 +877,26 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>系统通知</strong>
                 <small>新消息到达时显示系统通知。</small>
               </div>
-              <label class="switch">
-                <input type="checkbox" :checked="settings.notifications" @change="toggleNotifications" />
-                <span></span>
-              </label>
+              <NSwitch :value="settings.notifications" @update:value="toggleNotifications" />
             </div>
             <div class="setting-line">
               <div>
                 <strong>通知内容预览</strong>
                 <small>关闭后通知只显示会话名称。</small>
               </div>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  :checked="settings.showMessagePreview"
-                  @change="toggleMessagePreview"
-                />
-                <span></span>
-              </label>
+              <NSwitch :value="settings.showMessagePreview" @update:value="toggleMessagePreview" />
             </div>
             <label class="setting-line">
               <div>
                 <strong>提示音</strong>
                 <small>默认关闭，减少办公环境打扰。</small>
               </div>
-              <select :value="settings.sound" @change="changeSound">
-                <option value="none">关闭</option>
-                <option value="drop">水滴</option>
-                <option value="wood">木鱼</option>
-                <option value="ding">叮咚</option>
-              </select>
+              <NSelect
+                class="control-select"
+                :value="settings.sound"
+                :options="soundOptions"
+                @update:value="changeSound"
+              />
             </label>
           </div>
         </section>
@@ -836,21 +912,17 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>保存位置</strong>
                 <small class="path">{{ fileDir || settings.defaultFileDir }}</small>
               </div>
-              <button class="ghost" @click="pickFileDir">更改</button>
+              <NButton secondary size="small" @click="pickFileDir">更改</NButton>
             </div>
             <div class="setting-line">
               <div>
                 <strong>允许同事直接发送文件</strong>
                 <small>开启后，私聊文件可由发送方免确认发来，同样保存到联系人目录。</small>
               </div>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  :checked="settings.allowDirectFileSend"
-                  @change="toggleDirectFileReceive"
-                />
-                <span></span>
-              </label>
+              <NSwitch
+                :value="settings.allowDirectFileSend"
+                @update:value="toggleDirectFileReceive"
+              />
             </div>
           </div>
 
@@ -864,12 +936,39 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>发送键</strong>
                 <small>另一组组合键用于换行。</small>
               </div>
-              <div class="segmented" role="group" aria-label="发送键">
-                <button type="button" :class="{ on: settings.sendKey === 'enter' }" @click="saveApp({ sendKey: 'enter' })">
-                  Enter
+              <div
+                class="preference-segment send-key-segment"
+                role="radiogroup"
+                aria-label="发送键"
+                :data-second="settings.sendKey === 'ctrlEnter'"
+              >
+                <button
+                  type="button"
+                  role="radio"
+                  aria-label="Enter 发送"
+                  :aria-checked="settings.sendKey === 'enter'"
+                  :class="{ on: settings.sendKey === 'enter' }"
+                  @click="changeSendKey('enter')"
+                >
+                  <span class="key-chord" aria-hidden="true">
+                    <span class="keycap"><PantryIcon name="key-enter" :size="14" /></span>
+                  </span>
                 </button>
-                <button type="button" :class="{ on: settings.sendKey === 'ctrlEnter' }" @click="saveApp({ sendKey: 'ctrlEnter' })">
-                  Ctrl/Cmd+Enter
+                <button
+                  type="button"
+                  role="radio"
+                  :aria-label="modifiedSendKeyLabel"
+                  :aria-checked="settings.sendKey === 'ctrlEnter'"
+                  :class="{ on: settings.sendKey === 'ctrlEnter' }"
+                  @click="changeSendKey('ctrlEnter')"
+                >
+                  <span class="key-chord" aria-hidden="true">
+                    <span class="keycap">
+                      <PantryIcon :name="isMacPlatform ? 'key-command' : 'key-control'" :size="14" />
+                    </span>
+                    <span class="key-plus">+</span>
+                    <span class="keycap"><PantryIcon name="key-enter" :size="14" /></span>
+                  </span>
                 </button>
               </div>
             </div>
@@ -882,12 +981,11 @@ async function confirmRemove(cidr: string): Promise<void> {
             </div>
             <label class="field">
               <span>导出会话</span>
-              <select v-model="exportConvId">
-                <option value="">全部会话</option>
-                <option v-for="conv in conversations" :key="conv.id" :value="conv.id">
-                  {{ convLabel(conv) }}
-                </option>
-              </select>
+              <NSelect
+                v-model:value="exportConvId"
+                :options="conversationOptions"
+                filterable
+              />
             </label>
             <div class="field">
               <span>时间范围</span>
@@ -898,10 +996,10 @@ async function confirmRemove(cidr: string): Promise<void> {
               </div>
             </div>
             <div class="button-row export-actions">
-              <button class="ghost" @click="exportData('backup')">备份包</button>
-              <button class="ghost" @click="exportData('html')">HTML</button>
-              <button class="ghost" @click="exportData('txt')">TXT</button>
-              <button class="primary subtle" @click="importData">导入</button>
+              <NButton secondary @click="exportData('backup')">备份包</NButton>
+              <NButton secondary @click="exportData('html')">HTML</NButton>
+              <NButton secondary @click="exportData('txt')">TXT</NButton>
+              <NButton type="primary" secondary @click="importData">导入</NButton>
             </div>
           </div>
 
@@ -917,9 +1015,14 @@ async function confirmRemove(cidr: string): Promise<void> {
                   <strong>{{ t.name }}</strong>
                   <small>{{ transferStatusLabel(t.status) }} · {{ transferMeta(t) }}</small>
                 </div>
-                <button class="ghost compact" :disabled="!t.savedPath" @click="revealTransfer(t.transferId)">
+                <NButton
+                  secondary
+                  size="small"
+                  :disabled="!t.savedPath"
+                  @click="revealTransfer(t.transferId)"
+                >
                   打开
-                </button>
+                </NButton>
               </li>
             </ul>
           </div>
@@ -932,12 +1035,12 @@ async function confirmRemove(cidr: string): Promise<void> {
               <p>跨网段发现失败时，可手动添加对方 IP 或 IP:端口。</p>
             </div>
             <div class="inline-form">
-              <input
-                v-model="newPeer"
+              <NInput
+                v-model:value="newPeer"
                 placeholder="如 10.2.0.8 或 10.2.0.8:17878"
                 @keydown.enter="addPeer"
               />
-              <button class="primary" @click="addPeer">添加</button>
+              <NButton type="primary" @click="addPeer">添加</NButton>
             </div>
             <div v-if="!hasManualPeers" class="empty-state">尚未添加手动节点</div>
             <ul v-else class="chips">
@@ -956,12 +1059,12 @@ async function confirmRemove(cidr: string): Promise<void> {
               <p>用于发现同内网不同网段的同事，最大支持 /22。</p>
             </div>
             <div class="inline-form">
-              <input
-                v-model="newCidr"
+              <NInput
+                v-model:value="newCidr"
                 placeholder="如 10.1.2.0/24"
                 @keydown.enter="addRange"
               />
-              <button class="primary" @click="addRange">扫描</button>
+              <NButton type="primary" @click="addRange">扫描</NButton>
             </div>
             <div v-if="!hasScanRanges" class="empty-state">尚未保存扫描网段</div>
             <div v-else class="range-table">
@@ -1064,13 +1167,10 @@ async function confirmRemove(cidr: string): Promise<void> {
                 <strong>截图时隐藏窗口</strong>
                 <small>避免把茶话间主窗口截进去。</small>
               </div>
-              <label class="switch">
-                <input type="checkbox" :checked="settings.hideOnCapture" @change="toggleHideOnCapture" />
-                <span></span>
-              </label>
+              <NSwitch :value="settings.hideOnCapture" @update:value="toggleHideOnCapture" />
             </div>
             <div class="panel-actions">
-              <button class="ghost" @click="resetShortcuts">恢复默认</button>
+              <NButton secondary @click="resetShortcuts">恢复默认</NButton>
             </div>
           </div>
         </section>
@@ -1185,7 +1285,8 @@ async function confirmRemove(cidr: string): Promise<void> {
         <span>{{ toast }}</span>
       </div>
     </Transition>
-  </div>
+    </div>
+  </NConfigProvider>
 </template>
 
 <style scoped>
@@ -1198,26 +1299,42 @@ async function confirmRemove(cidr: string): Promise<void> {
   --sp-4: 16px;
   --sp-5: 20px;
   --sp-6: 24px;
-  --r-card: 8px;
-  --r-control: 6px;
+  --r-card: 14px;
+  --r-control: 9px;
   --r-pill: 999px;
-  --fs-title: 18px;
+  --fs-title: 22px;
   --fs-section: 15px;
   --fs-body: 13px;
   --fs-aux: 12px;
   display: flex;
+  position: relative;
+  isolation: isolate;
   height: 100vh;
   min-width: 620px;
-  background: var(--bg-list);
+  background: var(--bg-chat);
   color: var(--text-1);
 }
 
+.settings::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(33, 59, 46, 0.26);
+}
+
+:global(html[data-theme='dark']) .settings::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
 .sidebar {
-  width: 174px;
-  flex: 0 0 174px;
+  width: 188px;
+  flex: 0 0 188px;
   border-right: 1px solid var(--line);
-  background: var(--bg-window);
-  padding: 38px 10px 14px; /* 顶部让出拖拽带与 mac 红绿灯 */
+  background: var(--material-panel);
+  box-shadow: var(--highlight-edge), 8px 0 24px rgba(24, 50, 37, 0.035);
+  padding: 38px 12px 14px; /* 顶部让出拖拽带与 mac 红绿灯 */
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1229,8 +1346,9 @@ async function confirmRemove(cidr: string): Promise<void> {
   gap: var(--sp-2);
   min-width: 0;
   padding: var(--sp-3);
-  border-radius: var(--r-card);
-  background: var(--bg-list);
+  border-radius: 12px;
+  background: var(--surface-hover);
+  box-shadow: var(--highlight-edge);
 }
 
 .account-avatar {
@@ -1275,26 +1393,36 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 .nav button {
-  height: 34px;
+  height: 38px;
   border: none;
   border-radius: var(--r-control);
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-body);
   text-align: left;
-  padding: 0 var(--sp-3);
+  padding: 0 14px;
   cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 90ms ease-out;
 }
 
 .nav button:hover {
-  background: var(--bg-list);
+  background: var(--surface-hover);
   color: var(--text-1);
 }
 
 .nav button.on {
-  background: var(--primary-weak);
+  background: var(--surface-selected);
   color: var(--primary);
   font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--primary), var(--highlight-edge);
+}
+
+.nav button:active {
+  transform: scale(0.98);
 }
 
 .body {
@@ -1302,25 +1430,25 @@ async function confirmRemove(cidr: string): Promise<void> {
   min-width: 0;
   /* 滚动视口从拖拽带下方开始，内容滚动时不会钻进顶部 32px 不可交互区 */
   margin-top: 32px;
-  padding: 8px 22px 24px;
+  padding: 12px 24px 32px;
   overflow-y: auto;
 }
 
 .page-head {
-  min-height: 58px;
+  min-height: 64px;
   display: flex;
   justify-content: space-between;
   gap: var(--sp-4);
-  padding-bottom: var(--sp-4);
-  margin-bottom: var(--sp-4);
-  border-bottom: 1px solid var(--line);
+  padding: 2px 2px 10px;
+  margin-bottom: var(--sp-3);
 }
 
 .page-head h1 {
   margin: 0 0 var(--sp-1);
   font-size: var(--fs-title);
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
 }
 
 .page-head p,
@@ -1351,11 +1479,12 @@ async function confirmRemove(cidr: string): Promise<void> {
 .empty-panel {
   border: 1px solid var(--line);
   border-radius: var(--r-card);
-  background: var(--bg-window);
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-soft);
 }
 
 .panel {
-  padding: var(--sp-4);
+  padding: 18px;
 }
 
 .panel-head {
@@ -1370,7 +1499,7 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 .setting-line {
-  min-height: 46px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1406,7 +1535,7 @@ async function confirmRemove(cidr: string): Promise<void> {
   line-height: 1.4;
 }
 
-.setting-line select {
+.control-select {
   width: 156px;
   flex: 0 0 auto;
 }
@@ -1427,35 +1556,126 @@ async function confirmRemove(cidr: string): Promise<void> {
   font-size: 12px;
 }
 
-/* 分段控件（决议 #150）：二选一偏好（主题 / 发送键）即时生效，比下拉直观，与头像样式分段同语言 */
-.segmented {
-  display: inline-flex;
+.field > .n-input,
+.field > .n-select {
+  width: 100%;
+}
+
+.inline-form > .n-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.preference-segment {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   flex: 0 0 auto;
-  gap: 2px;
   padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-control);
+  border-radius: 8px;
   background: var(--bg-list);
+  isolation: isolate;
 }
-.segmented button {
-  border: none;
-  background: transparent;
-  border-radius: calc(var(--r-control) - 2px);
-  padding: var(--sp-1) var(--sp-3);
-  font-size: var(--fs-body);
-  color: var(--text-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-}
-.segmented button:hover {
-  color: var(--text-1);
-}
-.segmented button.on {
+
+.preference-segment::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 6px;
   background: var(--bg-window);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  transform: translateX(0);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.preference-segment[data-second='true']::before {
+  transform: translateX(100%);
+}
+
+.preference-segment button {
+  position: relative;
+  z-index: 1;
+  height: 28px;
+  min-width: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 140ms ease,
+    transform 90ms ease-out;
+}
+
+.preference-segment button.on {
   color: var(--primary);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.preference-segment button:focus-visible {
+  outline: 2px solid rgba(61, 139, 107, 0.55);
+  outline-offset: -2px;
+}
+
+.preference-segment button:active {
+  transform: scale(0.96);
+}
+
+.theme-segment {
+  width: 86px;
+}
+
+.send-key-segment {
+  width: 134px;
+}
+
+.key-chord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.keycap {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--material-strong);
+  box-shadow: inset 0 -1px 0 rgba(24, 50, 37, 0.08);
+}
+
+.preference-segment button.on .keycap {
+  border-color: rgba(61, 139, 107, 0.38);
+}
+
+.key-plus {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preference-segment::before,
+  .preference-segment button {
+    transition: none;
+  }
+
+  .preference-segment button:active {
+    transform: none;
+  }
 }
 
 .field-grid {
@@ -1476,8 +1696,8 @@ async function confirmRemove(cidr: string): Promise<void> {
   height: 32px;
   min-width: 0;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg-window);
+  border-radius: var(--r-control);
+  background: var(--material-strong);
   color: var(--text-1);
   font-size: 13px;
   outline: none;
@@ -1572,11 +1792,7 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 .avatar-mode {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--bg-list);
+  width: 184px;
   margin-bottom: 8px;
 }
 
@@ -1584,24 +1800,6 @@ async function confirmRemove(cidr: string): Promise<void> {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-3);
-}
-
-.avatar-mode button {
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  padding: 0 14px;
-  cursor: pointer;
-}
-
-.avatar-mode button.on {
-  background: var(--bg-window);
-  color: var(--primary);
-  font-weight: 600;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .avatar-label {
@@ -1680,59 +1878,6 @@ async function confirmRemove(cidr: string): Promise<void> {
   height: 8px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.92);
-}
-
-.switch {
-  position: relative;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-}
-
-.switch input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.switch span {
-  position: absolute;
-  inset: 0;
-  border-radius: 999px;
-  background: var(--line);
-  transition:
-    background 0.16s ease,
-    opacity 0.16s ease;
-}
-
-.switch span::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--bg-window);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-  transition: transform 0.16s ease;
-}
-
-.switch input:checked + span {
-  background: var(--primary);
-}
-
-.switch input:checked + span::after {
-  transform: translateX(16px);
-}
-
-.switch input:disabled {
-  cursor: default;
-}
-
-.switch input:disabled + span {
-  opacity: 0.55;
 }
 
 .button-row,
@@ -2466,12 +2611,12 @@ async function confirmRemove(cidr: string): Promise<void> {
   }
 }
 
-/* 「设置已保存」浮层 toast（决议 #152）：修复上一版样式丢失（裸 div 挤进 flex 布局乱放）+ taste 重设计。
-   固定在右侧内容区水平居中（calc 补偿 174px 侧栏，不偏向侧栏）、底部上浮（顶部被拖拽带 / 标题 / 关闭按钮占满）；
+/* 「设置已保存」浮层 toast（决议 #152/#216/#218）：
+   固定在设置窗口整体水平居中、底部上浮；
    深色胶囊对比当前主题、currentColor 对勾保证两主题对比、茶青味柔影（非纯黑）；淡入 + 上移 / 淡出 + 下移，尊重 reduced-motion */
 .toast {
   position: fixed;
-  left: calc(50% + 87px);
+  left: 50%;
   bottom: 22px;
   transform: translateX(-50%);
   display: inline-flex;
@@ -2485,7 +2630,7 @@ async function confirmRemove(cidr: string): Promise<void> {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
-  box-shadow: 0 8px 26px rgba(34, 49, 42, 0.3), 0 2px 6px rgba(34, 49, 42, 0.18);
+  box-shadow: var(--shadow-float);
   z-index: 60;
   pointer-events: none;
 }
@@ -2504,6 +2649,12 @@ async function confirmRemove(cidr: string): Promise<void> {
   transform: translate(-50%, 10px);
 }
 @media (prefers-reduced-motion: reduce) {
+  .nav button {
+    transition: none;
+  }
+  .nav button:active {
+    transform: none;
+  }
   .toast-enter-active,
   .toast-leave-active {
     transition: opacity 0.16s ease;

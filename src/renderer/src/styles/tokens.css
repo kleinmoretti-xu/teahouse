@@ -1,46 +1,90 @@
 /* 视觉 token —— 与 docs/ui-design.md §9 一一对应，深色主题（v0.4）只换这张表 */
 :root {
   --primary: #3d8b6b;
-  --primary-weak: rgba(61, 139, 107, 0.1);
-  --text-1: #1a1a1a;
-  --text-2: #666666;
-  --text-3: #999999;
-  --text-placeholder: #b8b8b8;
-  --bg-window: #ffffff;
-  --bg-list: #f7f7f7;
-  --bg-chat: #f5f5f5;
-  --bubble-peer: #ffffff;
-  --bubble-mine: var(--primary-weak);
-  --line: #ececec;
+  --primary-weak: rgba(61, 139, 107, 0.12);
+  --text-1: #17211c;
+  --text-2: #58645e;
+  --text-3: #87918c;
+  --text-placeholder: #a9b2ad;
+  --bg-window: #f9fbfa;
+  --bg-list: #f1f5f3;
+  --bg-chat: #edf2ef;
+  --bubble-peer: rgba(255, 255, 255, 0.94);
+  --bubble-mine: rgba(61, 139, 107, 0.14);
+  --line: rgba(40, 66, 53, 0.1);
   --online: #2ba245;
   --offline: #c2c2c2;
   --danger: #e5484d;
   --badge: #fa5151;
-  /* 导航栏底色（决议 #70）：微信式浅灰，让 mac 红绿灯落在浅色上自然；比列表栏略深 + 细线分隔 */
-  --rail-bg: #edeef0;
-  /* 置顶会话底色（决议 #126）：比列表底 --bg-list 略深的淡灰，让置顶会话和普通会话一眼区分 */
-  --bg-pinned: #eef0f2;
+  --rail-bg: rgba(230, 237, 233, 0.9);
+  --bg-pinned: rgba(34, 61, 48, 0.055);
+  /* 结构材质（决议 #216/#219）：只表达层级，不承担品牌色。
+     backdrop-filter 只允许用在真正压住内容的浮层（菜单/popover/遮罩）；
+     并排结构面板背后是纯色，blur 无视觉收益，Win7 禁硬件加速下纯属软渲染开销。 */
+  --material-bar: rgba(249, 251, 250, 0.8);
+  --material-panel: rgba(241, 245, 243, 0.9);
+  --material-strong: rgba(255, 255, 255, 0.9);
+  --surface-hover: rgba(38, 61, 50, 0.055);
+  --surface-selected: rgba(61, 139, 107, 0.14);
+  --surface-pressed: rgba(61, 139, 107, 0.2);
+  --shadow-soft: 0 1px 2px rgba(24, 50, 37, 0.04), 0 10px 28px rgba(24, 50, 37, 0.07);
+  --shadow-float: 0 2px 8px rgba(24, 50, 37, 0.08), 0 18px 46px rgba(24, 50, 37, 0.12);
+  --highlight-edge: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 html[data-theme='dark'] {
   --primary: #5bbf91;
   --primary-weak: rgba(91, 191, 145, 0.18);
-  --text-1: #ecefed;
-  --text-2: #b4b9b6;
-  --text-3: #7f8782;
-  --text-placeholder: #646d67;
-  --bg-window: #171a18;
-  --bg-list: #202421;
-  --bg-chat: #111412;
-  --bubble-peer: #232823;
+  --text-1: #edf2ef;
+  --text-2: #b7c0bb;
+  --text-3: #7f8c85;
+  --text-placeholder: #66716b;
+  --bg-window: #171b19;
+  --bg-list: #1c221f;
+  --bg-chat: #101512;
+  --bubble-peer: rgba(35, 43, 38, 0.95);
   --bubble-mine: rgba(91, 191, 145, 0.2);
-  --line: #303630;
+  --line: rgba(222, 238, 229, 0.09);
   --online: #5fd48e;
   --offline: #626a64;
   --danger: #ff6b72;
   --badge: #ff5f62;
-  --rail-bg: #1a1d1b;
-  --bg-pinned: #262b27;
+  --rail-bg: rgba(22, 28, 25, 0.94);
+  --bg-pinned: rgba(255, 255, 255, 0.035);
+  --material-bar: rgba(23, 27, 25, 0.82);
+  --material-panel: rgba(28, 34, 31, 0.92);
+  --material-strong: rgba(34, 42, 37, 0.92);
+  --surface-hover: rgba(235, 245, 239, 0.06);
+  --surface-selected: rgba(91, 191, 145, 0.18);
+  --surface-pressed: rgba(91, 191, 145, 0.25);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.18), 0 10px 28px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.24), 0 18px 46px rgba(0, 0, 0, 0.34);
+  --highlight-edge: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Chrome 118+ 才支持该查询，Chrome 108 基线上不生效——留作浮层材质的前向增强（决议 #219） */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --rail-bg: #e6ede9;
+    --material-bar: #f9fbfa;
+    --material-panel: #f1f5f3;
+    --material-strong: #ffffff;
+  }
+  html[data-theme='dark'] {
+    --rail-bg: #161c19;
+    --material-bar: #171b19;
+    --material-panel: #1c221f;
+    --material-strong: #222a25;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line: rgba(25, 48, 37, 0.28);
+  }
+  html[data-theme='dark'] {
+    --line: rgba(235, 247, 240, 0.24);
+  }
 }
 
 /* 输入框等宽空白字形字体（决议 #56）：仅聊天输入框 textarea 与其镜像层使用——
@@ -65,12 +109,26 @@ body,
 }
 
 body {
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    sans-serif;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--text-1);
   background: var(--bg-window);
   user-select: none;
   overflow: hidden;
+}
+
+/* 截图根组件按动态入口加载；入口挂载前先保持黑底，避免透出应用窗口材质（决议 #218）。 */
+html[data-window='capture'],
+html[data-window='capture'] body,
+html[data-window='capture'] #app {
+  background: #000;
 }
 
 input::placeholder,

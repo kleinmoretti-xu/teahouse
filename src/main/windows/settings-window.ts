@@ -1,5 +1,6 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
+import { IpcEvents } from '../../shared/ipc'
 import { resolveDevRendererUrl } from '../util/renderer-url'
 
 // 设置独立小窗（决议 #3 审美轮）：640×480，左分组导航；
@@ -38,8 +39,26 @@ function linuxWindowIcon(): { icon: string } | Record<string, never> {
   return { icon }
 }
 
+/**
+ * Windows / Linux 的无边框设置窗需要显式层级反馈（决议 #222）。事件只发给主窗，
+ * 父窗或 webContents 已销毁时直接跳过，避免退出阶段访问失效对象。
+ */
+function notifySettingsWindowState(parent: BrowserWindow | null, open: boolean): void {
+  if (
+    process.platform === 'darwin' ||
+    !parent ||
+    parent.isDestroyed() ||
+    parent.webContents.isDestroyed()
+  ) {
+    return
+  }
+  parent.webContents.send(IpcEvents.settingsWindowState, open)
+}
+
 export function openSettingsWindow(parent: BrowserWindow | null): void {
+  const activeParent = parent && !parent.isDestroyed() ? parent : null
   if (win && !win.isDestroyed()) {
+    notifySettingsWindowState(activeParent, true)
     win.show()
     win.focus()
     return
@@ -47,13 +66,15 @@ export function openSettingsWindow(parent: BrowserWindow | null): void {
   win = new BrowserWindow({
     width: SETTINGS_WIDTH,
     height: SETTINGS_HEIGHT,
-    ...centeredOverParent(parent),
+    ...centeredOverParent(activeParent),
     resizable: false,
     minimizable: false,
     maximizable: false,
     show: false,
     title: '设置 - 茶话间',
-    parent: parent ?? undefined,
+    parent: activeParent ?? undefined,
+    ...(process.platform !== 'darwin' && activeParent ? { modal: true } : {}),
+    hasShadow: true,
     // 沉浸式无标题栏（决议 #49）：mac 红绿灯内嵌（最小化/最大化自动灰显），Win/Linux 自绘关闭按钮
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 12, y: 10 } }
@@ -69,8 +90,10 @@ export function openSettingsWindow(parent: BrowserWindow | null): void {
   win.setMenuBarVisibility(false)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
+  notifySettingsWindowState(activeParent, true)
   win.once('ready-to-show', () => win?.show())
   win.on('closed', () => {
+    notifySettingsWindowState(activeParent, false)
     win = null
   })
 

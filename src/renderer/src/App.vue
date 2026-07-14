@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { darkTheme, dateZhCN, NButton, NConfigProvider, NInput, zhCN } from 'naive-ui'
 import type { AppInfo, ScanProgressView, SettingsView } from '../../shared/ipc'
 import { usePeersStore } from './stores/peers'
 import { useChatStore } from './stores/chat'
@@ -22,6 +23,10 @@ import type { PeerView } from '../../shared/ipc'
 import { applyAppearance } from './utils/appearance'
 import AvatarMark from './components/AvatarMark.vue'
 import { randomQuote } from './utils/quotes'
+import {
+  teahouseDarkThemeOverrides,
+  teahouseLightThemeOverrides
+} from './ui/naive-theme'
 
 type Tab = 'chat' | 'contacts'
 
@@ -83,10 +88,16 @@ const info = ref<AppInfo | null>(null)
 // 主界面空态随机名言（决议 #82）：组件创建（每次打开软件）时随机一条，纯本地内置
 const quote = ref(randomQuote())
 const settings = ref<SettingsView | null>(null)
+const naiveTheme = computed(() => (settings.value?.theme === 'dark' ? darkTheme : null))
+const naiveThemeOverrides = computed(() =>
+  settings.value?.theme === 'dark' ? teahouseDarkThemeOverrides : teahouseLightThemeOverrides
+)
 const showWizard = ref(false)
+const settingsWindowOpen = ref(false)
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
 let stopSettings: (() => void) | null = null
+let stopSettingsWindowState: (() => void) | null = null
 let stopScanProgress: (() => void) | null = null
 let scanProgressHideTimer: ReturnType<typeof setTimeout> | null = null
 let railHintTimer: ReturnType<typeof setTimeout> | null = null
@@ -272,6 +283,10 @@ function onScanConfirmKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(async () => {
+  // 先订阅再等待初始化 IPC，避免用户启动后立即点设置时错过遮罩状态。
+  stopSettingsWindowState = window.pantry.onSettingsWindowState((open) => {
+    settingsWindowOpen.value = open
+  })
   void peersStore.init()
   void chatStore.init()
   void groupsStore.init()
@@ -296,6 +311,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   document.removeEventListener('keydown', onScanConfirmKeydown)
   stopSettings?.()
+  stopSettingsWindowState?.()
   stopScanProgress?.()
   clearScanProgressHideTimer()
   hideRailHint()
@@ -304,10 +320,20 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <NConfigProvider
+    abstract
+    :theme="naiveTheme"
+    :theme-overrides="naiveThemeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
   <SetupWizard v-if="showWizard && settings" :settings="settings" @done="showWizard = false" />
   <!-- 沉浸式无标题栏（决议 #49/#52）：顶部 32px 隐形拖拽带 + Win/Linux 自绘窗口控制按钮 -->
   <WindowDragStrip />
   <WindowControls />
+  <Transition name="settings-scrim">
+    <div v-if="settingsWindowOpen" class="settings-scrim" aria-hidden="true"></div>
+  </Transition>
   <div class="shell">
     <nav class="rail">
       <div class="avatar-wrap" aria-label="我的信息">
@@ -451,34 +477,47 @@ onUnmounted(() => {
       <div class="update-pop-from">来自 {{ updateStore.available.fromName }}</div>
       <div class="update-pop-cur">当前版本 v{{ updateStore.available.currentVersion }}</div>
       <p v-if="updateRequestMsg" class="update-pop-hint">{{ updateRequestMsg }}</p>
-      <button
-        type="button"
+      <NButton
+        type="primary"
+        size="small"
+        :loading="updateRequesting"
         class="update-pop-ok"
         :disabled="updateRequesting"
         :aria-busy="updateRequesting"
         @click="requestUpdatePackage"
       >
         {{ updateRequesting ? '请求中' : '同步更新' }}
-      </button>
+      </NButton>
     </div>
 
     <aside class="list">
       <div class="search-box">
-        <div class="search-field">
-          <PantryIcon class="search-mark" name="search" :size="15" />
-          <input v-model="searchQuery" class="search" placeholder="搜索" />
-          <button v-if="searchQuery" class="clear" title="清空" @click="searchQuery = ''">
-            <PantryIcon name="x" :size="13" />
-          </button>
-        </div>
+        <NInput
+          v-model:value="searchQuery"
+          class="search"
+          size="small"
+          clearable
+          aria-label="搜索联系人、讨论组和聊天记录"
+          placeholder="搜索"
+        >
+          <template #prefix><PantryIcon name="search" :size="15" /></template>
+        </NInput>
         <!-- 群发入口已停用（决议 #62）：直接建讨论组即可，群发无意义；保留留痕
         <button class="new-group" title="群发消息" @click="showMassSender = true">
           <PantryIcon name="send-many" :size="16" />
         </button>
         -->
-        <button class="new-group" title="发起讨论组" @click="showGroupCreator = true">
+        <NButton
+          class="new-group"
+          size="small"
+          quaternary
+          circle
+          title="发起讨论组"
+          aria-label="发起讨论组"
+          @click="showGroupCreator = true"
+        >
           <PantryIcon name="plus" :size="17" />
-        </button>
+        </NButton>
       </div>
       <GroupCreator v-if="showGroupCreator" @close="showGroupCreator = false" />
       <!-- <MassSender v-if="showMassSender" @close="showMassSender = false" /> 群发已停用（决议 #62） -->
@@ -533,10 +572,10 @@ onUnmounted(() => {
         <li v-if="scanConfirmExtra > 0" class="scan-confirm-more">另 {{ scanConfirmExtra }} 个</li>
       </ul>
       <div class="scan-confirm-actions">
-        <button type="button" class="scan-confirm-cancel" @click="cancelScanConfirm">取消</button>
-        <button type="button" class="scan-confirm-go" @click="confirmRefreshAllUsers">
+        <NButton size="small" secondary @click="cancelScanConfirm">取消</NButton>
+        <NButton type="primary" size="small" @click="confirmRefreshAllUsers">
           开始扫描
-        </button>
+        </NButton>
       </div>
     </div>
   </div>
@@ -548,13 +587,35 @@ onUnmounted(() => {
       撤回 {{ chatStore.pendingRemoval.secondsLeft }}s
     </button>
   </div>
+  </NConfigProvider>
 </template>
 
 <style scoped>
+.settings-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(18, 31, 25, 0.24);
+  pointer-events: auto;
+  opacity: 1;
+  transition: opacity 140ms ease-out;
+}
+
+:global(html[data-theme='dark']) .settings-scrim {
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.settings-scrim-enter-from,
+.settings-scrim-leave-to {
+  opacity: 0;
+}
+
 .shell {
   display: flex;
   height: 100%;
   min-height: 0;
+  isolation: isolate;
+  background: var(--bg-chat);
 }
 
 /* 栏① 导航 */
@@ -563,11 +624,14 @@ onUnmounted(() => {
   width: 68px;
   background: var(--rail-bg);
   border-right: 1px solid var(--line);
+  box-shadow: var(--highlight-edge);
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 38px 0 12px; /* 顶部让出拖拽带与 mac 红绿灯 */
-  gap: 8px;
+  gap: 7px;
+  position: relative;
+  z-index: 3;
 }
 .avatar-wrap {
   position: relative;
@@ -575,12 +639,12 @@ onUnmounted(() => {
   height: 40px;
   display: grid;
   place-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 11px;
   outline: none;
 }
 .avatar {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%; /* 决议：圆形头像 */
   display: grid;
   place-items: center;
@@ -595,25 +659,28 @@ onUnmounted(() => {
   width: 304px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bubble-peer);
+  border-radius: 16px;
+  background: var(--material-strong);
   color: var(--text-1);
-  box-shadow: 0 18px 42px rgba(20, 28, 24, 0.14);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
   display: flex;
   flex-direction: column;
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
-  transform: translateX(-5px);
+  transform: translateX(-6px) scale(0.985);
+  transform-origin: left 28px;
   transition:
-    opacity 180ms ease,
-    transform 180ms ease,
+    opacity 160ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
     visibility 0s linear 180ms;
 }
 .avatar-wrap:hover .self-card {
   opacity: 1;
   visibility: visible;
-  transform: translateX(0);
+  transform: translateX(0) scale(1);
   transition-delay: 420ms, 420ms, 0s;
 }
 .self-card-head {
@@ -730,7 +797,7 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
   border: none;
-  border-radius: 8px;
+  border-radius: 12px;
   appearance: none;
   -webkit-appearance: none;
   outline: none;
@@ -739,10 +806,18 @@ onUnmounted(() => {
   cursor: pointer;
   display: grid;
   place-items: center;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 90ms ease-out;
 }
-.rail-btn:focus,
+.rail-btn:focus {
+  outline: none;
+}
 .rail-btn:focus-visible {
   outline: none;
+  box-shadow: 0 0 0 3px rgba(61, 139, 107, 0.2);
 }
 .rail-hint::after {
   content: attr(data-label);
@@ -753,14 +828,14 @@ onUnmounted(() => {
   min-width: max-content;
   max-width: 160px;
   padding: 6px 9px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: rgba(36, 42, 38, 0.96);
   color: #fff;
   font-size: 12px;
   line-height: 1.2;
   letter-spacing: 0;
   white-space: nowrap;
-  box-shadow: 0 8px 18px rgba(18, 24, 20, 0.14);
+  box-shadow: var(--shadow-soft);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -774,10 +849,19 @@ onUnmounted(() => {
   visibility: visible;
   transition-delay: 0s;
 }
-.rail-btn.active,
 .rail-btn:hover {
-  background: var(--primary-weak);
-  color: var(--primary); /* 选中/悬停茶青高亮，品牌主色点缀 */
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+.rail-btn.active,
+.rail-btn.active:hover {
+  background: var(--surface-selected);
+  color: var(--primary);
+  box-shadow: var(--highlight-edge);
+}
+.rail-btn:active:not(.is-disabled) {
+  transform: scale(0.96);
+  background: var(--surface-pressed);
 }
 .rail-btn.is-disabled:not(.scanning) {
   cursor: default;
@@ -818,11 +902,13 @@ onUnmounted(() => {
   bottom: 16px;
   z-index: 60;
   width: 192px;
-  padding: 14px 16px;
-  background: var(--bg-window);
+  padding: 16px;
+  background: var(--material-strong);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  border-radius: 14px;
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -920,19 +1006,8 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 .update-pop-ok {
-  align-self: flex-end;
-  padding: 5px 14px;
-  font-size: 13px;
-  color: #fff;
-  background: var(--primary);
-  border: none;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.update-pop-ok:disabled {
-  opacity: 0.62;
-  cursor: default;
+  width: 100%;
+  margin-top: 8px;
 }
 
 /* 进度数值注册为可过渡的 typed 属性，让环形进度平滑增长而非跳变（决议 #163） */
@@ -976,21 +1051,32 @@ onUnmounted(() => {
   flex: 1;
 }
 @media (prefers-reduced-motion: reduce) {
+  .settings-scrim {
+    transition: none;
+  }
   .rail-hint::after,
+  .rail-btn,
   .self-card,
   .scan-ring,
-  .scan-ring.visible {
+  .scan-ring.visible,
+  .new-group {
     transition: none;
+  }
+  .rail-btn:active:not(.is-disabled) {
+    transform: none;
   }
 }
 
 /* 栏② 列表 */
 .list {
-  width: 250px;
-  background: var(--bg-list);
+  width: 272px;
+  background: var(--material-panel);
   border-right: 1px solid var(--line);
+  box-shadow: 8px 0 26px rgba(26, 48, 38, 0.035), var(--highlight-edge);
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 2;
 }
 .search-box {
   /* 与聊天头部 .head 等高（84px），两栏顶栏分隔线连成一条（决议 #127）；
@@ -998,68 +1084,24 @@ onUnmounted(() => {
   height: 84px;
   flex: 0 0 84px;
   box-sizing: border-box;
-  padding: 32px 12px 0;
+  padding: 36px 12px 10px;
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   border-bottom: 1px solid var(--line);
 }
-.search-field {
+.search {
   flex: 1;
   min-width: 0;
-  position: relative;
-}
-.search-mark {
-  position: absolute;
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-3);
-  pointer-events: none;
-}
-.search-field .search {
-  flex: 1;
 }
 .new-group {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 4px;
-  background: var(--line);
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   color: var(--text-2);
-  cursor: pointer;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
 }
 .new-group:hover {
-  background: var(--primary);
-  color: #fff;
-}
-.clear {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-}
-.search {
-  width: 100%;
-  height: 28px;
-  border: none;
-  border-radius: 4px;
-  background: var(--line);
-  padding: 0 26px 0 28px;
-  font-size: 13px;
-  outline: none;
+  color: var(--primary);
 }
 
 /* 栏③ 内容 */
@@ -1070,35 +1112,43 @@ onUnmounted(() => {
   overflow: hidden;
   background: var(--bg-chat);
   display: grid;
+  position: relative;
+  z-index: 1;
 }
 .empty {
   place-self: center;
   text-align: center;
   color: var(--text-3);
+  max-width: 420px;
+  padding: 32px;
 }
 .empty-logo {
-  margin: 0 auto 14px;
+  margin: 0 auto 18px;
+  filter: drop-shadow(0 10px 22px rgba(48, 104, 80, 0.13));
 }
 .brand-title {
-  font-size: 28px;
-  font-weight: 600;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   color: var(--primary);
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .quote {
   font-size: 14px;
   color: var(--text-2);
-  line-height: 1.7;
+  line-height: 1.75;
   max-width: 360px;
-  margin: 0 auto 6px;
+  margin: 0 auto 8px;
 }
 .quote-author {
   font-size: 12px;
   color: var(--text-3);
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 .hint {
   font-size: 12px;
+  color: var(--text-3);
 }
 
 /* 全量刷新二次确认（决议 #197）：暖色警示标 + 精简文案（非删除红，提醒「留意代价」） */
@@ -1109,15 +1159,18 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(20, 28, 24, 0.32);
+  background: rgba(20, 28, 24, 0.26);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   animation: scan-confirm-fade 0.14s ease;
 }
 .scan-confirm-card {
   width: min(300px, 100%);
   padding: 20px 18px 14px;
-  border-radius: 8px;
-  background: var(--bg-window);
-  box-shadow: 0 12px 40px rgba(20, 28, 24, 0.16);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--material-strong);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
   text-align: center;
   animation: scan-confirm-rise 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1163,7 +1216,7 @@ onUnmounted(() => {
   align-items: center;
   min-height: 28px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--bg-list);
 }
 .scan-confirm-list code {
@@ -1195,9 +1248,9 @@ onUnmounted(() => {
   border-top: 1px solid var(--line);
 }
 .scan-confirm-actions button {
-  height: 30px;
+  height: 32px;
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: 9px;
   font-size: 13px;
   cursor: pointer;
   transition:
@@ -1273,10 +1326,12 @@ onUnmounted(() => {
   gap: 14px;
   max-width: calc(100% - 48px);
   padding: 10px 12px 10px 16px;
-  border-radius: 10px;
-  background: var(--bg-window);
+  border-radius: 14px;
+  background: var(--material-strong);
   border: 1px solid var(--line);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--highlight-edge), var(--shadow-float);
+  backdrop-filter: blur(20px) saturate(135%);
+  -webkit-backdrop-filter: blur(20px) saturate(135%);
   animation: undo-rise 0.18s ease;
 }
 .undo-text {
@@ -1292,16 +1347,23 @@ onUnmounted(() => {
   height: 28px;
   padding: 0 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--primary-weak);
   color: var(--primary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 90ms ease-out;
 }
 .undo-btn:hover {
   background: var(--primary);
   color: #fff;
+}
+.undo-btn:active {
+  transform: scale(0.97);
 }
 @keyframes undo-rise {
   from {
@@ -1316,6 +1378,12 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .undo-toast {
     animation: none;
+  }
+  .undo-btn {
+    transition: none;
+  }
+  .undo-btn:active {
+    transform: none;
   }
 }
 </style>

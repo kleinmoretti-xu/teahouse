@@ -222,3 +222,104 @@ describe('chat store 自己发送后的滚动意图', () => {
     ])
   })
 })
+
+describe('未读置读需窗口可见且聚焦（决议 #220）', () => {
+  let msgNewHandler: ((m: MessageView) => void) | null
+  let focusHandler: (() => void) | null
+
+  function stubEnv(options: { visibilityState: DocumentVisibilityState; focused: boolean }) {
+    msgNewHandler = null
+    focusHandler = null
+    const markRead = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('document', {
+      visibilityState: options.visibilityState,
+      hasFocus: () => options.focused
+    })
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === 'focus') focusHandler = handler
+      }),
+      pantry: {
+        listConversations: vi.fn().mockResolvedValue([]),
+        getAppInfo: vi.fn().mockResolvedValue({ nodeId: 'node-self' }),
+        getSettings: vi.fn().mockResolvedValue(null),
+        onSettingsUpdated: vi.fn(),
+        onConvsUpdated: vi.fn(),
+        onMsgNew: vi.fn((handler: (m: MessageView) => void) => {
+          msgNewHandler = handler
+        }),
+        onMsgStatus: vi.fn(),
+        onNudgeReceived: vi.fn(),
+        onOpenConv: vi.fn(),
+        onCaptured: vi.fn(),
+        markRead
+      }
+    })
+    return { markRead }
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('窗口可见且聚焦时，当前会话新消息即时置读', async () => {
+    const { markRead } = stubEnv({ visibilityState: 'visible', focused: true })
+    const store = useChatStore()
+    await store.init()
+    store.activeConvId = 'single:node-bob'
+
+    msgNewHandler?.(msg('in-1'))
+
+    expect(markRead).toHaveBeenCalledWith('single:node-bob')
+  })
+
+  it('窗口最小化 / 隐藏到托盘时，当前会话新消息保留未读', async () => {
+    const { markRead } = stubEnv({ visibilityState: 'hidden', focused: false })
+    const store = useChatStore()
+    await store.init()
+    store.activeConvId = 'single:node-bob'
+
+    msgNewHandler?.(msg('in-2'))
+
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it('窗口可见但被其他窗口压住失焦时，同样保留未读', async () => {
+    const { markRead } = stubEnv({ visibilityState: 'visible', focused: false })
+    const store = useChatStore()
+    await store.init()
+    store.activeConvId = 'single:node-bob'
+
+    msgNewHandler?.(msg('in-3'))
+
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it('重新聚焦窗口时补置读当前会话攒下的未读', async () => {
+    const { markRead } = stubEnv({ visibilityState: 'visible', focused: false })
+    const store = useChatStore()
+    await store.init()
+    store.activeConvId = 'single:node-bob'
+    store.convs = [{ ...conv('single:node-bob'), unread: 2 }]
+
+    focusHandler?.()
+
+    expect(markRead).toHaveBeenCalledWith('single:node-bob')
+  })
+
+  it('重新聚焦时当前会话无未读则不重复置读', async () => {
+    const { markRead } = stubEnv({ visibilityState: 'visible', focused: false })
+    const store = useChatStore()
+    await store.init()
+    store.activeConvId = 'single:node-bob'
+    store.convs = [conv('single:node-bob')]
+
+    focusHandler?.()
+
+    expect(markRead).not.toHaveBeenCalled()
+  })
+})

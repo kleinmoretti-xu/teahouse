@@ -65,6 +65,8 @@ export const IpcChannels = {
   groupList: 'group:list',
   groupSend: 'group:send',
   captureStart: 'capture:start',
+  /** 截图位图解码与首帧完成，主进程此时再显示截图窗（决议 #221） */
+  captureReady: 'capture:ready',
   captureDone: 'capture:done',
   clipboardWriteImage: 'clipboard:write-image',
   clipboardReadImage: 'clipboard:read-image',
@@ -99,7 +101,7 @@ export const IpcEvents = {
   convsUpdated: 'convs:updated',
   transferUpdated: 'transfer:updated',
   groupUpdated: 'group:updated',
-  /** 截图框选窗初始化（dataURL + 缩放系数） */
+  /** 截图框选窗初始化（本地 PNG 字节） */
   captureInit: 'capture:init',
   /** 截图完成且选择"发送"→ 主窗（发到当前会话） */
   captured: 'ui:captured',
@@ -107,6 +109,8 @@ export const IpcEvents = {
   openConv: 'ui:open-conv',
   /** 设置页保存后广播给所有窗口，统一主题/字体等外观 */
   settingsUpdated: 'settings:updated',
+  /** Windows / Linux 设置模态窗开关状态，主窗据此显示静态暗色遮罩（决议 #222） */
+  settingsWindowState: 'ui:settings-window-state',
   /** 主界面全局网段刷新进度 */
   netScanProgress: 'net:scan-progress',
   /** 主窗收到 Command/Ctrl+V；renderer 只在输入框聚焦时兜底读图片剪贴板 */
@@ -624,6 +628,8 @@ export interface PantryApi {
   sendGroupText(groupId: string, text: string, mentions?: string[]): Promise<MessageView | null>
   /** 触发截图（等价全局快捷键） */
   startCapture(): Promise<void>
+  /** 截图窗：桌面位图已解码并完成首帧布局 */
+  captureReady(): Promise<void>
   /** 截图框选完成：写剪贴板；send=true 时同时回推主窗发送到当前会话 */
   captureDone(bytes: ArrayBuffer, send: boolean): Promise<void>
   /** 写系统图片剪贴板；表情 / 图片消息复制用 */
@@ -647,14 +653,16 @@ export interface PantryApi {
   onConvsUpdated(listener: (convs: ConversationView[]) => void): () => void
   onTransferUpdated(listener: (transfer: TransferView) => void): () => void
   onGroupUpdated(listener: (group: GroupView) => void): () => void
-  /** 截图窗：接收屏幕图像 */
-  onCaptureInit(listener: (dataUrl: string, scaleFactor: number) => void): () => void
+  /** 截图窗：接收本地 PNG 字节 */
+  onCaptureInit(listener: (pngBytes: ArrayBuffer) => void): () => void
   /** 主窗：截图选择"发送"后的字节流 */
   onCaptured(listener: (bytes: ArrayBuffer) => void): () => void
   /** 点通知/托盘后主进程要求打开某会话 */
   onOpenConv(listener: (convId: string) => void): () => void
   /** 设置变更后同步主窗/设置窗外观 */
   onSettingsUpdated(listener: (settings: SettingsView) => void): () => void
+  /** Windows / Linux 设置模态窗开关状态；主窗用来控制遮罩与交互层级 */
+  onSettingsWindowState(listener: (open: boolean) => void): () => void
   /** 主界面全局网段刷新进度 */
   onScanProgress(listener: (progress: ScanProgressView) => void): () => void
   /** 主窗 Command/Ctrl+V 图片剪贴板兜底 */

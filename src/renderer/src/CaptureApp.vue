@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { mapCaptureRectToImage } from './utils/capture-crop'
 import { placeCaptureToolbar } from './utils/capture-toolbar'
 
 // 截图框选窗（F-CAP-1）：屏幕图像做背景 → 拖拽框选 → 发送/复制/取消。
-// Esc 取消，Enter=发送。坐标按 scaleFactor 还原到物理像素裁剪。
+// Esc 取消，Enter=发送。坐标按截图自然尺寸与实际视口分别映射（决议 #221）。
 
-const dataUrl = ref('')
-const scale = ref(1)
+const snapshotUrl = ref('')
+const snapshotEl = ref<HTMLImageElement | null>(null)
 const dragging = ref(false)
 const startX = ref(0)
 const startY = ref(0)
@@ -37,20 +38,75 @@ const annotations = ref<Annotation[]>([])
 const drawingAnnotation = ref<number | null>(null)
 
 let unsubscribe: (() => void) | null = null
+let objectUrl = ''
+let snapshotGeneration = 0
+let unmounted = false
+let moveFrame: number | null = null
+let pendingPoint: { x: number; y: number } | null = null
 
 onMounted(() => {
-  unsubscribe = window.pantry.onCaptureInit((url, factor) => {
-    dataUrl.value = url
-    scale.value = factor
+  unsubscribe = window.pantry.onCaptureInit((pngBytes) => {
+    void prepareSnapshot(pngBytes)
   })
   window.addEventListener('keydown', onKey)
   window.addEventListener('resize', refreshToolbarLayout)
 })
 onBeforeUnmount(() => {
+  unmounted = true
+  snapshotGeneration += 1
   unsubscribe?.()
+  if (moveFrame !== null) cancelAnimationFrame(moveFrame)
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', refreshToolbarLayout)
 })
+
+async function prepareSnapshot(pngBytes: ArrayBuffer): Promise<void> {
+  const generation = ++snapshotGeneration
+  const nextUrl = URL.createObjectURL(new Blob([pngBytes], { type: 'image/png' }))
+  const image = new Image()
+  image.src = nextUrl
+  try {
+    await image.decode()
+  } catch {
+    URL.revokeObjectURL(nextUrl)
+    if (!unmounted && generation === snapshotGeneration) cancel()
+    return
+  }
+  if (unmounted || generation !== snapshotGeneration) {
+    URL.revokeObjectURL(nextUrl)
+    return
+  }
+
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
+  objectUrl = nextUrl
+  snapshotUrl.value = nextUrl
+  rect.value = null
+  annotations.value = []
+  tool.value = 'select'
+  await nextTick()
+  await waitForPaint()
+  if (!unmounted && generation === snapshotGeneration) await window.pantry.captureReady()
+}
+
+async function waitForPaint(): Promise<void> {
+  await waitForFrame()
+  await waitForFrame()
+}
+
+function waitForFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, 100)
+    requestAnimationFrame(finish)
+  })
+}
 
 function refreshToolbarLayout(): void {
   viewportSize.value = { width: window.innerWidth, height: window.innerHeight }
@@ -63,11 +119,15 @@ function refreshToolbarLayout(): void {
 }
 
 function onKey(event: KeyboardEvent): void {
-  if (event.key === 'Escape') void window.pantry.captureDone(new ArrayBuffer(0), false)
-  if (event.key === 'Enter' && rect.value) void confirm(true)
+  if (event.key === 'Escape') {
+    cancel()
+  } else if (event.key === 'Enter' && rect.value) {
+    void confirm(true)
+  }
 }
 
 function onMouseDown(event: MouseEvent): void {
+  flushPendingPointerMove()
   if (rect.value && tool.value !== 'select' && inSelection(event.clientX, event.clientY)) {
     startAnnotation(event)
     return
@@ -80,22 +140,45 @@ function onMouseDown(event: MouseEvent): void {
 }
 
 function onMouseMove(event: MouseEvent): void {
+  if (drawingAnnotation.value === null && !dragging.value) return
+  pendingPoint = { x: event.clientX, y: event.clientY }
+  if (moveFrame !== null) return
+  moveFrame = requestAnimationFrame(() => {
+    moveFrame = null
+    applyPendingPointerMove()
+  })
+}
+
+function applyPendingPointerMove(): void {
+  const point = pendingPoint
+  pendingPoint = null
+  if (!point) return
   if (drawingAnnotation.value !== null && rect.value) {
     const ann = annotations.value[drawingAnnotation.value]
-    ann.w = event.clientX - rect.value.x - ann.x
-    ann.h = event.clientY - rect.value.y - ann.y
+    ann.w = point.x - rect.value.x - ann.x
+    ann.h = point.y - rect.value.y - ann.y
     return
   }
   if (!dragging.value) return
   rect.value = {
-    x: Math.min(startX.value, event.clientX),
-    y: Math.min(startY.value, event.clientY),
-    w: Math.abs(event.clientX - startX.value),
-    h: Math.abs(event.clientY - startY.value)
+    x: Math.min(startX.value, point.x),
+    y: Math.min(startY.value, point.y),
+    w: Math.abs(point.x - startX.value),
+    h: Math.abs(point.y - startY.value)
   }
 }
 
-async function onMouseUp(): Promise<void> {
+function flushPendingPointerMove(): void {
+  if (moveFrame !== null) {
+    cancelAnimationFrame(moveFrame)
+    moveFrame = null
+  }
+  applyPendingPointerMove()
+}
+
+async function onMouseUp(event: MouseEvent): Promise<void> {
+  pendingPoint = { x: event.clientX, y: event.clientY }
+  flushPendingPointerMove()
   if (drawingAnnotation.value !== null) {
     const ann = annotations.value[drawingAnnotation.value]
     if (ann && ann.type !== 'text' && Math.abs(ann.w) < 4 && Math.abs(ann.h) < 4) {
@@ -118,28 +201,31 @@ function cancel(): void {
 
 async function confirm(send: boolean): Promise<void> {
   const r = rect.value
-  if (!r || !dataUrl.value) return
-  const img = new Image()
-  img.src = dataUrl.value
-  await img.decode()
-  const k = scale.value
+  const img = snapshotEl.value
+  if (!r || !img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return
+  const crop = mapCaptureRectToImage(
+    r,
+    { width: window.innerWidth, height: window.innerHeight },
+    { width: img.naturalWidth, height: img.naturalHeight }
+  )
+  if (!crop) return
   const canvas = document.createElement('canvas')
-  canvas.width = Math.round(r.w * k)
-  canvas.height = Math.round(r.h * k)
+  canvas.width = crop.width
+  canvas.height = crop.height
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.drawImage(
     img,
-    Math.round(r.x * k),
-    Math.round(r.y * k),
-    canvas.width,
-    canvas.height,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
     0,
     0,
     canvas.width,
     canvas.height
   )
-  drawAnnotations(ctx, k)
+  drawAnnotations(ctx, crop.scaleX, crop.scaleY)
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
   if (!blob) return
   await window.pantry.captureDone(await blob.arrayBuffer(), send)
@@ -193,30 +279,45 @@ function arrowStyle(ann: Annotation): Record<string, string> {
   }
 }
 
-function drawAnnotations(ctx: CanvasRenderingContext2D, k: number): void {
+function drawAnnotations(ctx: CanvasRenderingContext2D, scaleX: number, scaleY: number): void {
+  const strokeScale = (scaleX + scaleY) / 2
   ctx.save()
-  ctx.lineWidth = Math.max(2, 3 * k)
+  ctx.lineWidth = Math.max(2, 3 * strokeScale)
   ctx.strokeStyle = '#3d8b6b'
   ctx.fillStyle = '#3d8b6b'
   for (const ann of annotations.value) {
     if (ann.type === 'rect') {
       const n = norm(ann)
-      ctx.strokeRect(n.x * k, n.y * k, n.w * k, n.h * k)
+      ctx.strokeRect(n.x * scaleX, n.y * scaleY, n.w * scaleX, n.h * scaleY)
     } else if (ann.type === 'arrow') {
-      drawArrow(ctx, ann.x * k, ann.y * k, (ann.x + ann.w) * k, (ann.y + ann.h) * k)
+      drawArrow(
+        ctx,
+        ann.x * scaleX,
+        ann.y * scaleY,
+        (ann.x + ann.w) * scaleX,
+        (ann.y + ann.h) * scaleY,
+        strokeScale
+      )
     } else if (ann.type === 'text' && ann.text) {
-      ctx.font = `${Math.round(18 * k)}px sans-serif`
-      ctx.fillText(ann.text, ann.x * k, ann.y * k)
+      ctx.font = `${Math.round(18 * scaleY)}px sans-serif`
+      ctx.fillText(ann.text, ann.x * scaleX, ann.y * scaleY)
     } else if (ann.type === 'mosaic') {
-      drawMosaic(ctx, norm(ann), k)
+      drawMosaic(ctx, norm(ann), scaleX, scaleY)
     }
   }
   ctx.restore()
 }
 
-function drawArrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number): void {
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  scale: number
+): void {
   const angle = Math.atan2(y2 - y1, x2 - x1)
-  const head = 12
+  const head = 12 * scale
   ctx.beginPath()
   ctx.moveTo(x1, y1)
   ctx.lineTo(x2, y2)
@@ -229,12 +330,20 @@ function drawArrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: nu
   ctx.fill()
 }
 
-function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number; w: number; h: number }, k: number): void {
-  const x = Math.max(0, Math.round(rect_.x * k))
-  const y = Math.max(0, Math.round(rect_.y * k))
-  const w = Math.max(1, Math.round(rect_.w * k))
-  const h = Math.max(1, Math.round(rect_.h * k))
-  const block = Math.max(6, Math.round(10 * k))
+function drawMosaic(
+  ctx: CanvasRenderingContext2D,
+  rect_: { x: number; y: number; w: number; h: number },
+  scaleX: number,
+  scaleY: number
+): void {
+  const x = Math.max(0, Math.round(rect_.x * scaleX))
+  const y = Math.max(0, Math.round(rect_.y * scaleY))
+  const right = Math.min(ctx.canvas.width, Math.round((rect_.x + rect_.w) * scaleX))
+  const bottom = Math.min(ctx.canvas.height, Math.round((rect_.y + rect_.h) * scaleY))
+  const w = right - x
+  const h = bottom - y
+  if (w <= 0 || h <= 0) return
+  const block = Math.max(6, Math.round(10 * ((scaleX + scaleY) / 2)))
   const data = ctx.getImageData(x, y, w, h)
   for (let by = 0; by < h; by += block) {
     for (let bx = 0; bx < w; bx += block) {
@@ -249,13 +358,31 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
 <template>
   <div
     class="stage"
-    :style="{ backgroundImage: `url(${dataUrl})` }"
     @mousedown="onMouseDown"
     @mousemove="onMouseMove"
     @mouseup="onMouseUp"
   >
-    <div class="dim"></div>
+    <img v-if="snapshotUrl" ref="snapshotEl" class="desktop" :src="snapshotUrl" alt="" />
+    <div v-if="!rect" class="dim dim-full"></div>
     <template v-if="rect">
+      <div class="dim dim-top" :style="{ height: `${rect.y}px` }"></div>
+      <div
+        class="dim dim-right"
+        :style="{
+          left: `${rect.x + rect.w}px`,
+          top: `${rect.y}px`,
+          height: `${rect.h}px`
+        }"
+      ></div>
+      <div class="dim dim-bottom" :style="{ top: `${rect.y + rect.h}px` }"></div>
+      <div
+        class="dim dim-left"
+        :style="{
+          top: `${rect.y}px`,
+          width: `${rect.x}px`,
+          height: `${rect.h}px`
+        }"
+      ></div>
       <div
         class="sel"
         :class="{ annotating: tool !== 'select' }"
@@ -263,9 +390,7 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
           left: `${rect.x}px`,
           top: `${rect.y}px`,
           width: `${rect.w}px`,
-          height: `${rect.h}px`,
-          backgroundImage: `url(${dataUrl})`,
-          backgroundPosition: `-${rect.x}px -${rect.y}px`
+          height: `${rect.h}px`
         }"
       >
         <div
@@ -317,23 +442,51 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
 .stage {
   position: fixed;
   inset: 0;
-  background-size: 100% 100%;
+  background-color: #000;
   cursor: crosshair;
   user-select: none;
   overflow: hidden;
 }
-.dim {
+.desktop {
   position: absolute;
   inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+.dim {
+  position: absolute;
   background: rgba(0, 0, 0, 0.45);
   pointer-events: none;
+}
+.dim-full,
+.dim-top,
+.dim-bottom {
+  left: 0;
+  right: 0;
+}
+.dim-full {
+  top: 0;
+  bottom: 0;
+}
+.dim-top {
+  top: 0;
+}
+.dim-bottom {
+  bottom: 0;
+}
+.dim-left {
+  left: 0;
+}
+.dim-right {
+  right: 0;
 }
 .sel {
   position: absolute;
   border: 2px solid #3d8b6b;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
-  background-size: 100vw 100vh;
-  background-repeat: no-repeat;
   pointer-events: none;
   overflow: hidden;
 }
@@ -349,7 +502,6 @@ function drawMosaic(ctx: CanvasRenderingContext2D, rect_: { x: number; y: number
     linear-gradient(45deg, rgba(61, 139, 107, 0.35) 25%, transparent 25%) 0 0 / 12px 12px,
     linear-gradient(45deg, transparent 75%, rgba(61, 139, 107, 0.35) 75%) 0 0 / 12px 12px,
     rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(4px);
 }
 .ann.arrow {
   height: 3px;

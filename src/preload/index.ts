@@ -32,12 +32,19 @@ import {
   type TransferView,
   type UpdateAvailability
 } from '../shared/ipc'
+import { createCaptureInitReplay } from './capture-init-replay'
 
 function subscribe<T>(channel: string, listener: (data: T) => void): () => void {
   const wrapped = (_event: unknown, data: T): void => listener(data)
   ipcRenderer.on(channel, wrapped)
   return () => ipcRenderer.removeListener(channel, wrapped)
 }
+
+// preload 早于 renderer 动态入口执行，先缓存截图初始化，避免 CaptureApp 晚订阅丢事件（决议 #218）。
+const captureInitReplay = createCaptureInitReplay()
+ipcRenderer.on(IpcEvents.captureInit, (_event, pngBytes: ArrayBuffer) => {
+  captureInitReplay.publish(pngBytes)
+})
 
 // 渲染进程一切能力的唯一入口（tech-design §2 安全基线：sandbox + contextBridge）
 const api: PantryApi = {
@@ -167,6 +174,7 @@ const api: PantryApi = {
   sendGroupText: (groupId: string, text: string, mentions?: string[]): Promise<MessageView | null> =>
     ipcRenderer.invoke(IpcChannels.groupSend, groupId, text, mentions),
   startCapture: (): Promise<void> => ipcRenderer.invoke(IpcChannels.captureStart),
+  captureReady: (): Promise<void> => ipcRenderer.invoke(IpcChannels.captureReady),
   captureDone: (bytes: ArrayBuffer, send: boolean): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.captureDone, bytes, send),
   writeImageToClipboard: (bytes: ArrayBuffer): Promise<boolean> =>
@@ -192,15 +200,12 @@ const api: PantryApi = {
   onConvsUpdated: (listener) => subscribe<ConversationView[]>(IpcEvents.convsUpdated, listener),
   onTransferUpdated: (listener) => subscribe<TransferView>(IpcEvents.transferUpdated, listener),
   onGroupUpdated: (listener) => subscribe<GroupView>(IpcEvents.groupUpdated, listener),
-  onCaptureInit: (listener) => {
-    const wrapped = (_e: unknown, dataUrl: string, scaleFactor: number): void =>
-      listener(dataUrl, scaleFactor)
-    ipcRenderer.on(IpcEvents.captureInit, wrapped)
-    return () => ipcRenderer.removeListener(IpcEvents.captureInit, wrapped)
-  },
+  onCaptureInit: (listener) => captureInitReplay.subscribe(listener),
   onCaptured: (listener) => subscribe<ArrayBuffer>(IpcEvents.captured, listener),
   onOpenConv: (listener) => subscribe<string>(IpcEvents.openConv, listener),
   onSettingsUpdated: (listener) => subscribe<SettingsView>(IpcEvents.settingsUpdated, listener),
+  onSettingsWindowState: (listener) =>
+    subscribe<boolean>(IpcEvents.settingsWindowState, listener),
   onScanProgress: (listener) => subscribe<ScanProgressView>(IpcEvents.netScanProgress, listener),
   onClipboardPasteImage: (listener): (() => void) =>
     subscribe<void>(IpcEvents.clipboardPasteImage, listener),
