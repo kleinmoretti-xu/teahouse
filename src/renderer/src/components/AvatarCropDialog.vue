@@ -14,8 +14,6 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; apply: [bytes: ArrayBuffer] }>()
 
 const dialog = ref<HTMLElement | null>(null)
-const cropStage = ref<HTMLElement | null>(null)
-const image = ref<HTMLImageElement | null>(null)
 const imageLoaded = ref(false)
 const imageUrl = ref('')
 const zoom = ref(1)
@@ -24,12 +22,11 @@ const offsetY = ref(0)
 const localError = ref('')
 const dragging = ref(false)
 let dragStart: { x: number; y: number; offsetX: number; offsetY: number } | null = null
-let activePointerId: number | null = null
 const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 
 const cropState = computed<AvatarCropState>(() => ({
-  imageWidth: image.value?.naturalWidth ?? props.source.width,
-  imageHeight: image.value?.naturalHeight ?? props.source.height,
+  imageWidth: props.source.width,
+  imageHeight: props.source.height,
   viewportSize: VIEWPORT,
   zoom: zoom.value,
   offsetX: offsetX.value,
@@ -86,40 +83,29 @@ function setZoom(next: number, event?: WheelEvent): void {
   clampOffsets()
 }
 
-function startDrag(event: PointerEvent): void {
-  if (props.busy || !imageLoaded.value || event.button !== 0 || activePointerId !== null) return
+function startDrag(event: MouseEvent): void {
+  if (props.busy || !imageLoaded.value || event.button !== 0 || dragStart) return
   event.preventDefault()
   dragging.value = true
-  activePointerId = event.pointerId
-  dragStart = { x: event.clientX, y: event.clientY, offsetX: offsetX.value, offsetY: offsetY.value }
-  cropStage.value?.setPointerCapture(event.pointerId)
+  dragStart = {
+    x: event.clientX,
+    y: event.clientY,
+    offsetX: offsetX.value,
+    offsetY: offsetY.value
+  }
 }
 
-function moveDrag(event: PointerEvent): void {
-  if (!dragStart || event.pointerId !== activePointerId) return
+function moveDrag(event: MouseEvent): void {
+  if (!dragStart) return
   event.preventDefault()
   offsetX.value = dragStart.offsetX + event.clientX - dragStart.x
   offsetY.value = dragStart.offsetY + event.clientY - dragStart.y
   clampOffsets()
 }
 
-function clearDrag(): void {
+function endDrag(): void {
   dragging.value = false
   dragStart = null
-  activePointerId = null
-}
-
-function endDrag(event: PointerEvent): void {
-  if (event.pointerId !== activePointerId) return
-  const pointerId = activePointerId
-  clearDrag()
-  if (pointerId !== null && cropStage.value?.hasPointerCapture(pointerId)) {
-    cropStage.value.releasePointerCapture(pointerId)
-  }
-}
-
-function lostPointerCapture(event: PointerEvent): void {
-  if (event.pointerId === activePointerId) clearDrag()
 }
 
 function requestClose(): void {
@@ -131,10 +117,13 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 async function apply(): Promise<void> {
-  if (!image.value || !imageLoaded.value || props.busy) return
+  if (!imageLoaded.value || props.busy) return
   localError.value = ''
   try {
-    emit('apply', await renderAvatarWebp(image.value, cropState.value))
+    emit(
+      'apply',
+      await renderAvatarWebp(props.source.bytes, props.source.mime, cropState.value)
+    )
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '处理图片失败'
   }
@@ -145,19 +134,19 @@ watch(zoom, clampOffsets)
 onMounted(async () => {
   imageUrl.value = URL.createObjectURL(new Blob([props.source.bytes], { type: props.source.mime }))
   window.addEventListener('keydown', onKeydown)
-  window.addEventListener('pointermove', moveDrag)
-  window.addEventListener('pointerup', endDrag)
-  window.addEventListener('pointercancel', endDrag)
+  window.addEventListener('mousemove', moveDrag)
+  window.addEventListener('mouseup', endDrag)
+  window.addEventListener('blur', endDrag)
   await nextTick()
   dialog.value?.focus()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('pointermove', moveDrag)
-  window.removeEventListener('pointerup', endDrag)
-  window.removeEventListener('pointercancel', endDrag)
-  clearDrag()
+  window.removeEventListener('mousemove', moveDrag)
+  window.removeEventListener('mouseup', endDrag)
+  window.removeEventListener('blur', endDrag)
+  endDrag()
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
   returnFocus?.focus()
 })
@@ -185,15 +174,12 @@ onBeforeUnmount(() => {
         </header>
 
         <div
-          ref="cropStage"
           class="crop-stage"
           :class="{ dragging }"
-          @pointerdown="startDrag"
-          @lostpointercapture="lostPointerCapture"
+          @mousedown="startDrag"
           @wheel.prevent="setZoom(zoom + ($event.deltaY < 0 ? 0.12 : -0.12), $event)"
         >
           <img
-            ref="image"
             :src="imageUrl"
             :style="imageStyle"
             alt="待裁剪头像"

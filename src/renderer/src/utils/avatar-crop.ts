@@ -45,32 +45,49 @@ function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality))
 }
 
+export function hasVisibleAvatarPixels(pixels: Uint8ClampedArray): boolean {
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] > 0) return true
+  }
+  return false
+}
+
 export async function renderAvatarWebp(
-  image: CanvasImageSource,
+  bytes: ArrayBuffer,
+  mime: string,
   state: AvatarCropState
 ): Promise<ArrayBuffer> {
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }))
   const canvas = document.createElement('canvas')
   canvas.width = AVATAR_OUTPUT_SIZE
   canvas.height = AVATAR_OUTPUT_SIZE
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('无法创建图片处理画布')
-  const source = avatarCropSourceRect(state)
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(
-    image,
-    source.x,
-    source.y,
-    source.size,
-    source.size,
-    0,
-    0,
-    AVATAR_OUTPUT_SIZE,
-    AVATAR_OUTPUT_SIZE
-  )
-  for (const quality of [0.86, 0.78, 0.68, 0.56, 0.44, 0.32]) {
-    const blob = await canvasBlob(canvas, quality)
-    if (blob && blob.size <= AVATAR_MAX_BYTES) return blob.arrayBuffer()
+  try {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('无法创建图片处理画布')
+    const source = avatarCropSourceRect(state)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(
+      bitmap,
+      source.x,
+      source.y,
+      source.size,
+      source.size,
+      0,
+      0,
+      AVATAR_OUTPUT_SIZE,
+      AVATAR_OUTPUT_SIZE
+    )
+    const pixels = context.getImageData(0, 0, AVATAR_OUTPUT_SIZE, AVATAR_OUTPUT_SIZE).data
+    if (!hasVisibleAvatarPixels(pixels)) throw new Error('裁剪结果为空，请重新选择图片')
+    for (const quality of [0.86, 0.78, 0.68, 0.56, 0.44, 0.32]) {
+      const blob = await canvasBlob(canvas, quality)
+      if (blob?.type === 'image/webp' && blob.size <= AVATAR_MAX_BYTES) {
+        return blob.arrayBuffer()
+      }
+    }
+    throw new Error('图片细节过多，请调整裁剪范围后重试')
+  } finally {
+    bitmap.close()
   }
-  throw new Error('图片细节过多，请调整裁剪范围后重试')
 }
