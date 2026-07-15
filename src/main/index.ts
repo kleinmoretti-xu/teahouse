@@ -13,7 +13,7 @@ import {
   shell,
   type Tray
 } from 'electron'
-import { networkInterfaces, release } from 'node:os'
+import { networkInterfaces } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -124,6 +124,7 @@ import { filterImagePickerPaths, IMAGE_PICKER_EXTENSIONS } from './util/image-pi
 import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
+import { configureWindowsImeCompatibility } from './util/windows-ime'
 import {
   findLocalUpdatePackage,
   pickUpdateSource,
@@ -133,8 +134,8 @@ import {
 
 // Win7（NT 6.1）终端为统一 VM 部署，虚拟显卡驱动不可靠；UOS/Debian 目标机多国产 GPU 或旧驱动，
 // GPU 进程频报 ContextResult::kTransientFailure —— 两者默认软渲染（tech-design §9，决议 #55/#231）
-const SOFTWARE_RENDERING =
-  (process.platform === 'win32' && release().startsWith('6.1')) || process.platform === 'linux'
+const WINDOWS_7 = configureWindowsImeCompatibility(app.commandLine)
+const SOFTWARE_RENDERING = WINDOWS_7 || process.platform === 'linux'
 if (SOFTWARE_RENDERING) {
   app.disableHardwareAcceleration()
 }

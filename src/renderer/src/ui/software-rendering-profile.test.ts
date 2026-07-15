@@ -7,6 +7,16 @@ const imageViewerSource = readFileSync(new URL('../components/ImageViewer.vue', 
 const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
 
 describe('Win7 与 Linux 软渲染画像', () => {
+  it('Win7 输入法兼容开关在应用就绪前配置', () => {
+    const compatibilityIndex = mainSource.indexOf(
+      'configureWindowsImeCompatibility(app.commandLine)'
+    )
+    const readyIndex = mainSource.indexOf('app.whenReady()')
+    expect(compatibilityIndex).toBeGreaterThan(-1)
+    expect(readyIndex).toBeGreaterThan(-1)
+    expect(compatibilityIndex).toBeLessThan(readyIndex)
+  })
+
   it('主进程复用禁用硬件加速条件并通过 AppInfo 下发', () => {
     expect(mainSource).toContain('const SOFTWARE_RENDERING =')
     expect(mainSource).toContain('if (SOFTWARE_RENDERING)')
