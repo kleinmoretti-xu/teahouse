@@ -56,9 +56,13 @@ function profile(nodeId: string, avatarHash?: string): Profile {
 
 class FakeMessenger extends EventEmitter {
   sent: Array<{ peerId: string; env: Envelope }> = []
+  bestEffort: Array<{ peerId: string; env: Envelope }> = []
   async sendReliable(peerId: string, env: Envelope): Promise<boolean> {
     this.sent.push({ peerId, env })
     return true
+  }
+  sendBestEffort(peerId: string, env: Envelope): void {
+    this.bestEffort.push({ peerId, env })
   }
 }
 
@@ -204,6 +208,135 @@ describe('AvatarService', () => {
       expect(messenger.sent).toHaveLength(1)
       expect(messenger.sent[0].peerId).toBe('node-member')
       expect(messenger.sent[0].env.payload).toMatchObject({ op: 'data', hash, groupId: 'group-1' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('来源无法提供数据时回尽力而为 miss；成员/权限不符保持沉默', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pantry-avatar-miss-serve-'))
+    try {
+      const hash = 'a'.repeat(64)
+      const messenger = new FakeMessenger()
+      const registry = new FakeRegistry()
+      const groups = new FakeGroupRepo()
+      registry.put('node-peer', undefined)
+      registry.put('node-outsider', undefined)
+      new AvatarService({
+        selfId: 'node-self',
+        messenger: messenger as unknown as Messenger,
+        registry: registry as unknown as PeerRegistry,
+        groupRepo: groups as unknown as GroupRepo,
+        store: new AvatarStore(root),
+        getSelfProfile: () => profile('node-self', hash) // 声明了哈希但缓存缺失
+      })
+
+      // 哈希匹配本人资料但文件缺失 → miss
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-peer', { op: 'get', hash })
+      )
+      await waitFor(() => messenger.bestEffort.length === 1)
+      expect(messenger.bestEffort[0].peerId).toBe('node-peer')
+      expect(messenger.bestEffort[0].env.payload).toMatchObject({ op: 'miss', hash })
+
+      // 哈希不匹配本人资料 → miss；非群成员请求群头像 → 沉默
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-peer', {
+          op: 'get',
+          hash: 'b'.repeat(64)
+        })
+      )
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-outsider', {
+          op: 'get',
+          hash,
+          groupId: 'group-x'
+        })
+      )
+      await waitFor(() => messenger.bestEffort.length === 2)
+      expect(messenger.bestEffort[1].env.payload).toMatchObject({
+        op: 'miss',
+        hash: 'b'.repeat(64)
+      })
+      expect(messenger.sent).toHaveLength(0)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('群头像收到当前源 miss 后立即改试下一个在线成员，全部无着落则本轮冷却', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pantry-avatar-miss-failover-'))
+    try {
+      const hash = 'c'.repeat(64)
+      const messenger = new FakeMessenger()
+      const registry = new FakeRegistry()
+      const groups = new FakeGroupRepo()
+      registry.put('node-a', undefined)
+      registry.put('node-b', undefined)
+      groups.rows.set('group-1', {
+        groupId: 'group-1',
+        name: '项目组',
+        members: ['node-self', 'node-a', 'node-b'],
+        rev: 1,
+        updatedBy: 'node-self',
+        updatedTs: 1,
+        creatorIp: '127.0.0.1',
+        creatorId: 'node-self',
+        ownerId: 'node-self',
+        adminIds: [],
+        avatarHash: hash,
+        adminSecretHash: '',
+        adminHint: ''
+      })
+      const service = new AvatarService({
+        selfId: 'node-self',
+        messenger: messenger as unknown as Messenger,
+        registry: registry as unknown as PeerRegistry,
+        groupRepo: groups as unknown as GroupRepo,
+        store: new AvatarStore(root),
+        getSelfProfile: () => profile('node-self')
+      })
+
+      await service.ensureGroup('group-1', 'node-a')
+      expect(messenger.sent).toHaveLength(1)
+      expect(messenger.sent[0].peerId).toBe('node-a')
+
+      // 非当前源的 miss 忽略；当前源 miss → 立即改试 node-b
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-b', {
+          op: 'miss',
+          hash,
+          groupId: 'group-1'
+        })
+      )
+      expect(messenger.sent).toHaveLength(1)
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-a', {
+          op: 'miss',
+          hash,
+          groupId: 'group-1'
+        })
+      )
+      await waitFor(() => messenger.sent.length === 2)
+      expect(messenger.sent[1].peerId).toBe('node-b')
+
+      // 所有源都 miss 后本轮冷却：ensureGroup 不再立即重发
+      messenger.emit(
+        'incoming',
+        makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-b', {
+          op: 'miss',
+          hash,
+          groupId: 'group-1'
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      await service.ensureGroup('group-1')
+      expect(messenger.sent).toHaveLength(2)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

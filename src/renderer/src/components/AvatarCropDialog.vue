@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AvatarSourcePick } from '../../../shared/ipc'
-import { clampAvatarOffset, renderAvatarWebp, type AvatarCropState } from '../utils/avatar-crop'
+import {
+  avatarMaxZoom,
+  clampAvatarOffset,
+  renderAvatarWebp,
+  type AvatarCropState
+} from '../utils/avatar-crop'
 import PantryIcon from './PantryIcon.vue'
 
 const VIEWPORT = 240
+// 等比步进：缩放感知按倍率而非增量，大上限（大图可达数十倍）下每步幅度稳定（决议 #249）
+const ZOOM_STEP = 1.12
 const props = defineProps<{
   source: Extract<AvatarSourcePick, { ok: true }>
   title?: string
@@ -37,6 +44,8 @@ const scale = computed(
     Math.max(VIEWPORT / cropState.value.imageWidth, VIEWPORT / cropState.value.imageHeight) *
     zoom.value
 )
+// 最大缩放随源图短边放宽，允许裁到 192px 输出分辨率对应的最小区域（决议 #249）
+const maxZoom = computed(() => avatarMaxZoom(props.source.width, props.source.height))
 const imageStyle = computed(() => ({
   width: `${cropState.value.imageWidth * scale.value}px`,
   height: `${cropState.value.imageHeight * scale.value}px`,
@@ -71,7 +80,7 @@ function imageFailed(): void {
 function setZoom(next: number, event?: WheelEvent): void {
   if (props.busy) return
   const previous = zoom.value
-  zoom.value = Math.max(1, Math.min(4, next))
+  zoom.value = Math.max(1, Math.min(maxZoom.value, next))
   if (event && previous !== zoom.value) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
     const pointX = event.clientX - rect.left - VIEWPORT / 2
@@ -177,7 +186,7 @@ onBeforeUnmount(() => {
           class="crop-stage"
           :class="{ dragging }"
           @mousedown="startDrag"
-          @wheel.prevent="setZoom(zoom + ($event.deltaY < 0 ? 0.12 : -0.12), $event)"
+          @wheel.prevent="setZoom(zoom * ($event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP), $event)"
         >
           <img
             :src="imageUrl"
@@ -192,20 +201,20 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="zoom-row">
-          <button title="缩小" :disabled="busy || zoom <= 1" @click="setZoom(zoom - 0.12)">
+          <button title="缩小" :disabled="busy || zoom <= 1" @click="setZoom(zoom / ZOOM_STEP)">
             <PantryIcon name="minus" :size="14" />
           </button>
           <input
             :value="Math.round(zoom * 100)"
             type="range"
             min="100"
-            max="400"
+            :max="Math.round(maxZoom * 100)"
             step="1"
             aria-label="头像缩放"
-            :disabled="busy"
+            :disabled="busy || maxZoom <= 1"
             @input="setZoom(Number(($event.target as HTMLInputElement).value) / 100)"
           />
-          <button title="放大" :disabled="busy || zoom >= 4" @click="setZoom(zoom + 0.12)">
+          <button title="放大" :disabled="busy || zoom >= maxZoom" @click="setZoom(zoom * ZOOM_STEP)">
             <PantryIcon name="plus" :size="14" />
           </button>
           <button class="reset" :disabled="busy" @click="reset">重置</button>

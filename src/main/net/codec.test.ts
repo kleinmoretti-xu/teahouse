@@ -97,11 +97,20 @@ describe('codec', () => {
     })
     expect(decodeTcpEnvelopeObject(data)).toMatchObject({ ok: true, known: true })
 
+    const miss = makeEnvelope<AvatarPayload>(MSG_TYPES.avatar, 'node-aaaa', {
+      op: 'miss',
+      hash,
+      groupId: 'group-1'
+    })
+    expect(decodeTcpEnvelopeObject(miss)).toMatchObject({ ok: true, known: true })
+
     for (const payload of [
       { op: 'get', hash: 'bad' },
       { op: 'data', hash, bytesBase64: '***=' },
       { op: 'data', hash, bytesBase64: Buffer.alloc(AVATAR_MAX_BYTES + 1).toString('base64') },
-      { op: 'get', hash, extra: true }
+      { op: 'get', hash, extra: true },
+      { op: 'miss', hash: 'bad' },
+      { op: 'miss', hash, bytesBase64: 'AAAA' }
     ]) {
       expect(
         decodeTcpEnvelopeObject(makeEnvelope(MSG_TYPES.avatar, 'node-aaaa', payload))

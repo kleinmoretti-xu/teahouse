@@ -30,6 +30,15 @@ describe('自定义头像渲染入口', () => {
     expect(crop).toContain('returnFocus?.focus()')
   })
 
+  it('裁剪缩放上限随源图动态放宽并使用等比步进（决议 #249）', () => {
+    expect(crop).toContain('avatarMaxZoom(props.source.width, props.source.height)')
+    expect(crop).toContain(':max="Math.round(maxZoom * 100)"')
+    expect(crop).toContain('zoom >= maxZoom')
+    expect(crop).toContain('ZOOM_STEP')
+    expect(crop).not.toContain('max="400"')
+    expect(crop).not.toContain('Math.min(4, next)')
+  })
+
   it('用户与群头像共用短主机名加哈希路径的受管地址', () => {
     expect(avatarMark).toContain("import { avatarImageUrl } from '../../../shared/avatar-url'")
     expect(groupAvatar).toContain("import { avatarImageUrl } from '../../../shared/avatar-url'")

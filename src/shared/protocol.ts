@@ -285,10 +285,13 @@ export type GroupPayload =
   | { op: 'info'; group: GroupMeta }
   | { op: 'need'; groupId: string }
 
-/** 自定义头像按需取图（决议 #243）；groupId 缺省表示用户头像。 */
+/** 自定义头像按需取图（决议 #243）；groupId 缺省表示用户头像。
+ *  miss（决议 #249）= 来源无法提供数据的尽力而为提示，只允许一次性 UDP 单发：
+ *  v0.47 及更早端收到 miss 会整包忽略且不回 ACK，可靠发送会把旧端误判为离线。 */
 export type AvatarPayload =
   | { op: 'get'; hash: string; groupId?: string }
   | { op: 'data'; hash: string; bytesBase64: string; groupId?: string }
+  | { op: 'miss'; hash: string; groupId?: string }
 
 /** ACK 载荷（§7.2） */
 export interface AckPayload {

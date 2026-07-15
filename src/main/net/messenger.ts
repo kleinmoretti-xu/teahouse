@@ -97,6 +97,17 @@ export class Messenger extends EventEmitter {
     return acked
   }
 
+  /** 尽力而为单发：不重试、不等 ACK、不改在线状态，丢失由对端超时兜底。
+   *  供 avatar miss 等提示型报文使用（决议 #249）——旧端整包忽略且不回 ACK，
+   *  走可靠通道会把对端误判为离线，故必须用本方法。仅限 UDP 单包大小。 */
+  sendBestEffort(peerId: string, env: Envelope): void {
+    const record = this.registry.get(peerId)
+    if (!record) return
+    const buf = encode(env)
+    if (buf.length > UDP_MAX_PAYLOAD) return
+    this.udp.sendBuffer(buf, record.ip, record.udpPort)
+  }
+
   /** 对端上线后按原顺序补发；中途再失败即停（保持顺序，等下次上线） */
   async flushQueue(peerId: string): Promise<void> {
     if (this.flushing.has(peerId)) return

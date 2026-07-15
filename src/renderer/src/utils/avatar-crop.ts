@@ -41,6 +41,29 @@ export function avatarCropSourceRect(state: AvatarCropState): {
   }
 }
 
+/** 最大缩放随源图动态放宽：允许放大到裁剪区约等于输出分辨率（192px 源像素），小图不放大（决议 #249）。 */
+export function avatarMaxZoom(imageWidth: number, imageHeight: number): number {
+  return Math.max(1, Math.min(imageWidth, imageHeight) / AVATAR_OUTPUT_SIZE)
+}
+
+/** 供 createImageBitmap 使用的整数裁剪矩形；取整与浮点误差都夹回图内，避免采到界外透明像素。 */
+export function clampedAvatarCropRect(state: AvatarCropState): {
+  x: number
+  y: number
+  size: number
+} {
+  const source = avatarCropSourceRect(state)
+  const size = Math.max(
+    1,
+    Math.min(Math.round(source.size), Math.floor(state.imageWidth), Math.floor(state.imageHeight))
+  )
+  return {
+    x: Math.max(0, Math.min(Math.round(source.x), Math.floor(state.imageWidth) - size)),
+    y: Math.max(0, Math.min(Math.round(source.y), Math.floor(state.imageHeight) - size)),
+    size
+  }
+}
+
 function canvasBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality))
 }
@@ -57,27 +80,28 @@ export async function renderAvatarWebp(
   mime: string,
   state: AvatarCropState
 ): Promise<ArrayBuffer> {
-  const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }))
+  // 裁剪与降采样合并进 createImageBitmap：Chromium 的 resize 是多级滤波，
+  // 大图一步 drawImage 到 192px 会明显锯齿（决议 #249）
+  const rect = clampedAvatarCropRect(state)
+  const bitmap = await createImageBitmap(
+    new Blob([bytes], { type: mime }),
+    rect.x,
+    rect.y,
+    rect.size,
+    rect.size,
+    {
+      resizeWidth: AVATAR_OUTPUT_SIZE,
+      resizeHeight: AVATAR_OUTPUT_SIZE,
+      resizeQuality: 'high'
+    }
+  )
   const canvas = document.createElement('canvas')
   canvas.width = AVATAR_OUTPUT_SIZE
   canvas.height = AVATAR_OUTPUT_SIZE
   try {
     const context = canvas.getContext('2d', { willReadFrequently: true })
     if (!context) throw new Error('无法创建图片处理画布')
-    const source = avatarCropSourceRect(state)
-    context.imageSmoothingEnabled = true
-    context.imageSmoothingQuality = 'high'
-    context.drawImage(
-      bitmap,
-      source.x,
-      source.y,
-      source.size,
-      source.size,
-      0,
-      0,
-      AVATAR_OUTPUT_SIZE,
-      AVATAR_OUTPUT_SIZE
-    )
+    context.drawImage(bitmap, 0, 0)
     const pixels = context.getImageData(0, 0, AVATAR_OUTPUT_SIZE, AVATAR_OUTPUT_SIZE).data
     if (!hasVisibleAvatarPixels(pixels)) throw new Error('裁剪结果为空，请重新选择图片')
     for (const quality of [0.86, 0.78, 0.68, 0.56, 0.44, 0.32]) {

@@ -225,7 +225,7 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
       const avatar = payload as Partial<AvatarPayload>
       if (!isAvatarHash(avatar.hash)) return false
       if (avatar.groupId !== undefined && !isStr(avatar.groupId, LIMITS.id)) return false
-      if (avatar.op === 'get') {
+      if (avatar.op === 'get' || avatar.op === 'miss') {
         return Object.keys(payload).every((key) => key === 'op' || key === 'hash' || key === 'groupId')
       }
       if (avatar.op !== 'data' || typeof avatar.bytesBase64 !== 'string') return false

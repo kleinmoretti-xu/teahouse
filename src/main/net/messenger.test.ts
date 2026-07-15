@@ -422,6 +422,57 @@ describe('messenger 回环集成', () => {
     }
   })
 
+  it('来源缓存缺失时经 UDP 单发 miss 提示，请求方完整收到（决议 #249）', async () => {
+    nextPort += 30
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'pantry-avatar-miss-source-'))
+    const targetRoot = await mkdtemp(join(tmpdir(), 'pantry-avatar-miss-target-'))
+    try {
+      const a = await makeStack('miss-source', nextPort)
+      const b = await makeStack('miss-target', nextPort + 5, [
+        { host: '127.0.0.1', port: a.port }
+      ])
+      const bytes = avatarWebp()
+      const hash = avatarHashOf(bytes)
+      a.profile.avatarHash = hash // 声明了哈希但受管缓存里没有文件
+      a.profile.caps = [CAPS.avatarImages]
+      b.profile.caps = [CAPS.avatarImages]
+
+      await startTcpReceiver(a)
+      await startTcpReceiver(b)
+      new AvatarService({
+        selfId: a.profile.nodeId,
+        messenger: a.messenger,
+        registry: a.registry,
+        groupRepo: emptyGroups,
+        store: new AvatarStore(sourceRoot),
+        getSelfProfile: () => a.profile
+      })
+      new AvatarService({
+        selfId: b.profile.nodeId,
+        messenger: b.messenger,
+        registry: b.registry,
+        groupRepo: emptyGroups,
+        store: new AvatarStore(targetRoot),
+        getSelfProfile: () => b.profile
+      })
+
+      a.discovery.start()
+      b.discovery.start()
+
+      await waitFor(() =>
+        b.incoming.some(
+          (env) =>
+            env.type === MSG_TYPES.avatar &&
+            (env.payload as { op?: string; hash?: string }).op === 'miss' &&
+            (env.payload as { hash?: string }).hash === hash
+        )
+      )
+    } finally {
+      await rm(sourceRoot, { recursive: true, force: true })
+      await rm(targetRoot, { recursive: true, force: true })
+    }
+  })
+
   it('离线入队 → 对方上线自动补发（含跨"重启"）', async () => {
     nextPort += 4
     const a = await makeStack('alice', nextPort)
