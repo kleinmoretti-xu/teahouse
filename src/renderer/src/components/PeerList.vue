@@ -150,7 +150,6 @@ function displayName(peer: PeerView): string {
           <span class="peer-main">
             <span class="peer-name" :class="{ dim: !row.peer!.online }">
               {{ displayName(row.peer!) }}
-              <em v-if="!row.peer!.online" class="offline-tag">· 离线</em>
             </span>
             <span class="peer-sub">{{ row.peer!.ip }}</span>
           </span>
@@ -255,11 +254,6 @@ function displayName(peer: PeerView): string {
   text-overflow: ellipsis;
 }
 .peer-name.dim {
-  color: var(--text-3);
-}
-.offline-tag {
-  font-style: normal;
-  font-size: 11px;
   color: var(--text-3);
 }
 .peer-sub {
