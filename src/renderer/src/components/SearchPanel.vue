@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { SearchResult } from '../../../shared/ipc'
+import type { PeerView, SearchResult } from '../../../shared/ipc'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
 import { useGroupsStore } from '../stores/groups'
 import { listTime } from '../utils/time'
+import AvatarMark from './AvatarMark.vue'
 import PantryIcon from './PantryIcon.vue'
 
 // 全局搜索结果面板（ui-design §6）：联系人 / 聊天记录（按会话聚合）/ 文件，
@@ -43,6 +44,10 @@ const empty = computed(
 const groupsStore = useGroupsStore()
 const nickOf = computed(() => peersStore.nameOf) // 备注优先（F-DISC-9）
 
+function peerName(peer: PeerView): string {
+  return peer.remark || peer.nick
+}
+
 /** 会话显示名：群会话用群名，单聊用联系人名 */
 function convName(convId: string, peerId: string): string {
   return convId.startsWith('group:') ? groupsStore.nameOf(peerId) : nickOf.value(peerId)
@@ -65,9 +70,25 @@ async function openHit(convId: string, seq: number, msgId: string): Promise<void
     <div v-else class="results">
       <template v-if="result.peers.length > 0">
         <div class="sec">联系人</div>
-        <div v-for="p in result.peers" :key="p.nodeId" class="item" @click="openPeer(p.nodeId)">
-          <span class="t">{{ p.nick }}<em v-if="!p.online" class="off">· 离线</em></span>
-          <span class="s">{{ [p.company, p.dept, p.team].filter(Boolean).join(' / ') || p.ip }}</span>
+        <div
+          v-for="p in result.peers"
+          :key="p.nodeId"
+          class="item peer-item"
+          @click="openPeer(p.nodeId)"
+        >
+          <AvatarMark
+            class="search-avatar"
+            :avatar="p.avatar"
+            :avatar-hash="p.avatarHash"
+            :name="peerName(p)"
+            :offline="!p.online"
+          />
+          <span class="peer-text">
+            <span class="t"
+              >{{ peerName(p) }}<em v-if="!p.online" class="off">· 离线</em></span
+            >
+            <span class="s">{{ [p.company, p.dept, p.team].filter(Boolean).join(' / ') || p.ip }}</span>
+          </span>
         </div>
       </template>
 
@@ -136,6 +157,26 @@ async function openHit(convId: string, seq: number, msgId: string): Promise<void
 }
 .item:hover {
   background: var(--line);
+}
+.peer-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.search-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+}
+.peer-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 .t {
   font-size: 13px;

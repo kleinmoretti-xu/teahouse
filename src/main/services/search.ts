@@ -49,13 +49,14 @@ export class SearchService {
     const q = raw.trim()
     if (!q) return { peers: [], messageGroups: [], files: [] }
 
-    // 联系人：全量（含离线），昵称/公司/部门/团队/主机名任一命中
+    // 联系人：全量（含离线），按备注/昵称/公司/部门/团队/IP 命中。
+    // 主机名不参与全局搜索：同一台机器上的联调身份会共享主机名，容易产生无关结果（决议 #250）。
     const needle = q.toLowerCase()
     const peers = this.registry
       .list()
       .filter((r) => {
         const p = r.profile
-        return [p.nick, this.remarkOf(p.nodeId), p.company, p.dept, p.team, p.host, r.ip].some(
+        return [p.nick, this.remarkOf(p.nodeId), p.company, p.dept, p.team, r.ip].some(
           (s) => s.toLowerCase().includes(needle)
         )
       })
