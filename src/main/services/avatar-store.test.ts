@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -60,9 +60,19 @@ describe('AvatarStore', () => {
       expect(await store.has(firstHash)).toBe(true)
       expect(await readFile(join(root, `${firstHash}.webp`))).toEqual(Buffer.from(first))
 
-      await writeFile(join(root, 'orphan.tmp'), 'temp')
+      // 新鲜 .tmp 可能是并发原子写入的中间文件，prune 不得删除；陈旧 .tmp 才清理（决议 #248）
+      await writeFile(join(root, 'fresh.tmp'), 'temp')
+      const stale = join(root, 'stale.tmp')
+      await writeFile(stale, 'temp')
+      const past = new Date(Date.now() - 120_000)
+      await utimes(stale, past, past)
       await store.prune([firstHash])
-      expect((await readdir(root)).sort()).toEqual([`${firstHash}.webp`])
+      expect((await readdir(root)).sort()).toEqual(['fresh.tmp', `${firstHash}.webp`].sort())
+
+      // 被 prune 删除的哈希不得残留在已验证缓存中
+      await store.prune([])
+      expect(await store.has(firstHash)).toBe(false)
+      expect(await store.read(firstHash)).toBeNull()
     } finally {
       await rm(root, { recursive: true, force: true })
     }

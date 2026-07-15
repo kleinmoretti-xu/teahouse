@@ -1648,8 +1648,18 @@ if (!gotLock) {
 
   ipcMain.handle(IpcChannels.settingsGet, (): SettingsView => settingsView())
 
-  ipcMain.handle(IpcChannels.settingsSaveProfile, (_event, submit: unknown): SettingsView => {
+  ipcMain.handle(IpcChannels.settingsSaveProfile, async (_event, submit: unknown): Promise<SettingsView> => {
     if (appState && isValidSubmit(submit)) {
+      // 新头像哈希必须在受管缓存中真实存在，否则全网节点会对取不到的头像反复空请求（决议 #248）；
+      // 与当前值相同的哈希放行，避免头像文件意外缺失时阻塞无关资料保存。
+      if (
+        submit.avatarHash !== undefined &&
+        submit.avatarHash !== '' &&
+        submit.avatarHash !== appState.config.avatarHash &&
+        !(await avatarStore.has(submit.avatarHash))
+      ) {
+        return settingsView()
+      }
       saveProfile(appState, {
         nick: submit.nick.trim(),
         company: submit.company.trim(),

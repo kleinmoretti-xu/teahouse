@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   AVATAR_MAX_BYTES,
@@ -25,8 +25,14 @@ export function avatarHashOf(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
+/** `.tmp` 早于该时长才视为陈旧残留可清理；更新的可能是并发原子写入的中间文件（决议 #248）。 */
+const TMP_STALE_MS = 60_000
+
 /** 内容寻址的受管头像目录；不接受路径、文件名或远端声明作为读写目标。 */
 export class AvatarStore {
+  /** 已通过完整校验且在磁盘存在的哈希；目录内文件只由本类删除，prune / 覆写时同步失效。 */
+  private readonly verified = new Set<string>()
+
   constructor(private readonly rootDir: string) {}
 
   async save(input: ArrayBuffer | Uint8Array): Promise<string | null> {
@@ -46,6 +52,7 @@ export class AvatarStore {
 
   async has(hash: string): Promise<boolean> {
     if (!isAvatarHash(hash)) return false
+    if (this.verified.has(hash)) return true
     return (await this.read(hash)) !== null
   }
 
@@ -53,9 +60,14 @@ export class AvatarStore {
     if (!isAvatarHash(hash)) return null
     try {
       const bytes = await readFile(this.pathFor(hash))
-      if (!isValidAvatarBytes(bytes) || avatarHashOf(bytes) !== hash) return null
+      if (!isValidAvatarBytes(bytes) || avatarHashOf(bytes) !== hash) {
+        this.verified.delete(hash)
+        return null
+      }
+      this.verified.add(hash)
       return bytes
     } catch {
+      this.verified.delete(hash)
       return null
     }
   }
@@ -72,11 +84,18 @@ export class AvatarStore {
     } catch {
       return
     }
+    const now = Date.now()
     for (const name of names) {
       const match = /^([a-f0-9]{64})\.webp$/.exec(name)
       if (match && keep.has(match[1])) continue
-      if (match || name.endsWith('.tmp')) {
+      if (match) {
+        this.verified.delete(match[1])
         await unlink(join(this.rootDir, name)).catch(() => undefined)
+      } else if (name.endsWith('.tmp')) {
+        const info = await stat(join(this.rootDir, name)).catch(() => null)
+        if (info && now - info.mtimeMs >= TMP_STALE_MS) {
+          await unlink(join(this.rootDir, name)).catch(() => undefined)
+        }
       }
     }
   }
@@ -94,6 +113,7 @@ export class AvatarStore {
     try {
       await writeFile(temporary, bytes, { flag: 'wx' })
       await rename(temporary, target)
+      this.verified.add(hash)
       return true
     } catch {
       await unlink(temporary).catch(() => undefined)

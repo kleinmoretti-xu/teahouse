@@ -135,6 +135,8 @@ async function restoreGroupAvatar(): Promise<void> {
       return
     }
     groupsStore.byId[updated.groupId] = updated
+  } catch {
+    avatarFeedback.value = '恢复群头像失败，请稍后重试'
   } finally {
     avatarBusy.value = false
   }

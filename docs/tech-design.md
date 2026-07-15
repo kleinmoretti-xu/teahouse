@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 状态 | v1.44；自定义头像裁剪与透明输出回归修复（决议 #247）；v0.43.2 开发中 |
+| 状态 | v1.45；自定义头像链路健壮性加固（决议 #248）；v0.43.3 开发中 |
 | 日期 | 2026-07-15 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
@@ -53,7 +53,7 @@ Naive UI 接入约束（决议 #215）：
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
 - 群成员批量邀请（决议 #242）：从 `GroupCreator` 抽取纯 renderer 的共享成员选择组件，统一多字段过滤、紧凑联系人行、跨搜索选择、已选标签与上限门禁；`GroupInviteDialog` 过滤当前群成员并把剩余名额作为可选上限，一次调用既有 `group:update invite`。弹窗通过 Teleport 挂到 `body`，沿用全局遮罩、焦点回收和 Esc 契约；协议、IPC、store 数据形状与数据库均不扩展。
-- 自定义头像（决议 #243/#246/#247）：renderer 共享 `AvatarCropDialog` 与纯函数裁剪几何，使用 Chrome 108 Canvas 将本地静态图片生成 192×192、≤32KiB WebP；裁剪拖动使用窗口级 `mousedown/mousemove/mouseup`，并在窗口失焦和卸载时统一结束。裁剪状态直接采用主进程已校验的 `source.width/height`，禁止从非响应式 DOM `naturalWidth/naturalHeight` 推导，避免解码前的 `0×0` 被 computed 缓存成无效裁剪矩形。输出阶段从原始字节创建 `ImageBitmap`，以位图作为 Canvas 绘制源；编码前读取 192×192 像素 Alpha，全部透明时拒绝保存，成功或失败都释放位图。主进程 `AvatarStore` 重新校验格式、尺寸、字节数和 SHA-256，原子写入 `userData/data/avatars`。元数据只携带哈希，`AvatarService` 通过可靠 `avatar` 报文按需取图、校验、去重与重试；应用 ready 前把 `pantry-avatar` 登记为标准安全 scheme，`shared/avatar-url` 统一生成 `pantry-avatar://asset/<sha256>` 并严格解析固定短主机名与单段哈希路径，协议处理器只按合法哈希映射受管目录。用户头像以数字头像回退，群头像以现有群组图标回退；无第三方图片处理依赖、无外网请求。
+- 自定义头像（决议 #243/#246/#247/#248）：renderer 共享 `AvatarCropDialog` 与纯函数裁剪几何，使用 Chrome 108 Canvas 将本地静态图片生成 192×192、≤32KiB WebP；裁剪拖动使用窗口级 `mousedown/mousemove/mouseup`，并在窗口失焦和卸载时统一结束。裁剪状态直接采用主进程已校验的 `source.width/height`，禁止从非响应式 DOM `naturalWidth/naturalHeight` 推导，避免解码前的 `0×0` 被 computed 缓存成无效裁剪矩形。输出阶段从原始字节创建 `ImageBitmap`，以位图作为 Canvas 绘制源；编码前读取 192×192 像素 Alpha，全部透明时拒绝保存，成功或失败都释放位图。主进程 `AvatarStore` 重新校验格式、尺寸、字节数和 SHA-256，原子写入 `userData/data/avatars`；已通过校验的哈希进入内存缓存，`has/resolvePath` 命中免重复读盘校验，prune 删除文件时同步失效，且 `.tmp` 只清理修改时间超过 1 分钟的陈旧残留、不与原子写入竞态（决议 #248）。资料保存拒绝声明受管缓存中不存在的新头像哈希，避免全网节点空请求循环。元数据只携带哈希，`AvatarService` 通过可靠 `avatar` 报文按需取图、校验、去重与重试；应用 ready 前把 `pantry-avatar` 登记为标准安全 scheme，`shared/avatar-url` 统一生成 `pantry-avatar://asset/<sha256>` 并严格解析固定短主机名与单段哈希路径，协议处理器只按合法哈希映射受管目录。用户头像以数字头像回退，群头像以现有群组图标回退；无第三方图片处理依赖、无外网请求。
 - 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
 - 设置分组图标（决议 #239）：新增 `SettingsNavIcon.vue` 作为设置动态入口专属叶组件，按既有 `Section` id 映射 7 组 24×24 viewBox 的线性 SVG path，继承 `PantryIcon` 的 `currentColor`、1.6px stroke 与圆角端点契约。专属组件避免设置路径进入多窗口共享 `PantryIcon` chunk；导航按钮改为 flex 横排，图标 18px、间距 9px，hover / active 颜色由按钮祖先继承。无单独图片请求、位图解码、组件实例状态、IPC 或依赖变化。
 - 端口编辑保护（决议 #240）：`SettingsApp.vue` 维护 `pendingPortEdit` 与 `unlockedPort` 两个纯 renderer 状态。原生 number input 以 `readonly` 作为默认门禁；focus 时立即 blur 并打开固定定位确认层，确认后在 `nextTick` 中只解除当前字段只读并调用原生 `focus()` / `select()`。输入框 blur 复用既有 `autoSavePorts()` 的 1–65535 校验与 `saveAppSettings`，完成后重新锁定。取消、遮罩和 Esc 只清理待确认状态，不改表单值。确认层沿用本地 `PantryIcon warning` 与已加载的 Naive `NButton`，危险操作使用 `type="error"`，不新增组件库模块、IPC、配置字段或定时器。
@@ -475,3 +475,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-14 v1.42 决议 #245：`SettingsApp` 增加独立编辑模式状态，按动物 / 首字 / 自定义条件渲染网格、色板或上传按钮；头像纯函数保留 `-1` 旧值，并用 `200..209` 表达昵称首字的显式背景色。沿用现有整数存储、IPC 与资料同步，无 SQLite 迁移。版本 0.42.1 → **0.43.0**。
 - 2026-07-14 v1.43 决议 #246：裁剪弹窗改用窗口级 Pointer Events 与统一拖动收尾；`pantry-avatar` 提前登记为标准安全 scheme，并新增共享受管头像 URL 生成 / 解析函数，以固定 `asset` 主机和哈希路径统一三平台资源读取。线上报文、SQLite v12 与 IPC 不变。版本 0.43.0 → **0.43.1**。
 - 2026-07-15 v1.44 决议 #247：裁剪弹窗改用窗口级鼠标事件；WebP 输出从原始字节创建 `ImageBitmap` 后绘制，并在编码前拒绝全透明像素结果、确保位图释放。线上报文、SQLite v12、IPC 与头像缓存结构不变。版本 0.43.1 → **0.43.2**。
+- 2026-07-15 v1.45 决议 #248：头像链路健壮性加固——`settings:save-profile` 拒绝受管缓存中不存在的新头像哈希（防全网空请求循环）；`AvatarStore.prune` 只清理修改时间超过 1 分钟的 `.tmp`，消除与原子写入的竞态；`AvatarStore` 增加已验证哈希内存缓存（prune / 覆写同步失效），`has/resolvePath` 不再每次读盘验证；`GroupPanel` 恢复默认群头像失败补错误提示。无协议、SQLite、IPC 结构变化。版本 0.43.2 → **0.43.3**。
