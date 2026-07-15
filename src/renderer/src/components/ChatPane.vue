@@ -16,7 +16,12 @@ import {
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
 import { listTime } from '../utils/time'
-import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
+import {
+  canRecallAt,
+  formatRecallMenuMeta,
+  isRecallMenuUrgent,
+  recallRemainingMs
+} from '../utils/recall'
 import AvatarMark from './AvatarMark.vue'
 import CompatEmoji from './CompatEmoji.vue'
 import MessageRow from './MessageRow.vue'
@@ -131,7 +136,7 @@ let historySearchTimer: ReturnType<typeof setTimeout> | null = null
 let hitClickTimer: ReturnType<typeof setTimeout> | null = null
 let peerProfileSavedTimer: ReturnType<typeof setTimeout> | null = null
 let historySearchRun = 0
-const MSG_MENU_WIDTH = 112
+const MSG_MENU_WIDTH = 128
 const MSG_MENU_ITEM_HEIGHT = 32
 const MSG_MENU_PADDING = 10
 const MENU_MARGIN = 8
@@ -1073,7 +1078,7 @@ function isRecallableKind(msg: MessageView): boolean {
   )
 }
 
-// 撤回倒计时时间源（决议 #63/#188）：仅在通用菜单打开期间驱动"撤回（mm:ss）"实时递减
+// 撤回倒计时时间源（决议 #63/#188/#251）：仅在通用菜单打开期间驱动右侧 mm:ss 实时递减
 const recallMenuNowTs = ref(Date.now())
 let recallCountdownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -1093,16 +1098,21 @@ function recallRemainingFor(msg: MessageView, nowTs = recallMenuNowTs.value): nu
   return recallRemainingMs(nowTs, msg.ts, RECALL_WINDOW_MS)
 }
 
-function recallButtonLabelFor(msg: MessageView, nowTs = recallMenuNowTs.value): string {
-  return formatRecallButtonLabel(recallRemainingFor(msg, nowTs), mediaRecallDisabledReason(msg))
+function recallButtonMetaFor(msg: MessageView, nowTs = recallMenuNowTs.value): string {
+  return formatRecallMenuMeta(recallRemainingFor(msg, nowTs), mediaRecallDisabledReason(msg))
 }
-const recallButtonLabel = computed(() => {
+const recallButtonMeta = computed(() => {
   const msg = msgMenu.value?.msg
-  return msg ? recallButtonLabelFor(msg) : '撤回'
+  return msg ? recallButtonMetaFor(msg) : ''
 })
 const recallButtonDisabled = computed(() => {
   const msg = msgMenu.value?.msg
   return !msg || !canRecallMessageAt(msg, recallMenuNowTs.value)
+})
+const recallButtonUrgent = computed(() => {
+  const msg = msgMenu.value?.msg
+  if (!msg) return false
+  return isRecallMenuUrgent(recallRemainingFor(msg), mediaRecallDisabledReason(msg))
 })
 
 watch(msgMenu, (menu) => {
@@ -1710,11 +1720,14 @@ async function onDrop(event: DragEvent): Promise<void> {
       <button v-if="canForwardMessage(msgMenu.msg)" @click="forwardSelectedMessage">转发</button>
       <button
         v-if="isRecallableKind(msgMenu.msg)"
-        class="danger"
+        class="danger recall-action"
         :disabled="recallButtonDisabled"
         @click="recallSelectedMessage"
       >
-        {{ recallButtonLabel }}
+        <span>撤回</span>
+        <span class="recall-action-meta" :class="{ 'is-urgent': recallButtonUrgent }">
+          {{ recallButtonMeta }}
+        </span>
       </button>
     </div>
 
@@ -2923,7 +2936,8 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .msg-menu {
   position: fixed;
-  min-width: 96px;
+  min-width: 128px;
+  box-sizing: border-box;
   background: var(--material-strong);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -2934,21 +2948,43 @@ async function onDrop(event: DragEvent): Promise<void> {
   z-index: 20;
 }
 .msg-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
   width: 100%;
+  min-height: 32px;
+  box-sizing: border-box;
   border: none;
   background: transparent;
   color: var(--text-1);
   text-align: left;
   font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
   padding: 6px 12px;
   border-radius: 7px;
   cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .msg-menu button:hover {
   background: var(--surface-hover);
 }
 .msg-menu button.danger {
+  color: var(--danger);
+}
+.msg-menu button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.recall-action-meta {
+  min-width: 38px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: right;
+}
+.recall-action-meta.is-urgent {
   color: var(--danger);
 }
 .msg-menu button:disabled {
@@ -3129,6 +3165,7 @@ async function onDrop(event: DragEvent): Promise<void> {
   .head-btn:active,
   .profile-save:active:not(:disabled),
   .send:active:not(:disabled),
+  .msg-menu button:active:not(:disabled),
   .jump-latest:active {
     transform: none;
   }

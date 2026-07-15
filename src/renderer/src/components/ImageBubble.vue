@@ -3,7 +3,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { MessageView } from '../../../shared/ipc'
 import { RECALL_WINDOW_MS } from '../../../shared/protocol'
 import { imageMimeFromExt } from '../utils/clipboard'
-import { canRecallAt, formatRecallButtonLabel, recallRemainingMs } from '../utils/recall'
+import {
+  canRecallAt,
+  formatRecallMenuMeta,
+  isRecallMenuUrgent,
+  recallRemainingMs
+} from '../utils/recall'
 import { useTransfersStore } from '../stores/transfers'
 import { useStickersStore } from '../stores/stickers'
 import { vCachedImage } from '../directives/cached-image'
@@ -30,7 +35,7 @@ const broken = ref(false)
 const menuAt = ref<{ x: number; y: number } | null>(null)
 const addTip = ref('')
 const addTipKind = ref<'ok' | 'fail'>('ok')
-const MENU_WIDTH = 112
+const MENU_WIDTH = 128
 const MENU_ITEM_HEIGHT = 32
 const MENU_PADDING = 10
 const MENU_MARGIN = 8
@@ -47,11 +52,14 @@ const menuHeight = computed(
   () => MENU_PADDING + MENU_ITEM_HEIGHT * (props.recallVisible ? 4 : 3)
 )
 const recallNowTs = ref(Date.now())
-const recallLabel = computed(() =>
-  formatRecallButtonLabel(
-    recallRemainingMs(recallNowTs.value, props.msg.ts, RECALL_WINDOW_MS),
-    props.recallDisabledReason
-  )
+const recallRemaining = computed(() =>
+  recallRemainingMs(recallNowTs.value, props.msg.ts, RECALL_WINDOW_MS)
+)
+const recallMeta = computed(() =>
+  formatRecallMenuMeta(recallRemaining.value, props.recallDisabledReason)
+)
+const recallUrgent = computed(() =>
+  isRecallMenuUrgent(recallRemaining.value, props.recallDisabledReason)
 )
 const recallDisabled = computed(() =>
   !canRecallAt(recallNowTs.value, props.msg.ts, RECALL_WINDOW_MS, props.recallDisabledReason)
@@ -251,11 +259,14 @@ onUnmounted(() => {
       <button
         v-if="props.recallVisible"
         type="button"
-        class="danger"
+        class="danger recall-action"
         :disabled="recallDisabled"
         @click="recallImage"
       >
-        {{ recallLabel }}
+        <span>撤回</span>
+        <span class="recall-action-meta" :class="{ 'is-urgent': recallUrgent }">
+          {{ recallMeta }}
+        </span>
       </button>
     </div>
     <span
@@ -383,6 +394,8 @@ onUnmounted(() => {
 }
 .ctx {
   position: fixed;
+  min-width: 128px;
+  box-sizing: border-box;
   background: var(--bg-window);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -391,8 +404,13 @@ onUnmounted(() => {
   z-index: 6;
 }
 .ctx button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
   width: 100%;
+  min-height: 32px;
+  box-sizing: border-box;
   border: none;
   background: transparent;
   color: var(--text-1);
@@ -402,11 +420,26 @@ onUnmounted(() => {
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .ctx button:hover {
   background: var(--line);
 }
 .ctx button.danger {
+  color: var(--danger);
+}
+.ctx button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.recall-action-meta {
+  min-width: 38px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: right;
+}
+.recall-action-meta.is-urgent {
   color: var(--danger);
 }
 .ctx button:disabled {
@@ -484,6 +517,9 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .table-switch::before {
     transition: none;
+  }
+  .ctx button:active:not(:disabled) {
+    transform: none;
   }
 }
 @keyframes tip-pop {
