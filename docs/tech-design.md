@@ -279,7 +279,7 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 | linux arm64 native 模块与 Debian 10 / UOS 20 glibc 基线 | 独立 CI job 使用 GitHub 远程 `ubuntu-22.04-arm` runner 跑 `node:18-buster` Debian 10 arm64 容器，在目标架构内 `npm ci`、源码重建 better-sqlite3、五连验证和打包；arm64 deb 阶段安装系统 fpm 并设置 `USE_SYSTEM_FPM=true`，避免 electron-builder 下载 x86 fpm；Debian 10 Ruby 2.5 下安装 `libffi-dev`，先锁定 `ffi 1.15.5` 再安装 `fpm 1.9.3`，避免 RubyGems 解析到 Ruby 3+ 依赖；AppImage 阶段不强制系统 mksquashfs，因为 Debian 10 老版不支持 `-offset`；产物内 `.node` 同样检查最高 GLIBC 符号不超过 2.28，避免交叉编译或模拟层误用宿主二进制 |
 | macOS 26 跑 Chromium 108 | 已知风险项（README FAQ）：输入法、通知权限、屏幕录制授权列入发布冒烟清单 |
 | Win7 终端为统一 VM（虚拟显卡弱/驱动旧）；UOS/Debian 多国产 GPU 或旧驱动 | **Win7 与 Linux 默认禁用硬件加速走软渲染**（决议 #55）——VM 虚拟显卡与国产 GPU 驱动是 Electron 花屏/GPU 进程报错的头号惯犯，2D 聊天界面软渲染完全流畅；macOS 默认开启，高级设置留开关 |
-| Win7 部分旧输入法 / 第三方输入法候选窗固定在屏幕左上角 | Chromium 108 的 Windows TSF 路径可能无法从这些输入法取得有效光标布局；启动早期仅对 NT 6.1 追加 `disable-features=TSFImeSupport`，回退 IMM32（决议 #253）。Win8 及以上继续使用 TSF；回退条件用纯函数覆盖平台与版本边界测试 |
+| Win7 部分旧输入法 / 第三方输入法候选窗固定在屏幕左上角 | Chromium 108 在 Win7 恒走 IMM32（TSF 仅在 Win8+ 且特性开启时启用），#253 曾追加的 `disable-features=TSFImeSupport` 属空操作、已撤销（决议 #254）。候选窗定位依赖 IMM32 链路（`ImmSetCandidateWindow` + 系统插入符），与 Win7 版 Chrome 同源；同类症状在 Win7 搜狗输入法侧亦为常见故障。待真机对照（同机记事本、应用内微软拼音）区分应用侧 / 输入法侧后定向处理；源码级测试禁止再引入该无效开关 |
 | Wayland 无法全局截图 | 启动检测 `XDG_SESSION_TYPE`，Wayland 下截图按钮降级提示"用系统截图后 Ctrl+V" |
 | UDP 广播被交换机/AP 隔离 | 协议已有三板斧兜底（手动 IP/扫描/gossip）；FAQ 文档化引导 IT 放行 |
 | 内网通兼容模式与主协议混线、`2425/UDP` 被占、GBK 编解码差异、文件 / 图片能力误判 | 兼容模式放在 `net/compat/` 独立 socket、独立 codec、独立配置与联系人投影；默认关闭，用户显式填写 IP 段后才扫描；端口冲突只关闭兼容模式并给设置页状态；GBK 解码使用精确锁纯 JS 依赖，无法识别的字段保留原始安全摘要；文件 / 图片只按 IPMSG 附件实验处理，未完成 TCP 拉取闭环前 UI 不展示普通发送入口；PK、窗口震动、群聊、媒体撤回等主协议能力由 `ConversationCapabilities` 隐藏 |
@@ -478,4 +478,5 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-15 v1.44 决议 #247：裁剪弹窗改用窗口级鼠标事件；WebP 输出从原始字节创建 `ImageBitmap` 后绘制，并在编码前拒绝全透明像素结果、确保位图释放。线上报文、SQLite v12、IPC 与头像缓存结构不变。版本 0.43.1 → **0.43.2**。
 - 2026-07-15 v1.45 决议 #248：头像链路健壮性加固——`settings:save-profile` 拒绝受管缓存中不存在的新头像哈希（防全网空请求循环）；`AvatarStore.prune` 只清理修改时间超过 1 分钟的 `.tmp`，消除与原子写入的竞态；`AvatarStore` 增加已验证哈希内存缓存（prune / 覆写同步失效），`has/resolvePath` 不再每次读盘验证；`GroupPanel` 恢复默认群头像失败补错误提示。无协议、SQLite、IPC 结构变化。版本 0.43.2 → **0.43.3**。
 - 2026-07-15 v1.46 决议 #249：协议 v0.48 `avatar` 新增尽力而为 `miss` 提示（`Messenger.sendBestEffort` 一次性 UDP 单发），`AvatarService` 请求登记扩展为「当前源 + 已试源集合」，群头像收到当前源 miss 后立即故障转移到下一个未试在线成员；裁剪最大缩放改为 `min(源图短边/192, ∞)` 动态上限、×1.12 等比步进，WebP 输出经 `createImageBitmap` 裁剪 + resizeQuality high 一步降采样，整数裁剪矩形夹回图内。SQLite、IPC 结构不变。版本 0.43.3 → **0.44.0**。
-- 2026-07-15 v1.47 决议 #253：Win7（NT 6.1）启动早期关闭 Chromium TSF 输入法支持并回退 IMM32，修复部分旧输入法 / 第三方输入法候选窗固定左上角；其他平台保持默认输入法路径。版本 0.44.3 → **0.44.4**。
+- 2026-07-15 v1.47 决议 #253：Win7（NT 6.1）启动早期关闭 Chromium TSF 输入法支持并回退 IMM32，修复部分旧输入法 / 第三方输入法候选窗固定左上角；其他平台保持默认输入法路径。版本 0.44.3 → **0.44.4**。（已被 #254 撤销）
+- 2026-07-16 v1.48 决议 #254：核实 Win7 恒走 IMM32，撤销 #253 的无效 TSF 开关；Win7 判定收敛到 `util/windows-version.ts`，输入法候选窗问题转真机对照定位。版本 0.44.4 → **0.44.5**。

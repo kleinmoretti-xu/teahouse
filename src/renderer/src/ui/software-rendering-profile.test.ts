@@ -7,14 +7,11 @@ const imageViewerSource = readFileSync(new URL('../components/ImageViewer.vue', 
 const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
 
 describe('Win7 与 Linux 软渲染画像', () => {
-  it('Win7 输入法兼容开关在应用就绪前配置', () => {
-    const compatibilityIndex = mainSource.indexOf(
-      'configureWindowsImeCompatibility(app.commandLine)'
-    )
-    const readyIndex = mainSource.indexOf('app.whenReady()')
-    expect(compatibilityIndex).toBeGreaterThan(-1)
-    expect(readyIndex).toBeGreaterThan(-1)
-    expect(compatibilityIndex).toBeLessThan(readyIndex)
+  it('不携带对 Win7 无效的 TSF 输入法开关（决议 #254）', () => {
+    // Chromium 108 在 Win7 上恒走 IMM32（工厂条件为「启用 TSFImeSupport 且系统 > Win7」），
+    // 关闭 TSFImeSupport 对 Win7 是空操作——不许再以该开关名义修输入法问题。
+    expect(mainSource).not.toContain('TSFImeSupport')
+    expect(mainSource).toContain('isWindows7()')
   })
 
   it('主进程复用禁用硬件加速条件并通过 AppInfo 下发', () => {
