@@ -246,9 +246,9 @@ const inputPlaceholder = computed(() => {
     : '输入消息，Enter 发送，Ctrl+Enter 换行；可粘贴截图/文件'
 })
 const draftEmojiParts = computed(() => splitEmojiText(draft.value))
-// Win7 搜狗诊断画像（决议 #259）：基础 textarea 绕开自定义字体与镜像编辑链。
-const draftUsesEmojiMirror = computed(
-  () => !props.win7ImeCompat && draftEmojiParts.value.some((part) => part.emoji)
+// Win7 继续显示本地 Twemoji，但真实 textarea 保持系统字体与不透明文字（决议 #260）。
+const draftUsesEmojiMirror = computed(() =>
+  draftEmojiParts.value.some((part) => part.emoji)
 )
 /** textarea 的实际 font（measureText 用）；为空时镜像退化为原字符渲染，宽度天然一致 */
 const inputFont = ref('')
@@ -1896,7 +1896,12 @@ async function onDrop(event: DragEvent): Promise<void> {
         :class="{ 'has-mirror': draftUsesEmojiMirror }"
         :style="{ height: `${inputShellHeight}px` }"
       >
-        <div v-if="draftUsesEmojiMirror" class="input-mirror" aria-hidden="true">
+        <div
+          v-if="draftUsesEmojiMirror"
+          class="input-mirror"
+          :class="{ 'win7-ime-emoji-overlay': props.win7ImeCompat }"
+          aria-hidden="true"
+        >
           <div
             class="input-mirror-content"
             :style="{ transform: `translateY(-${inputScrollTop}px)` }"
@@ -1919,7 +1924,7 @@ async function onDrop(event: DragEvent): Promise<void> {
           v-model="draft"
           :class="
             props.win7ImeCompat
-              ? 'win7-ime-basic-input'
+              ? 'win7-ime-safe-input'
               : ['input', { 'mirror-active': draftUsesEmojiMirror }]
           "
           :disabled="!canSend"
@@ -3041,21 +3046,20 @@ async function onDrop(event: DragEvent): Promise<void> {
   position: relative;
   border-radius: 10px;
 }
-.win7-ime-basic-input {
+.win7-ime-safe-input {
   display: block;
   box-sizing: border-box;
   width: 100%;
   height: 100%;
   resize: none;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border: none;
   outline: none;
   padding: 6px 8px;
-  font-family: 'Microsoft YaHei', sans-serif;
+  font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-1);
-  background: var(--bg-window);
+  background: var(--material-strong);
   user-select: text;
 }
 .input {
@@ -3111,6 +3115,18 @@ async function onDrop(event: DragEvent): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+/* Win7 搜狗安全路径（决议 #260）：真实 textarea 始终使用微软雅黑、实体背景与
+   不透明文字，继续独立提供 caret 几何；此层只覆盖黑色系统 emoji，不参与布局和命中。 */
+.input-mirror.win7-ime-emoji-overlay {
+  z-index: 1;
+  padding: 6px 8px;
+  color: transparent;
+  font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+}
+.win7-ime-emoji-overlay .mirror-emoji {
+  background: var(--material-strong);
+  box-shadow: 0 0 0 1px var(--material-strong);
 }
 .input-mirror-content {
   min-height: 100%;

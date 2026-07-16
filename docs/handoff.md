@@ -55,6 +55,7 @@
 > 当前补充：2026-07-16（**v0.44.8 开发中，决议 #257 Win7 搜狗原生焦点与页面缩放修复**）：v0.44.7 发布后 Win7 搜狗实测候选窗仍停在应用左上角，#256 已撤销。Chromium IMM32 仅在目标 HWND 持有 Win32 键盘焦点时更新候选窗与系统 caret；本轮在主窗口重新激活、主聊天 textarea 获焦时直接调用 `webContents.focus()`。同时删除 renderer 的 `body zoom`，字体倍率迁到主进程 `webContents.setZoomFactor()` 并在窗口创建、renderer 加载完成和设置更新时同步，让 Chromium 原生链路统一换算 DOM caret 与屏幕坐标。协议 v0.48、SQLite v12 保持；IPC 增加本机焦点同步调用。**待 Win7 搜狗真机回归验证**。
 > 当前补充：2026-07-16（**v0.44.9-beta.1 测试发布，决议 #258 Win7 搜狗 caret 几何刷新**）：v0.44.8 发布后 Win7 搜狗仍失败；新增真机照片确认候选窗精确锚在茶话间客户区 `(0,0)`，#257 的 WebContents 焦点假设已被否定。本轮删除 `webContents.focus()` 与对应 IPC，主聊天 textarea 从绝对覆盖改为正常流布局，仅 Win7 在 composition 期间交替施加 0–1px 几何脉冲，强制 Chromium 重新布局并发布真实 caret bounds，结束组词立即复位。#257 的原生 WebContents 页面缩放继续保留。协议 v0.48、SQLite v12 保持；`AppInfo.windows7` 只作 renderer 门控。先发布 `0.44.9-beta.1` Pre-release 供 Win7 搜狗真机回归，验证通过后再发布稳定版 `0.44.9`。
 > 当前补充：2026-07-16（**v0.44.9-beta.2 测试发布，决议 #259 Win7 基础 textarea A/B**）：`beta.1` 真机仍失败；交叉测试确认同一主窗口搜索框、独立设置窗口昵称输入和同机 Chrome 均正常，故障只出现在聊天自定义 textarea。已删除 #258 无效的 composition 几何脉冲；仅 Win7 聊天框改走基础 textarea，绕开 `PantryEmojiBlank`、Twemoji 镜像、透明背景和组合输入自定义处理，其他平台保持完整编辑体验。协议 v0.48、SQLite v12、IPC 与 #257 原生页面缩放保持。等待 Win7 搜狗真机判断“自定义编辑器样式链”与“Chromium 108 textarea 编辑路径”两个分支。
+> 当前补充：2026-07-16（**v0.44.9-beta.3 开发中，决议 #260 Win7 输入区视觉与彩色 emoji 恢复**）：`beta.2` 已经 Win7 搜狗真机确认候选窗跟随聊天光标，基础 textarea 路径成立；反馈同时确认诊断内框 / 异色底破坏原输入区视觉，且 Win7 原生 emoji 退化为黑色字形。本轮保留静态正常流、微软雅黑、实体背景和不透明文字的真实输入层，移除诊断边框并让底色与外层输入卡一致；新增不参与布局和命中的 Twemoji 展示覆盖层，只遮换 emoji 字形，普通文字继续由真实 textarea 绘制。协议 v0.48、SQLite v12、IPC、依赖与原生页面缩放保持。
 
 ## 0. 必读顺序（15 分钟上手）
 
@@ -66,7 +67,7 @@
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.9-beta.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.9-beta.3**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
