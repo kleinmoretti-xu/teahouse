@@ -53,7 +53,7 @@
 > 当前补充：2026-07-16（**v0.44.6 开发中，决议 #255 Win7 输入法焦点自愈**）：多名 Win7 用户反馈候选窗固定屏幕左上角、同机其他软件正常；按"Win32 键盘焦点落入 Chrome Legacy Window（转发普通键盘消息但不转发 WM_IME_*）→ IMM32 候选窗定位整链失效且粘性"的故障模型，新增 `util/win7-ime-focus.ts`：主窗口与设置窗口每次 focus 后延迟 150ms 重走原生 show 流程（`HWNDMessageHandler::Show` 末尾 `SetInitialFocus` 把焦点钉回顶层窗口），仅 Win7 安装。**待 Win7 真机回归验证**。协议 v0.48、SQLite v12 与 IPC 保持。
 > 当前补充：2026-07-16（**v0.44.7 开发中，决议 #256 Win7 IMM32 caret 刷新**）：源码复核确认 #255 的 `show()` 不保证执行 HWND `SetInitialFocus` 且会重复触发显示生命周期，已撤销、未发布。修复移到主聊天原生 `textarea`：仅 Win7 在输入框安全获得焦点，或窗口重新激活且输入框仍活动时，保存选区/滚动并刷新 Chromium 文本输入客户端，触发 IMM32 强制重取 caret bounds；composition 期间跳过。Win7 搜狗真机实测无效，已被 #257 撤销。协议 v0.48、SQLite v12 保持；`AppInfo.windows7` 随 #257 删除。
 > 当前补充：2026-07-16（**v0.44.8 开发中，决议 #257 Win7 搜狗原生焦点与页面缩放修复**）：v0.44.7 发布后 Win7 搜狗实测候选窗仍停在应用左上角，#256 已撤销。Chromium IMM32 仅在目标 HWND 持有 Win32 键盘焦点时更新候选窗与系统 caret；本轮在主窗口重新激活、主聊天 textarea 获焦时直接调用 `webContents.focus()`。同时删除 renderer 的 `body zoom`，字体倍率迁到主进程 `webContents.setZoomFactor()` 并在窗口创建、renderer 加载完成和设置更新时同步，让 Chromium 原生链路统一换算 DOM caret 与屏幕坐标。协议 v0.48、SQLite v12 保持；IPC 增加本机焦点同步调用。**待 Win7 搜狗真机回归验证**。
-> 当前补充：2026-07-16（**v0.44.9 开发中，决议 #258 Win7 搜狗 caret 几何刷新**）：v0.44.8 发布后 Win7 搜狗仍失败；新增真机照片确认候选窗精确锚在茶话间客户区 `(0,0)`，#257 的 WebContents 焦点假设已被否定。本轮删除 `webContents.focus()` 与对应 IPC，主聊天 textarea 从绝对覆盖改为正常流布局，仅 Win7 在 composition 期间交替施加 0–1px 几何脉冲，强制 Chromium 重新布局并发布真实 caret bounds，结束组词立即复位。#257 的原生 WebContents 页面缩放继续保留。协议 v0.48、SQLite v12 保持；`AppInfo.windows7` 只作 renderer 门控。**待 Win7 搜狗真机回归验证**。
+> 当前补充：2026-07-16（**v0.44.9-beta.1 测试发布，决议 #258 Win7 搜狗 caret 几何刷新**）：v0.44.8 发布后 Win7 搜狗仍失败；新增真机照片确认候选窗精确锚在茶话间客户区 `(0,0)`，#257 的 WebContents 焦点假设已被否定。本轮删除 `webContents.focus()` 与对应 IPC，主聊天 textarea 从绝对覆盖改为正常流布局，仅 Win7 在 composition 期间交替施加 0–1px 几何脉冲，强制 Chromium 重新布局并发布真实 caret bounds，结束组词立即复位。#257 的原生 WebContents 页面缩放继续保留。协议 v0.48、SQLite v12 保持；`AppInfo.windows7` 只作 renderer 门控。先发布 `0.44.9-beta.1` Pre-release 供 Win7 搜狗真机回归，验证通过后再发布稳定版 `0.44.9`。
 
 ## 0. 必读顺序（15 分钟上手）
 
@@ -65,7 +65,7 @@
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.9**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.9-beta.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
