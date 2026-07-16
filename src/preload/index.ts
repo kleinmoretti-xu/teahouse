@@ -232,8 +232,6 @@ const api: PantryApi = {
   toggleMaximizeWindow: (): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.winToggleMaximize),
   isWindowMaximized: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.winIsMaximized),
-  refreshWindowsImeFocus: (): Promise<boolean> =>
-    ipcRenderer.invoke(IpcChannels.winRefreshImeFocus),
   onWinMaximizeChanged: (listener) => subscribe<boolean>(IpcEvents.winMaximizeChanged, listener),
   beginWindowDrag: (): Promise<void> => ipcRenderer.invoke(IpcChannels.winBeginDrag),
   endWindowDrag: (): Promise<void> => ipcRenderer.invoke(IpcChannels.winEndDrag),

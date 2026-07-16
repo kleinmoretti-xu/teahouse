@@ -540,7 +540,10 @@ onUnmounted(() => {
         :peer="selectedPeer"
         @chat="chatWith"
       />
-      <ChatPane v-else-if="chatStore.activeConv" />
+      <ChatPane
+        v-else-if="chatStore.activeConv"
+        :win7-ime-compat="info?.windows7 === true"
+      />
       <div v-else class="empty">
         <PantryBrandLogo variant="color" :size="92" class="empty-logo" />
         <div class="brand-title">茶话间</div>

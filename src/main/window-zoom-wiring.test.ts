@@ -26,8 +26,6 @@ describe('页面缩放主进程接线', () => {
     expect(mainSource).toContain('syncMainWindowZoom()')
     expect(mainSource).toContain('syncSettingsWindowZoom(view.fontScale)')
     expect(mainSource).toContain('openSettingsWindow(mainWindow, settingsView().fontScale)')
-    expect(mainSource).toContain("mainWindow.on('focus', refreshMainWindowImeFocus)")
-    expect(mainSource).toContain('focusWindowsImeTarget(event.sender, WINDOWS7)')
   })
 
   it('设置窗口在加载前应用倍率并在重复打开时刷新', () => {
@@ -45,13 +43,30 @@ describe('页面缩放主进程接线', () => {
     )
   })
 
-  it('renderer 清除 CSS zoom 并撤销失效的 Win7 焦点刷新', () => {
+  it('renderer 清除 CSS zoom 并以正常流 textarea 刷新 Win7 caret 几何', () => {
+    const inputCssStart = chatPaneSource.indexOf('.input {')
+    const inputCssEnd = chatPaneSource.indexOf('.input.mirror-active', inputCssStart)
+    const inputCss = chatPaneSource.slice(inputCssStart, inputCssEnd)
+
     expect(appearanceSource).toContain("document.body.style.removeProperty('zoom')")
     expect(appearanceSource).not.toContain("setProperty('zoom'")
-    expect(appSource).not.toContain('win7-ime-compat')
-    expect(chatPaneSource).not.toContain('win7-ime-caret')
-    expect(chatPaneSource).not.toContain('scheduleWin7ImeCaretRefresh')
-    expect(chatPaneSource).toContain('@focus="refreshWindowsImeFocus"')
-    expect(ipcSource).not.toContain('windows7: boolean')
+    expect(appSource).toContain(':win7-ime-compat="info?.windows7 === true"')
+    expect(chatPaneSource).toContain('@compositionstart="pulseWin7ImeCaretGeometry"')
+    expect(chatPaneSource).toContain('@compositionupdate="pulseWin7ImeCaretGeometry"')
+    expect(chatPaneSource).toContain('@compositionend="resetWin7ImeCaretGeometry"')
+    expect(chatPaneSource).toContain('input.style.paddingLeft = `${next}px`')
+    expect(chatPaneSource).toContain('input.getBoundingClientRect()')
+    expect(inputCss).toContain('position: relative;')
+    expect(inputCss).toContain('box-sizing: border-box;')
+    expect(inputCss).not.toContain('position: absolute;')
+    expect(inputCss).not.toContain('inset: 0;')
+    expect(ipcSource).toContain('windows7: boolean')
+  })
+
+  it('完整移除已失效的 WebContents 焦点补丁', () => {
+    expect(mainSource).not.toContain('refreshMainWindowImeFocus')
+    expect(mainSource).not.toContain('focusWindowsImeTarget')
+    expect(ipcSource).not.toContain('winRefreshImeFocus')
+    expect(chatPaneSource).not.toContain('refreshWindowsImeFocus')
   })
 })

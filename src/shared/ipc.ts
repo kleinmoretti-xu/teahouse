@@ -86,8 +86,6 @@ export const IpcChannels = {
   winMinimize: 'win:minimize',
   winToggleMaximize: 'win:toggle-maximize',
   winIsMaximized: 'win:is-maximized',
-  /** Win7 IMM32：输入框获焦时把 Win32 键盘焦点同步到 WebContents 原生视图（决议 #257） */
-  winRefreshImeFocus: 'win:refresh-ime-focus',
   /** 关闭必须走主进程（决议 #59）：DOM window.close() 会绕过 close 事件直接销毁 */
   winClose: 'win:close',
   /** Linux JS 拖拽（决议 #52）：CSS 拖拽区在 Linux 不可靠，主进程跟随光标移窗 */
@@ -141,6 +139,8 @@ export interface AppInfo {
   chrome: string
   node: string
   platform: string
+  /** Win7 主聊天输入框启用 IMM32 caret 几何刷新（决议 #258）。 */
+  windows7: boolean
   /** Win7 / Linux 默认禁用硬件加速时为 true，renderer 据此收敛高开销效果。 */
   softwareRendering: boolean
   /** 本机节点 ID（群成员面板等需区分"我"） */
@@ -735,8 +735,6 @@ export interface PantryApi {
   /** 最大化/还原当前窗口；返回切换后是否处于最大化 */
   toggleMaximizeWindow(): Promise<boolean>
   isWindowMaximized(): Promise<boolean>
-  /** Win7 输入框原生焦点同步；其他平台返回 false。 */
-  refreshWindowsImeFocus(): Promise<boolean>
   /** 当前窗口最大化状态变化（自绘按钮切图标用） */
   onWinMaximizeChanged(listener: (maximized: boolean) => void): () => void
   /** 关闭当前窗口（决议 #59）：走主进程标准 close 流程，主窗会被拦截进托盘 */

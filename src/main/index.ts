@@ -125,7 +125,6 @@ import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
 import { isWindows7 } from './util/windows-version'
-import { focusWindowsImeTarget } from './util/windows-ime-focus'
 import { applyWindowZoom } from './util/window-zoom'
 import {
   findLocalUpdatePackage,
@@ -569,10 +568,6 @@ if (!gotLock) {
 
   function syncMainWindowZoom(): void {
     applyWindowZoom(mainWindow?.webContents, settingsView().fontScale)
-  }
-
-  function refreshMainWindowImeFocus(): void {
-    focusWindowsImeTarget(mainWindow?.webContents, WINDOWS7)
   }
 
   function broadcastSettings(): SettingsView {
@@ -1383,7 +1378,6 @@ if (!gotLock) {
     })
     syncMainWindowZoom()
     mainWindow.webContents.on('did-finish-load', syncMainWindowZoom)
-    mainWindow.on('focus', refreshMainWindowImeFocus)
 
     // 最大化状态推送：渲染层自绘「最大化/还原」按钮据此切图标
     mainWindow.on('maximize', () =>
@@ -1440,6 +1434,7 @@ if (!gotLock) {
       chrome: process.versions.chrome,
       node: process.versions.node,
       platform: process.platform,
+      windows7: WINDOWS7,
       softwareRendering: SOFTWARE_RENDERING,
       nodeId: appState?.nodeId ?? '',
       localIp: currentLocalIpv4()
@@ -1461,10 +1456,6 @@ if (!gotLock) {
 
   ipcMain.handle(IpcChannels.winIsMaximized, (event): boolean => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
-  })
-
-  ipcMain.handle(IpcChannels.winRefreshImeFocus, (event): boolean => {
-    return focusWindowsImeTarget(event.sender, WINDOWS7)
   })
 
   // 决议 #59：自绘关闭按钮唯一入口。主进程 close() 走标准流程触发 close 事件，
