@@ -125,7 +125,6 @@ import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
 import { isWindows7 } from './util/windows-version'
-import { installWin7ImeFocusHeal } from './util/win7-ime-focus'
 import {
   findLocalUpdatePackage,
   pickUpdateSource,
@@ -135,7 +134,8 @@ import {
 
 // Win7（NT 6.1）终端为统一 VM 部署，虚拟显卡驱动不可靠；UOS/Debian 目标机多国产 GPU 或旧驱动，
 // GPU 进程频报 ContextResult::kTransientFailure —— 两者默认软渲染（tech-design §9，决议 #55/#231）
-const SOFTWARE_RENDERING = isWindows7() || process.platform === 'linux'
+const WINDOWS7 = isWindows7()
+const SOFTWARE_RENDERING = WINDOWS7 || process.platform === 'linux'
 if (SOFTWARE_RENDERING) {
   app.disableHardwareAcceleration()
 }
@@ -1370,9 +1370,6 @@ if (!gotLock) {
       }
     })
 
-    // Win7 输入法焦点自愈（决议 #255）：机制详见 util/win7-ime-focus.ts
-    installWin7ImeFocusHeal(mainWindow)
-
     // 最大化状态推送：渲染层自绘「最大化/还原」按钮据此切图标
     mainWindow.on('maximize', () =>
       mainWindow?.webContents.send(IpcEvents.winMaximizeChanged, true)
@@ -1428,6 +1425,7 @@ if (!gotLock) {
       chrome: process.versions.chrome,
       node: process.versions.node,
       platform: process.platform,
+      windows7: WINDOWS7,
       softwareRendering: SOFTWARE_RENDERING,
       nodeId: appState?.nodeId ?? '',
       localIp: currentLocalIpv4()

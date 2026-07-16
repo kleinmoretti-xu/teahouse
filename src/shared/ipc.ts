@@ -139,6 +139,8 @@ export interface AppInfo {
   chrome: string
   node: string
   platform: string
+  /** 当前系统为 Windows 7 / Server 2008 R2（NT 6.1），供 renderer 精确启用兼容路径。 */
+  windows7: boolean
   /** Win7 / Linux 默认禁用硬件加速时为 true，renderer 据此收敛高开销效果。 */
   softwareRendering: boolean
   /** 本机节点 ID（群成员面板等需区分"我"） */
