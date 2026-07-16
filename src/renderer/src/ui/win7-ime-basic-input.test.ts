@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest'
 
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const chatPaneSource = readFileSync(new URL('../components/ChatPane.vue', import.meta.url), 'utf8')
+const compatEmojiSource = readFileSync(new URL('../components/CompatEmoji.vue', import.meta.url), 'utf8')
+const emojiFontGeneratorSource = readFileSync(
+  new URL('../../../../scripts/gen-emoji-blank-font.mjs', import.meta.url),
+  'utf8'
+)
 const oldCaretHelper = new URL('../utils/win7-ime-caret.ts', import.meta.url)
 
 describe('Win7 搜狗安全 textarea 与彩色 emoji 覆盖层', () => {
@@ -11,21 +16,19 @@ describe('Win7 搜狗安全 textarea 与彩色 emoji 覆盖层', () => {
     expect(chatPaneSource).toContain("? 'win7-ime-safe-input'")
   })
 
-  it('安全输入框恢复一体化视觉并保持实体系统字体输入层', () => {
+  it('安全输入框恢复 1.3em 等宽表情槽并保持实体输入层', () => {
     const start = chatPaneSource.indexOf('.win7-ime-safe-input {')
     const end = chatPaneSource.indexOf('.input {', start)
     const safeCss = chatPaneSource.slice(start, end)
 
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
-    expect(safeCss).toContain(
-      "font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;"
-    )
+    expect(safeCss).toContain("'PantryEmojiBlank',")
+    expect(safeCss).toContain("'Microsoft YaHei',")
     expect(safeCss).toContain('background: var(--material-strong);')
     expect(safeCss).toContain('padding: 6px 8px;')
     expect(safeCss).toContain('border: none;')
     expect(safeCss).not.toContain('border-radius')
-    expect(safeCss).not.toContain('PantryEmojiBlank')
     expect(safeCss).not.toContain('transparent')
     expect(safeCss).not.toContain('position:')
   })
@@ -43,8 +46,17 @@ describe('Win7 搜狗安全 textarea 与彩色 emoji 覆盖层', () => {
     expect(overlayCss).toContain('z-index: 1;')
     expect(overlayCss).toContain('color: transparent;')
     expect(overlayCss).toContain('padding: 6px 8px;')
-    expect(overlayCss).toContain('background: var(--material-strong);')
-    expect(overlayCss).toContain('box-shadow: 0 0 0 1px var(--material-strong);')
+    expect(overlayCss).toContain("'PantryEmojiBlank',")
+    expect(overlayCss).toContain("'Microsoft YaHei',")
+    expect(overlayCss).not.toContain('background:')
+    expect(overlayCss).not.toContain('box-shadow:')
+  })
+
+  it('输入槽和发送后表情使用同一 1.3em 尺寸', () => {
+    expect(emojiFontGeneratorSource).toContain('const EM_ADVANCE = 1300')
+    expect(compatEmojiSource).toContain('width: 1.3em;')
+    expect(compatEmojiSource).toContain('height: 1.3em;')
+    expect(chatPaneSource).toContain('width: min(1.3em, 100%);')
   })
 
   it('完整撤销实机无效的 composition 几何脉冲', () => {

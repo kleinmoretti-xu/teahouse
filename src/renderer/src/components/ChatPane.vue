@@ -246,7 +246,7 @@ const inputPlaceholder = computed(() => {
     : '输入消息，Enter 发送，Ctrl+Enter 换行；可粘贴截图/文件'
 })
 const draftEmojiParts = computed(() => splitEmojiText(draft.value))
-// Win7 继续显示本地 Twemoji，但真实 textarea 保持系统字体与不透明文字（决议 #260）。
+// Win7 继续显示本地 Twemoji；真实 textarea 保持不透明文字，并用等宽空白字形对齐 caret（决议 #261）。
 const draftUsesEmojiMirror = computed(() =>
   draftEmojiParts.value.some((part) => part.emoji)
 )
@@ -3055,7 +3055,12 @@ async function onDrop(event: DragEvent): Promise<void> {
   border: none;
   outline: none;
   padding: 6px 8px;
-  font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* 决议 #261：只恢复等宽表情槽；静态正常流、实体背景和不透明输入层保持。 */
+  font-family:
+    'PantryEmojiBlank',
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-1);
@@ -3116,17 +3121,17 @@ async function onDrop(event: DragEvent): Promise<void> {
   word-break: break-word;
   overflow-wrap: anywhere;
 }
-/* Win7 搜狗安全路径（决议 #260）：真实 textarea 始终使用微软雅黑、实体背景与
-   不透明文字，继续独立提供 caret 几何；此层只覆盖黑色系统 emoji，不参与布局和命中。 */
+/* Win7 搜狗安全路径（决议 #260/#261）：真实 textarea 保持实体背景与不透明文字，
+   PantryEmojiBlank 让 emoji 槽固定为 1.3em；此层只绘制 Twemoji，不参与布局和命中。 */
 .input-mirror.win7-ime-emoji-overlay {
   z-index: 1;
   padding: 6px 8px;
   color: transparent;
-  font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
-}
-.win7-ime-emoji-overlay .mirror-emoji {
-  background: var(--material-strong);
-  box-shadow: 0 0 0 1px var(--material-strong);
+  font-family:
+    'PantryEmojiBlank',
+    'Microsoft YaHei',
+    'Noto Sans CJK SC',
+    sans-serif;
 }
 .input-mirror-content {
   min-height: 100%;
