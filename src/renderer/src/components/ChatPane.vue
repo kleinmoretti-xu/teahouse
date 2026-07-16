@@ -15,10 +15,6 @@ import {
 } from '../utils/clipboard'
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
-import {
-  nextWin7ImeCaretNudge,
-  type Win7ImeCaretNudge
-} from '../utils/win7-ime-caret'
 import { listTime } from '../utils/time'
 import {
   canRecallAt,
@@ -124,30 +120,6 @@ const loadingEarlier = ref(false)
 const scrollArea = ref<HTMLElement | null>(null)
 const msgsContent = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
-const win7ImeCaretNudge = ref<Win7ImeCaretNudge>(0)
-
-function pulseWin7ImeCaretGeometry(): void {
-  const input = inputEl.value
-  const active = input !== null && document.activeElement === input
-  const next = nextWin7ImeCaretNudge(
-    win7ImeCaretNudge.value,
-    props.win7ImeCompat,
-    active
-  )
-  win7ImeCaretNudge.value = next
-  if (!props.win7ImeCompat || !active || !input) return
-
-  // compositionstart/update 可能在同一帧连续到达；同步写样式，避免 Vue 批处理合并脉冲。
-  input.style.paddingLeft = `${next}px`
-  void input.getBoundingClientRect()
-}
-
-function resetWin7ImeCaretGeometry(): void {
-  win7ImeCaretNudge.value = 0
-  if (inputEl.value) inputEl.value.style.paddingLeft = '0px'
-}
-
-onUnmounted(resetWin7ImeCaretGeometry)
 const emojiScope = ref<HTMLElement | null>(null)
 const pkScope = ref<HTMLElement | null>(null)
 const peerProfileScope = ref<HTMLElement | null>(null)
@@ -274,7 +246,10 @@ const inputPlaceholder = computed(() => {
     : '输入消息，Enter 发送，Ctrl+Enter 换行；可粘贴截图/文件'
 })
 const draftEmojiParts = computed(() => splitEmojiText(draft.value))
-const draftUsesEmojiMirror = computed(() => draftEmojiParts.value.some((part) => part.emoji))
+// Win7 搜狗诊断画像（决议 #259）：基础 textarea 绕开自定义字体与镜像编辑链。
+const draftUsesEmojiMirror = computed(
+  () => !props.win7ImeCompat && draftEmojiParts.value.some((part) => part.emoji)
+)
 /** textarea 的实际 font（measureText 用）；为空时镜像退化为原字符渲染，宽度天然一致 */
 const inputFont = ref('')
 /** PantryEmojiBlank 加载完成后 +1：清测量缓存并强制镜像重算（决议 #56） */
@@ -1942,14 +1917,14 @@ async function onDrop(event: DragEvent): Promise<void> {
         <textarea
           ref="inputEl"
           v-model="draft"
-          class="input"
-          :class="{ 'mirror-active': draftUsesEmojiMirror }"
+          :class="
+            props.win7ImeCompat
+              ? 'win7-ime-basic-input'
+              : ['input', { 'mirror-active': draftUsesEmojiMirror }]
+          "
           :disabled="!canSend"
           :placeholder="inputPlaceholder"
           @keydown="onKeydown"
-          @compositionstart="pulseWin7ImeCaretGeometry"
-          @compositionupdate="pulseWin7ImeCaretGeometry"
-          @compositionend="resetWin7ImeCaretGeometry"
           @paste="onPaste"
           @scroll="syncInputMirrorScroll"
         ></textarea>
@@ -3065,6 +3040,23 @@ async function onDrop(event: DragEvent): Promise<void> {
 .input-shell {
   position: relative;
   border-radius: 10px;
+}
+.win7-ime-basic-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+  padding: 6px 8px;
+  font-family: 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--bg-window);
+  user-select: text;
 }
 .input {
   position: relative;

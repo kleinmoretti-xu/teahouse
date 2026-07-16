@@ -43,23 +43,10 @@ describe('页面缩放主进程接线', () => {
     )
   })
 
-  it('renderer 清除 CSS zoom 并以正常流 textarea 刷新 Win7 caret 几何', () => {
-    const inputCssStart = chatPaneSource.indexOf('.input {')
-    const inputCssEnd = chatPaneSource.indexOf('.input.mirror-active', inputCssStart)
-    const inputCss = chatPaneSource.slice(inputCssStart, inputCssEnd)
-
+  it('renderer 清除 CSS zoom 并保留 Win7 平台门控', () => {
     expect(appearanceSource).toContain("document.body.style.removeProperty('zoom')")
     expect(appearanceSource).not.toContain("setProperty('zoom'")
     expect(appSource).toContain(':win7-ime-compat="info?.windows7 === true"')
-    expect(chatPaneSource).toContain('@compositionstart="pulseWin7ImeCaretGeometry"')
-    expect(chatPaneSource).toContain('@compositionupdate="pulseWin7ImeCaretGeometry"')
-    expect(chatPaneSource).toContain('@compositionend="resetWin7ImeCaretGeometry"')
-    expect(chatPaneSource).toContain('input.style.paddingLeft = `${next}px`')
-    expect(chatPaneSource).toContain('input.getBoundingClientRect()')
-    expect(inputCss).toContain('position: relative;')
-    expect(inputCss).toContain('box-sizing: border-box;')
-    expect(inputCss).not.toContain('position: absolute;')
-    expect(inputCss).not.toContain('inset: 0;')
     expect(ipcSource).toContain('windows7: boolean')
   })
 
