@@ -10,6 +10,7 @@ const electronMock = vi.hoisted(() => {
     this.webContents = {
       handlers: webHandlers,
       isDestroyed: vi.fn().mockReturnValue(false),
+      setZoomFactor: vi.fn(),
       setWindowOpenHandler: vi.fn(),
       on: vi.fn((event: string, handler: (...args: any[]) => void) => webHandlers.set(event, handler)),
       send: vi.fn()
@@ -77,13 +78,17 @@ describe('设置窗口模态层级', () => {
     const parent = makeParent()
     const { openSettingsWindow } = await loadSettingsWindow('win32')
 
-    openSettingsWindow(parent as never)
+    openSettingsWindow(parent as never, 125)
 
     const instance = electronMock.instances[0]
     expect(instance.options.parent).toBe(parent)
     expect(instance.options.modal).toBe(true)
     expect(instance.options.hasShadow).toBe(true)
     expect(instance.options.frame).toBe(false)
+    expect(instance.webContents.setZoomFactor).toHaveBeenCalledWith(1.25)
+    instance.webContents.setZoomFactor.mockClear()
+    instance.webContents.handlers.get('did-finish-load')?.()
+    expect(instance.webContents.setZoomFactor).toHaveBeenCalledWith(1.25)
     expect(parent.webContents.send).toHaveBeenCalledWith('ui:settings-window-state', true)
 
     instance.handlers.get('closed')?.()
@@ -94,21 +99,22 @@ describe('设置窗口模态层级', () => {
     const parent = makeParent()
     const { openSettingsWindow } = await loadSettingsWindow('linux')
 
-    openSettingsWindow(parent as never)
-    openSettingsWindow(parent as never)
+    openSettingsWindow(parent as never, 100)
+    openSettingsWindow(parent as never, 110)
 
     const instance = electronMock.instances[0]
     expect(electronMock.instances).toHaveLength(1)
     expect(parent.webContents.send).toHaveBeenLastCalledWith('ui:settings-window-state', true)
     expect(instance.show).toHaveBeenCalledTimes(1)
     expect(instance.focus).toHaveBeenCalledTimes(1)
+    expect(instance.webContents.setZoomFactor).toHaveBeenLastCalledWith(1.1)
   })
 
   it('macOS 保留原生阴影与父子窗口，不向主窗增加遮罩', async () => {
     const parent = makeParent()
     const { openSettingsWindow } = await loadSettingsWindow('darwin')
 
-    openSettingsWindow(parent as never)
+    openSettingsWindow(parent as never, 100)
 
     const instance = electronMock.instances[0]
     expect(instance.options.modal).toBeUndefined()

@@ -51,19 +51,20 @@
 > 当前补充：2026-07-15（**v0.44.4 开发中，决议 #253 Win7 输入法候选窗兼容修复**）：Win7（NT 6.1）启动早期关闭 Chromium TSF 输入法支持并自动回退 IMM32，修复部分旧输入法 / 第三方输入法候选窗固定在屏幕左上角；Win8 及以上 Windows、Linux、macOS 保持原输入法路径。协议 v0.48、SQLite v12 与 IPC 保持。**（已被 #254 撤销）**
 > 当前补充：2026-07-16（**v0.44.5 开发中，决议 #254 撤销无效的 Win7 TSF 输入法开关**）：v0.44.4 发布后用户实测候选窗仍固定屏幕左上角；核对 Chromium 108 源码确认 Win7 恒走 IMM32、`disable-features=TSFImeSupport` 在 Win7 属空操作，撤销该开关并把 Win7 判定收敛到 `util/windows-version.ts`（软渲染条件复用）。候选窗问题转入 Win7 真机对照定位（同机记事本对照 + 应用内微软拼音对照），区分应用侧 / 输入法侧后再定向修复。协议 v0.48、SQLite v12 与 IPC 保持。
 > 当前补充：2026-07-16（**v0.44.6 开发中，决议 #255 Win7 输入法焦点自愈**）：多名 Win7 用户反馈候选窗固定屏幕左上角、同机其他软件正常；按"Win32 键盘焦点落入 Chrome Legacy Window（转发普通键盘消息但不转发 WM_IME_*）→ IMM32 候选窗定位整链失效且粘性"的故障模型，新增 `util/win7-ime-focus.ts`：主窗口与设置窗口每次 focus 后延迟 150ms 重走原生 show 流程（`HWNDMessageHandler::Show` 末尾 `SetInitialFocus` 把焦点钉回顶层窗口），仅 Win7 安装。**待 Win7 真机回归验证**。协议 v0.48、SQLite v12 与 IPC 保持。
-> 当前补充：2026-07-16（**v0.44.7 开发中，决议 #256 Win7 IMM32 caret 刷新**）：源码复核确认 #255 的 `show()` 不保证执行 HWND `SetInitialFocus` 且会重复触发显示生命周期，已撤销、未发布。修复移到主聊天原生 `textarea`：仅 Win7 在输入框安全获得焦点，或窗口重新激活且输入框仍活动时，保存选区/滚动并刷新 Chromium 文本输入客户端，触发 IMM32 强制重取 caret bounds；composition 期间跳过。**待 Win7 真机回归验证**。协议 v0.48、SQLite v12 保持；`AppInfo` 增加本机 `windows7` 门控标记。
+> 当前补充：2026-07-16（**v0.44.7 开发中，决议 #256 Win7 IMM32 caret 刷新**）：源码复核确认 #255 的 `show()` 不保证执行 HWND `SetInitialFocus` 且会重复触发显示生命周期，已撤销、未发布。修复移到主聊天原生 `textarea`：仅 Win7 在输入框安全获得焦点，或窗口重新激活且输入框仍活动时，保存选区/滚动并刷新 Chromium 文本输入客户端，触发 IMM32 强制重取 caret bounds；composition 期间跳过。Win7 搜狗真机实测无效，已被 #257 撤销。协议 v0.48、SQLite v12 保持；`AppInfo.windows7` 随 #257 删除。
+> 当前补充：2026-07-16（**v0.44.8 开发中，决议 #257 Win7 搜狗原生焦点与页面缩放修复**）：v0.44.7 发布后 Win7 搜狗实测候选窗仍停在应用左上角，#256 已撤销。Chromium IMM32 仅在目标 HWND 持有 Win32 键盘焦点时更新候选窗与系统 caret；本轮在主窗口重新激活、主聊天 textarea 获焦时直接调用 `webContents.focus()`。同时删除 renderer 的 `body zoom`，字体倍率迁到主进程 `webContents.setZoomFactor()` 并在窗口创建、renderer 加载完成和设置更新时同步，让 Chromium 原生链路统一换算 DOM caret 与屏幕坐标。协议 v0.48、SQLite v12 保持；IPC 增加本机焦点同步调用。**待 Win7 搜狗真机回归验证**。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #256）→ [protocol.md](protocol.md)（主协议 v0.48）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #257）→ [protocol.md](protocol.md)（主协议 v0.48）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.7**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.44.8**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
@@ -103,7 +104,7 @@ npm run smoke     # 启动 1.5s 干净退出（PANTRY_SMOKE 钩子，CI 同款�
 ```
 
 - 本机三客户端联调：懒人入口用 `npm run dev:2` 一次拉起前两个、`npm run dev:3` 一次拉起三个；也可分别在三个终端跑 `npm run dev:client1`、`npm run dev:client2`、`npm run dev:client3`。三个实例使用 `/tmp/pantry-dev1..3` 和 `17878/27878/37878` UDP 端口、`17879/27879/37879` TCP 端口。
-- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #256，续 #257+）；协议改动必须 protocol.md 先行。
+- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #257，续 #258+）；协议改动必须 protocol.md 先行。
 - 与用户协作：**全程中文**；用户技术方向不在网络/协议——技术细节直接定但落档、**不要追问底层**；产品可感知取舍（功能形态/默认参数）用 2-4 个带推荐的选项问他。
 
 ## 3. 代码地图（src/，分层铁律见 AGENTS.md #7）

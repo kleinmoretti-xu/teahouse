@@ -4,8 +4,8 @@
 // 注意不能用 canvas measureText：Blink 的 canvas 文本与 DOM 排版对 emoji 字体的度量不一致
 // （mac 实测 14px 字号下 DOM 排版 emoji 约 14px、measureText 约 18px）。
 // 因此用隐藏 DOM 探针按输入框的真实 font 逐字符测量，与 textarea 走同一套文本排版。
-// 探针挂在 <html> 下而非 <body>：字体缩放经 body zoom 实现，探针避开 zoom 直接量 CSS px，
-// 镜像层设置的 width 与 textarea 同处 zoom 内，两边仍逐字符一致。
+// 探针挂在 <html> 下，避免继承业务容器样式；页面倍率由 WebContents 原生缩放统一处理，
+// 探针与 textarea 始终处于同一 CSS 像素坐标空间。
 
 export type TextMeasurer = (text: string, font: string) => number
 

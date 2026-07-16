@@ -14,7 +14,6 @@ import {
   type ClipboardTableText
 } from '../utils/clipboard'
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
-import { refreshWin7ImeCaret } from '../utils/win7-ime-caret'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
 import { listTime } from '../utils/time'
 import {
@@ -49,10 +48,6 @@ import {
   TEXT_TCP_LIMIT,
   TEXT_UDP_LIMIT
 } from '../../../shared/protocol'
-
-const props = withDefaults(defineProps<{ win7ImeCompat?: boolean }>(), {
-  win7ImeCompat: false
-})
 
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
@@ -110,6 +105,10 @@ function startInputResize(e: PointerEvent): void {
   window.addEventListener('pointerup', inputResizeUp)
 }
 
+function refreshWindowsImeFocus(): void {
+  void window.pantry.refreshWindowsImeFocus()
+}
+
 onUnmounted(stopInputResize)
 const showEmoji = ref(false)
 const showHistorySearch = ref(false)
@@ -123,45 +122,6 @@ const msgsContent = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const emojiScope = ref<HTMLElement | null>(null)
 const pkScope = ref<HTMLElement | null>(null)
-let inputComposing = false
-let win7ImeRefreshPending = false
-let win7ImeRefreshing = false
-
-function scheduleWin7ImeCaretRefresh(): void {
-  if (
-    !props.win7ImeCompat ||
-    win7ImeRefreshing ||
-    win7ImeRefreshPending
-  ) {
-    return
-  }
-  win7ImeRefreshPending = true
-  queueMicrotask(() => {
-    if (!win7ImeRefreshPending) return
-    win7ImeRefreshPending = false
-    const textarea = inputEl.value
-    if (!textarea) return
-    win7ImeRefreshing = true
-    try {
-      refreshWin7ImeCaret(textarea, {
-        windows7: props.win7ImeCompat,
-        active: document.activeElement === textarea,
-        composing: inputComposing
-      })
-    } finally {
-      win7ImeRefreshing = false
-    }
-  })
-}
-
-function onInputCompositionStart(): void {
-  inputComposing = true
-}
-
-function onInputCompositionEnd(): void {
-  inputComposing = false
-}
-
 const peerProfileScope = ref<HTMLElement | null>(null)
 const historySearchInput = ref<HTMLInputElement | null>(null)
 const inputScrollTop = ref(0)
@@ -368,7 +328,6 @@ function onDocumentPointerDown(event: MouseEvent): void {
 
 onMounted(async () => {
   document.addEventListener('mousedown', onDocumentPointerDown)
-  window.addEventListener('focus', scheduleWin7ImeCaretRefresh)
   refreshInputFont()
   // 空白字形字体就绪前测得的是系统字符宽——就绪后清缓存重测，镜像槽宽收敛到 1.3em
   void document.fonts
@@ -405,8 +364,6 @@ onUnmounted(() => {
   bottomKeeper?.disconnect()
   bottomKeeper = null
   document.removeEventListener('mousedown', onDocumentPointerDown)
-  window.removeEventListener('focus', scheduleWin7ImeCaretRefresh)
-  win7ImeRefreshPending = false
   if (historySearchTimer) clearTimeout(historySearchTimer)
   if (peerProfileSavedTimer) clearTimeout(peerProfileSavedTimer)
   if (nudgeFeedbackTimer) clearTimeout(nudgeFeedbackTimer)
@@ -1962,9 +1919,7 @@ async function onDrop(event: DragEvent): Promise<void> {
           :disabled="!canSend"
           :placeholder="inputPlaceholder"
           @keydown="onKeydown"
-          @focus="scheduleWin7ImeCaretRefresh"
-          @compositionstart="onInputCompositionStart"
-          @compositionend="onInputCompositionEnd"
+          @focus="refreshWindowsImeFocus"
           @paste="onPaste"
           @scroll="syncInputMirrorScroll"
         ></textarea>

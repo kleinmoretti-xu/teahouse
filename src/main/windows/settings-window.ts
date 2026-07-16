@@ -1,7 +1,8 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { IpcEvents } from '../../shared/ipc'
+import { IpcEvents, type SettingsView } from '../../shared/ipc'
 import { resolveDevRendererUrl } from '../util/renderer-url'
+import { applyWindowZoom } from '../util/window-zoom'
 
 // 设置独立小窗（决议 #3 审美轮）：640×480，左分组导航；
 // 复用同一渲染包，经 #/settings 哈希路由挂载 SettingsApp。
@@ -10,6 +11,7 @@ const SETTINGS_WIDTH = 640
 const SETTINGS_HEIGHT = 480
 
 let win: BrowserWindow | null = null
+let currentFontScale: SettingsView['fontScale'] = 100
 
 /**
  * 设置窗居中到主窗几何中心（决议 #123），而非屏幕中心——主窗被拖到副屏/角落时，
@@ -55,9 +57,18 @@ function notifySettingsWindowState(parent: BrowserWindow | null, open: boolean):
   parent.webContents.send(IpcEvents.settingsWindowState, open)
 }
 
-export function openSettingsWindow(parent: BrowserWindow | null): void {
+export function syncSettingsWindowZoom(fontScale: SettingsView['fontScale']): void {
+  currentFontScale = fontScale
+  applyWindowZoom(win?.webContents, fontScale)
+}
+
+export function openSettingsWindow(
+  parent: BrowserWindow | null,
+  fontScale: SettingsView['fontScale']
+): void {
   const activeParent = parent && !parent.isDestroyed() ? parent : null
   if (win && !win.isDestroyed()) {
+    syncSettingsWindowZoom(fontScale)
     notifySettingsWindowState(activeParent, true)
     win.show()
     win.focus()
@@ -87,6 +98,8 @@ export function openSettingsWindow(parent: BrowserWindow | null): void {
       nodeIntegration: false
     }
   })
+  syncSettingsWindowZoom(fontScale)
+  win.webContents.on('did-finish-load', () => syncSettingsWindowZoom(currentFontScale))
   win.setMenuBarVisibility(false)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
