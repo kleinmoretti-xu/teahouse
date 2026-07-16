@@ -125,6 +125,7 @@ import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
 import { isWindows7 } from './util/windows-version'
+import { installWin7ImeFocusHeal } from './util/win7-ime-focus'
 import {
   findLocalUpdatePackage,
   pickUpdateSource,
@@ -1368,6 +1369,9 @@ if (!gotLock) {
         nodeIntegration: false
       }
     })
+
+    // Win7 输入法焦点自愈（决议 #255）：机制详见 util/win7-ime-focus.ts
+    installWin7ImeFocusHeal(mainWindow)
 
     // 最大化状态推送：渲染层自绘「最大化/还原」按钮据此切图标
     mainWindow.on('maximize', () =>

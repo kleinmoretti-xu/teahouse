@@ -2,6 +2,7 @@ import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { IpcEvents } from '../../shared/ipc'
 import { resolveDevRendererUrl } from '../util/renderer-url'
+import { installWin7ImeFocusHeal } from '../util/win7-ime-focus'
 
 // 设置独立小窗（决议 #3 审美轮）：640×480，左分组导航；
 // 复用同一渲染包，经 #/settings 哈希路由挂载 SettingsApp。
@@ -90,6 +91,8 @@ export function openSettingsWindow(parent: BrowserWindow | null): void {
   win.setMenuBarVisibility(false)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.webContents.on('will-navigate', (event) => event.preventDefault())
+  // Win7 输入法焦点自愈（决议 #255）：机制详见 util/win7-ime-focus.ts
+  installWin7ImeFocusHeal(win)
   notifySettingsWindowState(activeParent, true)
   win.once('ready-to-show', () => win?.show())
   win.on('closed', () => {
