@@ -30,6 +30,7 @@ import GroupPanel from './GroupPanel.vue'
 import GroupAvatar from './GroupAvatar.vue'
 import ForwardDialog from './ForwardDialog.vue'
 import PantryIcon from './PantryIcon.vue'
+import Win7ChatEditor from './Win7ChatEditor.vue'
 import type {
   ConversationMessageHit,
   ConversationSearchKind,
@@ -120,6 +121,7 @@ const loadingEarlier = ref(false)
 const scrollArea = ref<HTMLElement | null>(null)
 const msgsContent = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
+const win7EditorEl = ref<InstanceType<typeof Win7ChatEditor> | null>(null)
 const emojiScope = ref<HTMLElement | null>(null)
 const pkScope = ref<HTMLElement | null>(null)
 const peerProfileScope = ref<HTMLElement | null>(null)
@@ -246,9 +248,9 @@ const inputPlaceholder = computed(() => {
     : '输入消息，Enter 发送，Ctrl+Enter 换行；可粘贴截图/文件'
 })
 const draftEmojiParts = computed(() => splitEmojiText(draft.value))
-// Win7 继续显示本地 Twemoji；真实 textarea 保持不透明文字，并用等宽空白字形对齐 caret（决议 #261）。
+// Win7 由系统字体 contenteditable 直接承载 Twemoji 原子节点，不再启用 textarea 镜像（决议 #262）。
 const draftUsesEmojiMirror = computed(() =>
-  draftEmojiParts.value.some((part) => part.emoji)
+  !props.win7ImeCompat && draftEmojiParts.value.some((part) => part.emoji)
 )
 /** textarea 的实际 font（measureText 用）；为空时镜像退化为原字符渲染，宽度天然一致 */
 const inputFont = ref('')
@@ -834,52 +836,68 @@ async function sendStickerById(stickerId: string): Promise<void> {
   await chatStore.sendSticker(stickerId)
 }
 
-function insertEmoji(emoji: string): void {
-  const ta = inputEl.value
-  if (!ta) {
-    draft.value += emoji
+function inputSelectionRange(): { start: number; end: number } {
+  if (props.win7ImeCompat) {
+    return win7EditorEl.value?.selectionRange() ?? {
+      start: draft.value.length,
+      end: draft.value.length
+    }
+  }
+  const textarea = inputEl.value
+  const start = textarea?.selectionStart ?? draft.value.length
+  return { start, end: textarea?.selectionEnd ?? start }
+}
+
+function focusInput(): void {
+  if (props.win7ImeCompat) win7EditorEl.value?.focus()
+  else inputEl.value?.focus()
+}
+
+function setInputSelection(start: number, end = start): void {
+  if (props.win7ImeCompat) {
+    win7EditorEl.value?.setSelectionRange(start, end)
     return
   }
-  const start = ta.selectionStart ?? draft.value.length
-  const end = ta.selectionEnd ?? start
+  if (inputEl.value) {
+    inputEl.value.selectionStart = start
+    inputEl.value.selectionEnd = end
+  }
+}
+
+function onWin7EditorValue(value: string): void {
+  draft.value = value
+}
+
+function insertEmoji(emoji: string): void {
+  const { start, end } = inputSelectionRange()
   draft.value = draft.value.slice(0, start) + emoji + draft.value.slice(end)
   void nextTick(() => {
-    ta.focus()
-    ta.selectionStart = ta.selectionEnd = start + emoji.length
+    focusInput()
+    setInputSelection(start + emoji.length)
   })
 }
 
 function syncInputMirrorScroll(): void {
-  inputScrollTop.value = inputEl.value?.scrollTop ?? 0
+  inputScrollTop.value = props.win7ImeCompat
+    ? (win7EditorEl.value?.scrollTop() ?? 0)
+    : (inputEl.value?.scrollTop ?? 0)
 }
 
 function insertNewline(): void {
-  const ta = inputEl.value
-  if (!ta) {
-    draft.value += '\n'
-    return
-  }
-  const start = ta.selectionStart ?? draft.value.length
-  const end = ta.selectionEnd ?? start
+  const { start, end } = inputSelectionRange()
   draft.value = draft.value.slice(0, start) + '\n' + draft.value.slice(end)
   void nextTick(() => {
-    ta.focus()
-    ta.selectionStart = ta.selectionEnd = start + 1
+    focusInput()
+    setInputSelection(start + 1)
   })
 }
 
 function insertTextAtCursor(text: string): void {
-  const ta = inputEl.value
-  if (!ta) {
-    draft.value += text
-    return
-  }
-  const start = ta.selectionStart ?? draft.value.length
-  const end = ta.selectionEnd ?? start
+  const { start, end } = inputSelectionRange()
   draft.value = draft.value.slice(0, start) + text + draft.value.slice(end)
   void nextTick(() => {
-    ta.focus()
-    ta.selectionStart = ta.selectionEnd = start + text.length
+    focusInput()
+    setInputSelection(start + text.length)
   })
 }
 
@@ -987,8 +1005,9 @@ async function sendPk(game: PkGame): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (props.win7ImeCompat && (event.isComposing || event.keyCode === 229)) return
   if (event.key === '@' && isGroup.value && canSend.value && mentionMembers.value.length > 0) {
-    pendingMentionAt.value = inputEl.value?.selectionStart ?? draft.value.length
+    pendingMentionAt.value = inputSelectionRange().start
     showMentionPicker.value = true
     return
   }
@@ -1003,22 +1022,26 @@ function onKeydown(event: KeyboardEvent): void {
   if (mode === 'enter' && modified) {
     event.preventDefault()
     insertNewline()
+    return
+  }
+  if (mode === 'ctrlEnter' && !modified && props.win7ImeCompat) {
+    event.preventDefault()
+    insertNewline()
   }
 }
 
 function insertMention(nodeId: string): void {
   const name = peersStore.nameOf(nodeId)
   const at = pendingMentionAt.value ?? draft.value.length
-  const ta = inputEl.value
-  const end = Math.max(at, ta?.selectionStart ?? at)
+  const end = Math.max(at, inputSelectionRange().start)
   draft.value = `${draft.value.slice(0, at)}@${name} ${draft.value.slice(end)}`
   mentionIds.value = [...new Set([...mentionIds.value, nodeId])]
   showMentionPicker.value = false
   pendingMentionAt.value = null
   void nextTick(() => {
     const pos = at + name.length + 2
-    inputEl.value?.focus()
-    if (inputEl.value) inputEl.value.selectionStart = inputEl.value.selectionEnd = pos
+    focusInput()
+    setInputSelection(pos)
   })
 }
 
@@ -1899,7 +1922,6 @@ async function onDrop(event: DragEvent): Promise<void> {
         <div
           v-if="draftUsesEmojiMirror"
           class="input-mirror"
-          :class="{ 'win7-ime-emoji-overlay': props.win7ImeCompat }"
           aria-hidden="true"
         >
           <div
@@ -1919,14 +1941,23 @@ async function onDrop(event: DragEvent): Promise<void> {
             <span v-if="draft.endsWith('\n')">&nbsp;</span>
           </div>
         </div>
+        <Win7ChatEditor
+          v-if="props.win7ImeCompat"
+          ref="win7EditorEl"
+          :model-value="draft"
+          :disabled="!canSend"
+          :placeholder="inputPlaceholder"
+          @update:model-value="onWin7EditorValue"
+          @keydown="onKeydown"
+          @paste="onPaste"
+          @scroll="syncInputMirrorScroll"
+        />
         <textarea
+          v-else
           ref="inputEl"
           v-model="draft"
-          :class="
-            props.win7ImeCompat
-              ? 'win7-ime-safe-input'
-              : ['input', { 'mirror-active': draftUsesEmojiMirror }]
-          "
+          class="input"
+          :class="{ 'mirror-active': draftUsesEmojiMirror }"
           :disabled="!canSend"
           :placeholder="inputPlaceholder"
           @keydown="onKeydown"
@@ -3046,27 +3077,6 @@ async function onDrop(event: DragEvent): Promise<void> {
   position: relative;
   border-radius: 10px;
 }
-.win7-ime-safe-input {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  resize: none;
-  border: none;
-  outline: none;
-  padding: 6px 8px;
-  /* 决议 #261：只恢复等宽表情槽；静态正常流、实体背景和不透明输入层保持。 */
-  font-family:
-    'PantryEmojiBlank',
-    'Microsoft YaHei',
-    'Noto Sans CJK SC',
-    sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--text-1);
-  background: var(--material-strong);
-  user-select: text;
-}
 .input {
   position: relative;
   display: block;
@@ -3120,18 +3130,6 @@ async function onDrop(event: DragEvent): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
-}
-/* Win7 搜狗安全路径（决议 #260/#261）：真实 textarea 保持实体背景与不透明文字，
-   PantryEmojiBlank 让 emoji 槽固定为 1.3em；此层只绘制 Twemoji，不参与布局和命中。 */
-.input-mirror.win7-ime-emoji-overlay {
-  z-index: 1;
-  padding: 6px 8px;
-  color: transparent;
-  font-family:
-    'PantryEmojiBlank',
-    'Microsoft YaHei',
-    'Noto Sans CJK SC',
-    sans-serif;
 }
 .input-mirror-content {
   min-height: 100%;

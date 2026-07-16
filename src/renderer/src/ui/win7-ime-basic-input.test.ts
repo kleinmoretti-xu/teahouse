@@ -3,70 +3,75 @@ import { describe, expect, it } from 'vitest'
 
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const chatPaneSource = readFileSync(new URL('../components/ChatPane.vue', import.meta.url), 'utf8')
+const editorSource = readFileSync(new URL('../components/Win7ChatEditor.vue', import.meta.url), 'utf8')
 const compatEmojiSource = readFileSync(new URL('../components/CompatEmoji.vue', import.meta.url), 'utf8')
-const emojiFontGeneratorSource = readFileSync(
-  new URL('../../../../scripts/gen-emoji-blank-font.mjs', import.meta.url),
-  'utf8'
-)
 const oldCaretHelper = new URL('../utils/win7-ime-caret.ts', import.meta.url)
 
-describe('Win7 搜狗安全 textarea 与彩色 emoji 覆盖层', () => {
-  it('只由 Win7 平台标记启用安全输入框', () => {
+describe('Win7 搜狗系统字体原子表情编辑器', () => {
+  it('只由 Win7 平台标记启用独立编辑器', () => {
     expect(appSource).toContain(':win7-ime-compat="info?.windows7 === true"')
-    expect(chatPaneSource).toContain("? 'win7-ime-safe-input'")
+    expect(chatPaneSource).toContain('<Win7ChatEditor')
+    expect(chatPaneSource).toContain('v-if="props.win7ImeCompat"')
+    expect(chatPaneSource).toContain('v-else\n          ref="inputEl"')
   })
 
-  it('安全输入框恢复 1.3em 等宽表情槽并保持实体输入层', () => {
-    const start = chatPaneSource.indexOf('.win7-ime-safe-input {')
-    const end = chatPaneSource.indexOf('.input {', start)
-    const safeCss = chatPaneSource.slice(start, end)
-
-    expect(start).toBeGreaterThan(-1)
-    expect(end).toBeGreaterThan(start)
-    expect(safeCss).toContain("'PantryEmojiBlank',")
-    expect(safeCss).toContain("'Microsoft YaHei',")
-    expect(safeCss).toContain('background: var(--material-strong);')
-    expect(safeCss).toContain('padding: 6px 8px;')
-    expect(safeCss).toContain('border: none;')
-    expect(safeCss).not.toContain('border-radius')
-    expect(safeCss).not.toContain('transparent')
-    expect(safeCss).not.toContain('position:')
+  it('真实编辑控件永久使用系统字体并保持实体输入层', () => {
+    expect(editorSource).toContain(':contenteditable="disabled ? \'false\' : \'true\'"')
+    expect(editorSource).toContain("font-family: 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;")
+    expect(editorSource).toContain('background: var(--material-strong);')
+    expect(editorSource).toContain('padding: 6px 8px;')
+    expect(editorSource).not.toContain('PantryEmojiBlank')
+    expect(editorSource).not.toContain('<textarea')
   })
 
-  it('Win7 恢复 Twemoji，但透明展示层不改变真实输入层', () => {
-    expect(chatPaneSource).toContain("'win7-ime-emoji-overlay': props.win7ImeCompat")
-    expect(chatPaneSource).toContain('draftEmojiParts.value.some((part) => part.emoji)')
-
-    const start = chatPaneSource.indexOf('.input-mirror.win7-ime-emoji-overlay {')
-    const end = chatPaneSource.indexOf('.input-mirror-content {', start)
-    const overlayCss = chatPaneSource.slice(start, end)
-
-    expect(start).toBeGreaterThan(-1)
-    expect(end).toBeGreaterThan(start)
-    expect(overlayCss).toContain('z-index: 1;')
-    expect(overlayCss).toContain('color: transparent;')
-    expect(overlayCss).toContain('padding: 6px 8px;')
-    expect(overlayCss).toContain("'PantryEmojiBlank',")
-    expect(overlayCss).toContain("'Microsoft YaHei',")
-    expect(overlayCss).not.toContain('background:')
-    expect(overlayCss).not.toContain('box-shadow:')
-  })
-
-  it('输入槽和发送后表情使用同一 1.3em 尺寸', () => {
-    expect(emojiFontGeneratorSource).toContain('const EM_ADVANCE = 1300')
+  it('Twemoji 作为 1.3em 原子节点参与原生 caret 布局', () => {
+    expect(editorSource).toContain("image.dataset['editorEmoji'] = emoji")
+    expect(editorSource).toContain("image.contentEditable = 'false'")
+    expect(editorSource).toContain("image.src = twemojiUrl(emojiToTwemojiCode(emoji))")
+    expect(editorSource).toContain('width: 1.3em;')
+    expect(editorSource).toContain('height: 1.3em;')
     expect(compatEmojiSource).toContain('width: 1.3em;')
     expect(compatEmojiSource).toContain('height: 1.3em;')
-    expect(chatPaneSource).toContain('width: min(1.3em, 100%);')
   })
 
-  it('完整撤销实机无效的 composition 几何脉冲', () => {
+  it('UTF-16 选区映射覆盖面板插入、换行和提及', () => {
+    expect(editorSource).toContain('if (emoji) return emoji.length')
+    expect(editorSource).toContain('function logicalLength(node: Node): number')
+    expect(editorSource).toContain('function selectionRange(): { start: number; end: number }')
+    expect(editorSource).toContain('function setSelectionRange(start: number, end: number): void')
+    expect(editorSource).toContain(
+      'defineExpose({ focus, selectionRange, setSelectionRange, scrollTop })'
+    )
+    expect(chatPaneSource).toContain('function inputSelectionRange()')
+    expect(chatPaneSource).toContain('function setInputSelection(start: number, end = start)')
+    expect(chatPaneSource).toContain('if (mode === \'ctrlEnter\' && !modified && props.win7ImeCompat)')
+  })
+
+  it('composition 期间不重建 DOM，并拦截候选确认键', () => {
+    expect(editorSource).toContain('let composing = false')
+    expect(editorSource).toContain('@compositionstart="onCompositionStart"')
+    expect(editorSource).toContain('@compositionend="onCompositionEnd"')
+    expect(editorSource).toContain('if (composing || editorText() === value) return')
+    expect(chatPaneSource).toContain(
+      'if (props.win7ImeCompat && (event.isComposing || event.keyCode === 229)) return'
+    )
+  })
+
+  it('纯文本粘贴归一换行，图片粘贴同步拦截浏览器默认嵌入', () => {
+    expect(editorSource).toContain("const normalized = text.replace(/\\r\\n?/g, '\\n')")
+    expect(editorSource).toContain("const text = event.clipboardData?.getData('text/plain')")
+    expect(editorSource).toContain('event.preventDefault()')
+    expect(editorSource).toContain("if (!el.textContent && !el.querySelector('img[data-editor-emoji]')) return ''")
+  })
+
+  it('撤销 Win7 textarea 空白字体与展示覆盖层', () => {
+    expect(chatPaneSource).toContain(
+      '!props.win7ImeCompat && draftEmojiParts.value.some((part) => part.emoji)'
+    )
+    expect(chatPaneSource).not.toContain('win7-ime-safe-input')
+    expect(chatPaneSource).not.toContain('win7-ime-emoji-overlay')
     expect(existsSync(oldCaretHelper)).toBe(false)
     expect(chatPaneSource).not.toContain('pulseWin7ImeCaretGeometry')
     expect(chatPaneSource).not.toContain('resetWin7ImeCaretGeometry')
-    expect(chatPaneSource).not.toContain('@compositionstart')
-    expect(chatPaneSource).not.toContain('@compositionupdate')
-    expect(chatPaneSource).not.toContain('@compositionend')
-    expect(chatPaneSource).not.toContain('input.style.paddingLeft')
-    expect(chatPaneSource).not.toContain('input.getBoundingClientRect()')
   })
 })
