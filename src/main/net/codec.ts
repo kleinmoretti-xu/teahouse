@@ -268,6 +268,13 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
         return false
       }
       if (
+        o.expiresAt !== undefined &&
+        (!Number.isSafeInteger(o.expiresAt) || o.expiresAt <= 0)
+      ) {
+        return false
+      }
+      if (o.purpose !== undefined && o.expiresAt !== undefined) return false
+      if (
         o.purpose === 'update' &&
         (o.groupId !== undefined ||
           o.fileCount !== 1 ||

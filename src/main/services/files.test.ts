@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CAPS,
+  FILE_OFFER_TTL,
   MSG_TYPES,
   type Envelope,
+  type FileCtlOffer,
   type FileCtlPayload,
   type GroupMeta
 } from '../../shared/protocol'
@@ -22,8 +24,21 @@ import { makeEnvelope } from '../net/codec'
 
 const tmpDirs: string[] = []
 
-afterEach(() => {
-  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+afterEach(async () => {
+  for (const dir of tmpDirs.splice(0)) {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+        lastError = undefined
+        break
+      } catch (err) {
+        lastError = err
+        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+      }
+    }
+    if (lastError) throw lastError
+  }
 })
 
 class FakeMessenger extends EventEmitter {
@@ -109,8 +124,9 @@ class FakeMsgRepo {
 
 class FakeTransferRepo {
   rows = new Map<string, TransferRow>()
+  manifests = new Map<string, { msg_id: string; files: string; expires_at: number }>()
 
-  resetActive(): number {
+  resetLegacyActive(): number {
     return 0
   }
 
@@ -123,6 +139,7 @@ class FakeTransferRepo {
     status: string
     total: number
     ts: number
+    expiresAt?: number
   }): void {
     this.rows.set(row.transferId, {
       transfer_id: row.transferId,
@@ -133,7 +150,8 @@ class FakeTransferRepo {
       status: row.status,
       bytes_done: 0,
       total: row.total,
-      ts: row.ts
+      ts: row.ts,
+      expires_at: row.expiresAt ?? 0
     })
   }
 
@@ -151,12 +169,44 @@ class FakeTransferRepo {
     if (row) row.files = filesJson
   }
 
+  clearExpiry(transferId: string): void {
+    const row = this.rows.get(transferId)
+    if (row) row.expires_at = 0
+  }
+
   get(transferId: string): TransferRow | undefined {
     return this.rows.get(transferId)
   }
 
   list(): TransferRow[] {
     return [...this.rows.values()]
+  }
+
+  listRecoverable(): TransferRow[] {
+    return [...this.rows.values()].filter(
+      (row) =>
+        row.expires_at > 0 &&
+        ((row.direction === 'out' &&
+          ['offering', 'accepted', 'failed', 'canceled'].includes(row.status)) ||
+          (row.direction === 'in' &&
+            ['offering', 'accepted', 'failed', 'canceled'].includes(row.status)))
+    )
+  }
+
+  saveOutgoingManifest(msgId: string, files: string, expiresAt: number): void {
+    this.manifests.set(msgId, { msg_id: msgId, files, expires_at: expiresAt })
+  }
+
+  getOutgoingManifest(msgId: string): { msg_id: string; files: string; expires_at: number } | undefined {
+    return this.manifests.get(msgId)
+  }
+
+  listOutgoingManifests(): Array<{ msg_id: string; files: string; expires_at: number }> {
+    return [...this.manifests.values()]
+  }
+
+  deleteOutgoingManifest(msgId: string): void {
+    this.manifests.delete(msgId)
   }
 }
 
@@ -170,6 +220,21 @@ class FakeGroupRepo {
 
 function waitTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now()
+    const timer = setInterval(() => {
+      if (predicate()) {
+        clearInterval(timer)
+        resolve()
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(timer)
+        reject(new Error('timeout'))
+      }
+    }, 10)
+  })
 }
 
 describe('FilesService 群聊媒体', () => {
@@ -458,6 +523,10 @@ describe('FilesService 群聊媒体', () => {
     expect(view?.fileRef?.transferIds).toHaveLength(2)
     expect(msgRepo.rows.size).toBe(1)
     expect(transferRepo.rows.size).toBe(2)
+    expect(transferRepo.manifests.size).toBe(1)
+    const deadlines = new Set([...transferRepo.rows.values()].map((row) => row.expires_at))
+    expect(deadlines.size).toBe(1)
+    expect([...deadlines][0]).toBeGreaterThan(Date.now() + FILE_OFFER_TTL - 1_000)
 
     await waitTick()
     expect(messenger.sent.map((item) => item.peerId).sort()).toEqual(['node-bob', 'node-dan'])
@@ -467,7 +536,8 @@ describe('FilesService 群聊媒体', () => {
         op: 'offer',
         groupId: 'group-1',
         groupRev: 3,
-        rootName: '群文件.txt'
+        rootName: '群文件.txt',
+        expiresAt: [...deadlines][0]
       })
     }
     expect(msgRepo.get(view!.id)?.status).toBe('sent')
@@ -519,6 +589,8 @@ describe('FilesService 群聊媒体', () => {
       purpose: 'image',
       groupId: 'group-1'
     })
+    expect((messenger.sent[0].env.payload as FileCtlOffer).expiresAt).toBeUndefined()
+    expect([...transferRepo.rows.values()][0].expires_at).toBe(0)
   })
 
   it('群聊表格图片按成员 tbl1 能力分别携带文字视图', async () => {
@@ -1386,14 +1458,42 @@ describe('FilesService 取消可恢复（决议 #211）', () => {
 
     await service.cancel('t-retry')
     expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+    expect(JSON.parse(transferRepo.get('t-retry')!.files).plans).toBeUndefined()
     expect(service.transferView('t-retry')?.retryable).toBe(false)
     await expect(service.accept('t-retry')).resolves.toBe(false)
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+
+    transferRepo.get('t-retry')!.expires_at = Date.now() + 20
+    ;(service as unknown as { scheduleExpiry(): void }).scheduleExpiry()
+    await new Promise((resolve) => setTimeout(resolve, 40))
     expect(transferRepo.get('t-retry')?.status).toBe('canceled')
   })
 
   it('发送方主动取消是终态：接收方作废上下文，不再展示重新下载', async () => {
     const { service, transferRepo, messenger } = makeIncomingService([CAPS.transferWait])
     await waitTick()
+    const events: Array<{ retryable?: boolean }> = []
+    service.on('transfer', (view: { retryable?: boolean }) => events.push(view))
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'cancel',
+        transferId: 't-retry'
+      })
+    )
+    expect(transferRepo.get('t-retry')?.status).toBe('canceled')
+    expect(JSON.parse(transferRepo.get('t-retry')!.files).plans).toBeUndefined()
+    expect(service.transferView('t-retry')?.retryable).toBe(false)
+    expect(events[events.length - 1]?.retryable).toBe(false)
+    await expect(service.accept('t-retry')).resolves.toBe(false)
+  })
+
+  it('接收方已取消后再收到发送方取消，立即撤销原有重新下载上下文', async () => {
+    const { service, transferRepo, messenger } = makeIncomingService([CAPS.transferWait])
+    await waitTick()
+    await service.cancel('t-retry')
+    expect(service.transferView('t-retry')?.retryable).toBe(true)
 
     messenger.emit(
       'incoming',
@@ -1404,7 +1504,7 @@ describe('FilesService 取消可恢复（决议 #211）', () => {
     )
     expect(transferRepo.get('t-retry')?.status).toBe('canceled')
     expect(service.transferView('t-retry')?.retryable).toBe(false)
-    await expect(service.accept('t-retry')).resolves.toBe(false)
+    expect(JSON.parse(transferRepo.get('t-retry')!.files).plans).toBeUndefined()
   })
 
   it('接收后传输中取消（用户反馈复现）：状态回 canceled 且重新下载仍可用', async () => {
@@ -1537,10 +1637,333 @@ describe('FilesService 取消可恢复（决议 #211）', () => {
     // 发送方自己取消才是终态：outgoing 作废，对端再 accept 不再恢复
     await service.cancel(tid)
     expect(transferRepo.get(tid)?.status).toBe('canceled')
+    expect(transferRepo.manifests.size).toBe(0)
     messenger.emit(
       'incoming',
       makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', { op: 'accept', transferId: tid })
     )
     expect(transferRepo.get(tid)?.status).toBe('canceled')
+  })
+})
+
+describe('FilesService 普通文件 24 小时领取期限（决议 #263）', () => {
+  it('普通文件 offer 回程判负后仍在期限内保留供流，迟到 accept 可以恢复', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-offer-failed-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, '可能已送达.txt')
+    writeFileSync(filePath, 'offer')
+    const messenger = new FakeMessenger()
+    const send = messenger.sendReliable.bind(messenger)
+    messenger.sendReliable = async (peerId, env) => {
+      await send(peerId, env)
+      return env.payload.op !== 'offer'
+    }
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const view = await service.offerPaths('node-bob', [filePath])
+    await waitTick()
+    const transferId = view!.fileRef!.transferId
+    expect(transferRepo.get(transferId)?.status).toBe('failed')
+    expect(transferRepo.manifests.size).toBe(1)
+    expect(
+      (service as unknown as { outgoing: Map<string, unknown> }).outgoing.has(transferId)
+    ).toBe(true)
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'accept',
+        transferId
+      })
+    )
+    expect(transferRepo.get(transferId)?.status).toBe('accepted')
+    expect(msgRepo.get(view!.id)?.status).toBe('sent')
+    await service.stop()
+  })
+
+  it('私聊发送端到期后关闭供流、直接发送与源文件清单', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-expire-out-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, '期限测试.txt')
+    writeFileSync(filePath, 'deadline')
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], [CAPS.fileDirect]) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const view = await service.offerPaths('node-bob', [filePath])
+    await waitTick()
+    const transferId = view!.fileRef!.transferId
+    const offer = messenger.sent.find((item) => item.env.payload.op === 'offer')!
+      .env.payload as FileCtlOffer
+    expect(offer.expiresAt).toBe(transferRepo.get(transferId)?.expires_at)
+    expect(offer.expiresAt).toBeGreaterThan(Date.now() + FILE_OFFER_TTL - 1_000)
+    expect(transferRepo.manifests.size).toBe(1)
+
+    const deadline = Date.now() + 30
+    transferRepo.get(transferId)!.expires_at = deadline
+    const outgoing = (
+      service as unknown as { outgoing: Map<string, { expiresAt: number }> }
+    ).outgoing.get(transferId)!
+    outgoing.expiresAt = deadline
+    ;(service as unknown as { scheduleExpiry(): void }).scheduleExpiry()
+
+    await waitFor(() => transferRepo.get(transferId)?.status === 'expired')
+    expect(service.transferView(transferId)).toMatchObject({
+      direction: 'out',
+      status: 'expired',
+      retryable: false
+    })
+    await expect(service.requestDirect(transferId)).resolves.toBe(false)
+    expect(transferRepo.manifests.size).toBe(0)
+    await service.stop()
+  })
+
+  it('接收端按发送端剩余时长换算本地截止时间，逾期后不再接收', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-expire-in-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    const env = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+      op: 'offer',
+      transferId: 't-short-expiry',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'f-1', path: 'a.bin', size: 8 }],
+      totalSize: 8,
+      fileCount: 1,
+      rootName: 'a.bin',
+      expiresAt: 1
+    })
+    ;(env.payload as FileCtlOffer).expiresAt = env.ts + 40
+    messenger.emit('incoming', env)
+
+    expect(transferRepo.get('t-short-expiry')?.status).toBe('offering')
+    expect(transferRepo.get('t-short-expiry')!.expires_at).toBeLessThanOrEqual(Date.now() + 45)
+    await waitFor(() => transferRepo.get('t-short-expiry')?.status === 'expired')
+    expect(service.transferView('t-short-expiry')).toMatchObject({
+      direction: 'in',
+      status: 'expired',
+      retryable: false
+    })
+    await expect(service.accept('t-short-expiry')).resolves.toBe(false)
+    await service.stop()
+  })
+
+  it('旧发送端缺少 expiresAt 时从完整收包起执行本地 24 小时上限', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-legacy-expiry-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    const before = Date.now()
+    messenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-legacy-expiry',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-1', path: 'legacy.bin', size: 8 }],
+        totalSize: 8,
+        fileCount: 1,
+        rootName: 'legacy.bin'
+      })
+    )
+    expect(transferRepo.get('t-legacy-expiry')!.expires_at).toBeGreaterThanOrEqual(
+      before + FILE_OFFER_TTL
+    )
+    expect(transferRepo.get('t-legacy-expiry')!.expires_at).toBeLessThanOrEqual(
+      Date.now() + FILE_OFFER_TTL
+    )
+    await service.stop()
+  })
+
+  it('重启后在期限内恢复出站供流与入站断点上下文，过期记录安全收口', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-recover-expiry-'))
+    tmpDirs.push(dir)
+    const filePath = join(dir, 'recover.bin')
+    writeFileSync(filePath, 'recover')
+    const transferRepo = new FakeTransferRepo()
+    const msgRepo = new FakeMsgRepo()
+    const convRepo = new FakeConvRepo()
+    const firstMessenger = new FakeMessenger()
+    const common = {
+      selfId: 'node-self',
+      registry: new FakeRegistry(['node-bob'], [CAPS.transferWait]) as unknown as PeerRegistry,
+      convRepo: convRepo as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    }
+    const first = new FilesService({
+      ...common,
+      messenger: firstMessenger as unknown as Messenger
+    })
+    const sent = await first.offerPaths('node-bob', [filePath])
+    await waitTick()
+    const outgoingId = sent!.fileRef!.transferId
+    firstMessenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'cancel',
+        transferId: outgoingId
+      })
+    )
+
+    firstMessenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'offer',
+        transferId: 't-recover-in',
+        seq: 1,
+        total: 1,
+        files: [{ fileId: 'f-in', path: 'incoming.bin', size: 7 }],
+        totalSize: 7,
+        fileCount: 1,
+        rootName: 'incoming.bin',
+        expiresAt: Date.now() + FILE_OFFER_TTL
+      })
+    )
+    transferRepo.updateStatus('t-recover-in', 'accepted')
+    await first.stop()
+
+    const secondMessenger = new FakeMessenger()
+    const second = new FilesService({
+      ...common,
+      messenger: secondMessenger as unknown as Messenger
+    })
+    expect(
+      (second as unknown as { outgoing: Map<string, unknown> }).outgoing.has(outgoingId)
+    ).toBe(true)
+    expect(transferRepo.get(outgoingId)?.status).toBe('canceled')
+    secondMessenger.emit(
+      'incoming',
+      makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+        op: 'accept',
+        transferId: outgoingId
+      })
+    )
+    expect(transferRepo.get(outgoingId)?.status).toBe('accepted')
+    expect(transferRepo.get('t-recover-in')?.status).toBe('failed')
+    expect(second.transferView('t-recover-in')?.retryable).toBe(true)
+
+    await second.cancel(outgoingId)
+    transferRepo.get(outgoingId)!.expires_at = Date.now() - 1
+    transferRepo.get('t-recover-in')!.expires_at = Date.now() - 1
+    await second.stop()
+    const third = new FilesService({
+      ...common,
+      messenger: new FakeMessenger() as unknown as Messenger
+    })
+    expect(transferRepo.get('t-recover-in')?.status).toBe('expired')
+    expect(third.transferView('t-recover-in')?.retryable).toBe(false)
+    expect(transferRepo.get(outgoingId)?.status).toBe('canceled')
+    await third.stop()
+  })
+
+  it('截止前已开始的当前接收尝试可越过期限，失败后转为文件过期', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-files-active-expiry-'))
+    tmpDirs.push(dir)
+    const { createServer } = await import('node:net')
+    const sockets = new Set<import('node:net').Socket>()
+    const silent = createServer((socket) => {
+      sockets.add(socket)
+      socket.on('close', () => sockets.delete(socket))
+    })
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', () => resolve()))
+    const port = (silent.address() as { port: number }).port
+    const messenger = new FakeMessenger()
+    const transferRepo = new FakeTransferRepo()
+    const service = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob'], [CAPS.transferWait], port) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    const env = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-bob', {
+      op: 'offer',
+      transferId: 't-active-expiry',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'f-1', path: 'active.bin', size: 8 }],
+      totalSize: 8,
+      fileCount: 1,
+      rootName: 'active.bin',
+      expiresAt: 1
+    })
+    ;(env.payload as FileCtlOffer).expiresAt = env.ts + 50
+    messenger.emit('incoming', env)
+    await expect(service.accept('t-active-expiry')).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(transferRepo.get('t-active-expiry')?.status).toBe('accepted')
+
+    await service.cancel('t-active-expiry')
+    await waitFor(() => transferRepo.get('t-active-expiry')?.status === 'expired')
+    expect(service.transferView('t-active-expiry')?.retryable).toBe(false)
+    await service.stop()
+    for (const socket of sockets) socket.destroy()
+    await new Promise<void>((resolve) => silent.close(() => resolve()))
   })
 })

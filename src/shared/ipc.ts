@@ -266,11 +266,13 @@ export interface TransferView {
   /** 对端节点 id：出站=接收人，入站=发送人（群聊文件接收名单用，决议 #75） */
   peerId: string
   direction: 'in' | 'out'
-  status: 'offering' | 'accepted' | 'done' | 'declined' | 'canceled' | 'failed'
+  status: 'offering' | 'accepted' | 'done' | 'declined' | 'canceled' | 'failed' | 'expired'
   bytesDone: number
   totalSize: number
   fileCount: number
   name: string
+  /** 普通文件领取截止时间；图片、表情和更新包为 0。 */
+  expiresAt: number
   /** 完成后：接收侧的落盘根路径（用于"打开所在文件夹"） */
   savedPath: string
   /** 是否为直接发送传输；群文件不会为 true。 */

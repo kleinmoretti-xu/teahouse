@@ -310,6 +310,8 @@ export const MAX_FILES_PER_TRANSFER = 2000
 export const PULL_WAIT_HEARTBEAT = 20_000
 /** 接收端拉取空闲超时（§8，决议 #211）：超时判失败，可按 .part 断点续传重试 */
 export const PULL_IDLE_TIMEOUT = 60_000
+/** 私聊/群聊普通文件从发送时刻起的领取窗口（§8，决议 #263） */
+export const FILE_OFFER_TTL = 24 * 60 * 60_000
 
 export interface FileMeta {
   fileId: string
@@ -341,6 +343,8 @@ export interface FileCtlOffer {
   rootName: string
   /** image/sticker：聊天媒体；update：局域网自更新安装包（不入聊天/接收目录） */
   purpose?: 'image' | 'sticker' | 'update'
+  /** 普通文件领取截止时间（发送端 Unix 毫秒）；自动媒体/更新包禁止携带。 */
+  expiresAt?: number
   /** 表格图片消息的原始 TSV 文字视图；仅 purpose=image 单图可携带。 */
   tableText?: string
   /** tableText 因上限被截断时为 true；仅与 tableText 同时出现。 */

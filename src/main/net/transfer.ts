@@ -72,13 +72,15 @@ export type WriteStreamFactory = (
   options?: { flags?: string }
 ) => ReturnType<typeof createWriteStream>
 
-/** 发送侧 TCP 服务。事件：'progress'(transferId, bytesDelta)、'served'(transferId) */
+/** 发送侧 TCP 服务。事件：'progress'、'served'、'disconnected'(transferId) */
 export class TransferServer extends EventEmitter {
   private server: Server | null = null
   /** 活跃连接：stop 时强制销毁，避免 server.close 因残留 socket 挂起 */
   private readonly sockets = new Set<Socket>()
   private readonly limits: TransferServerLimits
   private readonly pendingStreamStarts: PendingStreamStart[] = []
+  /** 已通过 pull 授权且连接尚未关闭的 transfer 计数，用于截止前已开始传输的宽限。 */
+  private readonly activeTransfers = new Map<string, number>()
   private activeStreamSlots = 0
   private pumpingStreamStarts = false
 
@@ -125,6 +127,10 @@ export class TransferServer extends EventEmitter {
         resolve()
       })
     })
+  }
+
+  isTransferActive(transferId: string): boolean {
+    return (this.activeTransfers.get(transferId) ?? 0) > 0
   }
 
   stop(): Promise<void> {
@@ -206,6 +212,13 @@ export class TransferServer extends EventEmitter {
     let waitingDrain = false
     /** wait 保活（决议 #211）：排队 / 哈希收尾期间周期告知对端「仍在处理」 */
     let waitTimer: ReturnType<typeof setInterval> | null = null
+    const socketTransfers = new Set<string>()
+
+    const trackTransfer = (transferId: string): void => {
+      if (socketTransfers.has(transferId)) return
+      socketTransfers.add(transferId)
+      this.activeTransfers.set(transferId, (this.activeTransfers.get(transferId) ?? 0) + 1)
+    }
 
     const send = (frame: TcpFrame): void => {
       socket.write(encodeFrame(frame))
@@ -264,6 +277,7 @@ export class TransferServer extends EventEmitter {
           send({ type: 'err', reason: 'bad-offset' })
           return
         }
+        trackTransfer(pull.transferId)
         busy = true
         const wantsWait = this.lookup.supportsWait?.(pull.from) === true
         const job = this.enqueueStreamStart(socket, () => {
@@ -375,6 +389,15 @@ export class TransferServer extends EventEmitter {
         streamJob = null
       }
       for (const stream of activeStreams.splice(0)) stream.destroy()
+      for (const transferId of socketTransfers) {
+        const left = Math.max(0, (this.activeTransfers.get(transferId) ?? 1) - 1)
+        if (left > 0) {
+          this.activeTransfers.set(transferId, left)
+        } else {
+          this.activeTransfers.delete(transferId)
+          this.emit('disconnected', transferId)
+        }
+      }
       busy = false
     })
   }

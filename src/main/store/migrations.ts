@@ -172,6 +172,18 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   `
   ALTER TABLE peers ADD COLUMN avatar_hash TEXT NOT NULL DEFAULT '';
   ALTER TABLE groups ADD COLUMN avatar_hash TEXT NOT NULL DEFAULT '';
+  `,
+
+  // v13：普通文件 24 小时领取期限与可重启恢复的出站源清单（决议 #263）
+  `
+  ALTER TABLE transfers ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX idx_transfers_expiry ON transfers(expires_at, status);
+
+  CREATE TABLE outgoing_file_manifests (
+    msg_id     TEXT PRIMARY KEY,
+    files      TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
   `
 ]
 

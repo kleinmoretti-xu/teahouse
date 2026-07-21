@@ -8,6 +8,7 @@ import {
   TABLE_TEXT_LIMIT_BYTES,
   UDP_MAX_INBOUND,
   type AvatarPayload,
+  type FileCtlOffer,
   type FileCtlPayload,
   type GroupPayload,
   type MsgPayload,
@@ -432,6 +433,38 @@ describe('codec', () => {
       ok: false,
       reason: 'bad-payload:file-ctl'
     })
+  })
+
+  it('file-ctl 普通文件接受领取截止时间，并拒绝媒体通道或非法时间携带', () => {
+    const base: FileCtlOffer = {
+      op: 'offer',
+      transferId: 'transfer-expiry',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'file-1', path: 'a.zip', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: 'a.zip'
+    }
+    const ordinary = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-aaaa', {
+      ...base,
+      expiresAt: Date.now() + 86_400_000
+    })
+    expect(decode(encode(ordinary))).toMatchObject({ ok: true, known: true })
+
+    const legacy = makeEnvelope<FileCtlPayload>(MSG_TYPES.fileCtl, 'node-aaaa', base)
+    expect(decode(encode(legacy))).toMatchObject({ ok: true, known: true })
+
+    for (const payload of [
+      { ...base, expiresAt: 0 },
+      { ...base, expiresAt: 1.5 },
+      { ...base, expiresAt: Number.MAX_SAFE_INTEGER + 1 },
+      { ...base, expiresAt: Date.now() + 86_400_000, purpose: 'image' }
+    ]) {
+      expect(
+        decode(encode(makeEnvelope(MSG_TYPES.fileCtl, 'node-aaaa', payload)))
+      ).toEqual({ ok: false, reason: 'bad-payload:file-ctl' })
+    }
   })
 
   it('file-ctl 媒体 offer 接受受控 msgId，并拒绝非法 msgId', () => {

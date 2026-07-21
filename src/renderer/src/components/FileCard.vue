@@ -19,6 +19,7 @@ interface TransferStats {
   done: number
   failed: number
   canceled: number
+  expired: number
   active: boolean
   receivedNames: string[]
 }
@@ -44,6 +45,7 @@ const transferStats = computed<TransferStats>(() => {
     done: 0,
     failed: 0,
     canceled: 0,
+    expired: 0,
     active: false,
     receivedNames: []
   }
@@ -55,6 +57,8 @@ const transferStats = computed<TransferStats>(() => {
       stats.failed += 1
     } else if (t.status === 'canceled') {
       stats.canceled += 1
+    } else if (t.status === 'expired') {
+      stats.expired += 1
     } else if (t.status === 'offering' || t.status === 'accepted') {
       stats.active = true
     }
@@ -111,9 +115,10 @@ const stateChipText = computed(() => {
 const statusText = computed(() => {
   if (multiOut.value) {
     const total = transferIds.value.length
-    const { done, failed, canceled } = transferStats.value
+    const { done, failed, canceled, expired, active } = transferStats.value
     if (props.msg.status === 'canceled') return '发送取消'
     if (done === total) return '已全部送达'
+    if (expired > 0 && !active) return '发送已到期'
     if (failed === total && total > 0) return '传输失败'
     if (failed + canceled > 0) return `${failed + canceled} 位未完成`
     return `等待 ${total} 位成员接收`
@@ -127,6 +132,8 @@ const statusText = computed(() => {
       return t.direction === 'out' ? '对方已拒收' : '已拒收'
     case 'canceled':
       return t.direction === 'out' && props.msg.status === 'canceled' ? '发送取消' : '已取消'
+    case 'expired':
+      return t.direction === 'out' ? '发送已到期' : '文件已过期'
     default:
       return directFile.value ? '直接发送失败' : '传输失败'
   }

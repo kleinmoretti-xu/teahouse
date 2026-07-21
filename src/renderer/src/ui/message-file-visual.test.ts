@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const messageSource = readFileSync(new URL('../components/MessageRow.vue', import.meta.url), 'utf8')
 const fileCardSource = readFileSync(new URL('../components/FileCard.vue', import.meta.url), 'utf8')
 const fileIconSource = readFileSync(new URL('../components/FileTypeIcon.vue', import.meta.url), 'utf8')
+const settingsSource = readFileSync(new URL('../SettingsApp.vue', import.meta.url), 'utf8')
 
 function ruleBody(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -41,6 +42,12 @@ describe('消息与文件视觉统一', () => {
     expect(messageSource).toContain("v-else-if=\"props.msg.status === 'canceled'\"")
     expect(messageSource).toContain('title="发送取消"')
     expect(ruleBody(messageSource, '.status .canceled')).toContain('color: var(--text-3)')
+  })
+
+  it('普通文件到期按收发方向显示独立提示', () => {
+    expect(fileCardSource).toContain("t.direction === 'out' ? '发送已到期' : '文件已过期'")
+    expect(fileCardSource).toContain("if (expired > 0 && !active) return '发送已到期'")
+    expect(settingsSource).toContain("view.direction === 'out' ? '发送已到期' : '文件已过期'")
   })
 
   it('文件类型 atlas 是 512 RGBA PNG', () => {

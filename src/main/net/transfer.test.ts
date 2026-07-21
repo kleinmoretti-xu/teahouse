@@ -216,6 +216,42 @@ async function startServer(
 }
 
 describe('transfer 数据面回环', () => {
+  it('记录已通过 pull 授权的活动 transfer，并在连接断开时清除', async () => {
+    nextPort += 1
+    const held = new HeldReadable()
+    const server = new TransferServer(
+      nextPort,
+      {
+        resolve: (transferId, fileId) =>
+          transferId === 't-active' && fileId === 'f-active'
+            ? { fileId, absPath: '/virtual/active', size: 1 }
+            : null
+      },
+      '127.0.0.1',
+      () => held as unknown as ReturnType<ReadStreamFactory>
+    )
+    const disconnected: string[] = []
+    server.on('disconnected', (transferId) => disconnected.push(transferId as string))
+    await server.start()
+    servers.push(server)
+
+    const socket = await connectSocket(nextPort)
+    expect(server.isTransferActive('t-active')).toBe(false)
+    socket.write(
+      encodeFrame({
+        type: 'pull',
+        from: 'receiver',
+        transferId: 't-active',
+        fileId: 'f-active',
+        offset: 0
+      })
+    )
+    await waitFor(() => server.isTransferActive('t-active'))
+    socket.destroy()
+    await waitFor(() => !server.isTransferActive('t-active'))
+    expect(disconnected).toEqual(['t-active'])
+  })
+
   it('发送端最多同时打开 3 条数据读流，第四条授权拉取按 FIFO 等待', async () => {
     nextPort += 1
     const held: HeldReadable[] = []

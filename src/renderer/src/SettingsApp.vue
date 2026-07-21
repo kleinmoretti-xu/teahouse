@@ -677,16 +677,17 @@ async function revealTransfer(transferId: string): Promise<void> {
   await window.pantry.revealTransfer(transferId)
 }
 
-function transferStatusLabel(status: TransferView['status']): string {
+function transferStatusLabel(view: TransferView): string {
   const map: Record<TransferView['status'], string> = {
     offering: '等待',
     accepted: '传输中',
     done: '完成',
     declined: '已拒收',
     canceled: '已取消',
-    failed: '失败'
+    failed: '失败',
+    expired: view.direction === 'out' ? '发送已到期' : '文件已过期'
   }
-  return map[status]
+  return map[view.status]
 }
 
 function transferMeta(view: TransferView): string {
@@ -1171,7 +1172,7 @@ async function confirmRemove(cidr: string): Promise<void> {
               <li v-for="t in transfers" :key="t.transferId">
                 <div>
                   <strong>{{ t.name }}</strong>
-                  <small>{{ transferStatusLabel(t.status) }} · {{ transferMeta(t) }}</small>
+                  <small>{{ transferStatusLabel(t) }} · {{ transferMeta(t) }}</small>
                 </div>
                 <NButton
                   secondary

@@ -108,6 +108,7 @@ interface TransferDump {
   bytesDone: number
   total: number
   ts: number
+  expiresAt?: number
   archivePath?: string
 }
 
@@ -341,7 +342,8 @@ export class PorterService {
     const rows = this.db
       .prepare(
         `SELECT transfer_id AS transferId, msg_id AS msgId, peer_id AS peerId,
-                direction, files, status, bytes_done AS bytesDone, total, ts
+                direction, files, status, bytes_done AS bytesDone, total, ts,
+                expires_at AS expiresAt
          FROM transfers ORDER BY ts ASC`
       )
       .all() as TransferDump[]
@@ -434,8 +436,8 @@ export class PorterService {
       ),
       transferInsert: this.db.prepare(
         `INSERT OR IGNORE INTO transfers
-         (transfer_id, msg_id, peer_id, direction, files, status, bytes_done, total, ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (transfer_id, msg_id, peer_id, direction, files, status, bytes_done, total, ts, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ),
       stickerInsert: this.db.prepare(
         `INSERT OR IGNORE INTO stickers (id, path, w, h, animated, sort, added)
@@ -529,7 +531,8 @@ export class PorterService {
       normalizeTransferStatus(transfer.status),
       clampInt(transfer.bytesDone, 0),
       clampInt(transfer.total, 0),
-      clampInt(transfer.ts, Date.now())
+      clampInt(transfer.ts, Date.now()),
+      clampInt(transfer.expiresAt, 0)
     )
   }
 
@@ -712,7 +715,8 @@ function normalizeTransferStatus(status: string): string {
     status === 'done' ||
     status === 'declined' ||
     status === 'canceled' ||
-    status === 'failed'
+    status === 'failed' ||
+    status === 'expired'
     ? status
     : 'done'
 }

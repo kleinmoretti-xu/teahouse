@@ -70,7 +70,7 @@ try {
   console.log(`[db-selftest] runtime node=${process.versions.node} abi=${process.versions.modules}`)
 
   // 1. 迁移就位
-  assert.equal(db.pragma('user_version', { simple: true }), 12, '迁移版本应为 12')
+  assert.equal(db.pragma('user_version', { simple: true }), 13, '迁移版本应为 13')
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal', '应为 WAL 模式')
   const messageIndexes = new Set(
     (
@@ -81,6 +81,14 @@ try {
   )
   assert.equal(messageIndexes.has('idx_messages_seq'), true, 'messages(seq) 索引应存在')
   assert.equal(messageIndexes.has('idx_messages_conv_seq'), true, 'messages(conv_id, seq) 索引应存在')
+  const transferIndexes = new Set(
+    (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transfers'").all() as Array<{
+        name: string
+      }>
+    ).map((row) => row.name)
+  )
+  assert.equal(transferIndexes.has('idx_transfers_expiry'), true, '传输截止时间索引应存在')
 
   const legacyDbPath = join(dir, 'legacy-v10.db')
   const legacyDb = new Database(legacyDbPath)
@@ -104,7 +112,7 @@ try {
     ''
   )
   applyMigrations(legacyDb)
-  assert.equal(legacyDb.pragma('user_version', { simple: true }), 12, 'v10 数据库应迁移至 v12')
+  assert.equal(legacyDb.pragma('user_version', { simple: true }), 13, 'v10 数据库应迁移至 v13')
   const migratedGroup = new GroupRepo(legacyDb).get('g-v10')
   assert.equal(migratedGroup?.ownerId, 'node-creator', '旧群优先以仍在群内的创建者作为群主')
   assert.deepEqual(migratedGroup?.adminIds, [], '旧群管理员默认应为空')
@@ -114,12 +122,33 @@ try {
   for (let index = 0; index < 11; index += 1) legacyV11.exec(MIGRATIONS[index])
   legacyV11.pragma('user_version = 11')
   applyMigrations(legacyV11)
-  assert.equal(legacyV11.pragma('user_version', { simple: true }), 12, 'v11 数据库应迁移至 v12')
+  assert.equal(legacyV11.pragma('user_version', { simple: true }), 13, 'v11 数据库应迁移至 v13')
   const peerColumns = legacyV11.pragma('table_info(peers)') as Array<{ name: string }>
   const groupColumns = legacyV11.pragma('table_info(groups)') as Array<{ name: string }>
   assert.equal(peerColumns.some((column) => column.name === 'avatar_hash'), true)
   assert.equal(groupColumns.some((column) => column.name === 'avatar_hash'), true)
   legacyV11.close()
+
+  const legacyV12 = new Database(join(dir, 'legacy-v12.db'))
+  for (let index = 0; index < 12; index += 1) legacyV12.exec(MIGRATIONS[index])
+  legacyV12.pragma('user_version = 12')
+  legacyV12.prepare(
+    `INSERT INTO transfers
+     (transfer_id, msg_id, peer_id, direction, files, status, bytes_done, total, ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run('legacy-transfer', 'legacy-message', 'node-bob', 'out', '{}', 'offering', 0, 10, 1)
+  applyMigrations(legacyV12)
+  assert.equal(legacyV12.pragma('user_version', { simple: true }), 13, 'v12 数据库应迁移至 v13')
+  const legacyTransfer = legacyV12
+    .prepare('SELECT expires_at FROM transfers WHERE transfer_id = ?')
+    .get('legacy-transfer') as { expires_at: number }
+  assert.equal(legacyTransfer.expires_at, 0, '旧传输默认无可恢复领取期限')
+  assert.equal(
+    (legacyV12.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='outgoing_file_manifests'").get() as { name?: string } | undefined)?.name,
+    'outgoing_file_manifests',
+    'v13 应创建出站源文件清单表'
+  )
+  legacyV12.close()
 
   // 2. 联系人 upsert / 载入往返
   const repo = new PeersRepo(db)
@@ -317,7 +346,8 @@ try {
     files: '{"name":"设计稿.zip"}',
     status: 'offering',
     total: 1024,
-    ts: Date.now()
+    ts: Date.now(),
+    expiresAt: Date.now() + 86_400_000
   })
   transferRepo.updateStatus('t-1', 'accepted')
   transferRepo.updateProgress('t-1', 512)
@@ -326,8 +356,33 @@ try {
   assert.equal(t?.status, 'accepted')
   assert.equal(t?.bytes_done, 512)
   assert.ok(t?.files.includes('savedPath'))
-  assert.equal(transferRepo.resetActive(), 1, '残留进行中传输启动置失败')
-  assert.equal(transferRepo.get('t-1')?.status, 'failed')
+  assert.equal(transferRepo.listRecoverable().some((row) => row.transfer_id === 't-1'), true)
+  assert.equal(transferRepo.resetLegacyActive(), 0, '带领取期限的活动传输保留给服务层恢复')
+  transferRepo.saveOutgoingManifest(
+    'm-1',
+    JSON.stringify([{ fileId: 'f-1', absPath: '/tmp/design.zip', size: 1024 }]),
+    transferRepo.get('t-1')!.expires_at
+  )
+  assert.equal(transferRepo.getOutgoingManifest('m-1')?.msg_id, 'm-1')
+  assert.equal(transferRepo.listOutgoingManifests().length, 1)
+  transferRepo.deleteOutgoingManifest('m-1')
+  assert.equal(transferRepo.getOutgoingManifest('m-1'), undefined)
+  transferRepo.updateStatus('t-1', 'done')
+  transferRepo.clearExpiry('t-1')
+  assert.equal(transferRepo.get('t-1')?.expires_at, 0, '终态传输应释放截止调度')
+
+  transferRepo.insert({
+    transferId: 't-legacy',
+    msgId: 'm-1',
+    peerId: 'node-bob',
+    direction: 'out',
+    files: '{}',
+    status: 'offering',
+    total: 1,
+    ts: Date.now()
+  })
+  assert.equal(transferRepo.resetLegacyActive(), 1, '无期限旧活动传输启动置失败')
+  assert.equal(transferRepo.get('t-legacy')?.status, 'failed')
 
   // 9. 全局搜索：聊天记录聚合 + 文件命中 + 上下文窗口
   const registry = new PeerRegistry('node-self')
