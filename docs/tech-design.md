@@ -147,6 +147,12 @@ src/
 
 截图几何与渲染性能（决议 #221）：`capture-geometry.ts` 以 `display.bounds`、`display.workArea` 与 `desktopCapturer` 返回的实际 `thumbnail.getSize()` 计算窗口边界和物理像素裁剪矩形。Windows 使用工作区边界，兼容底部、顶部、左侧或右侧任务栏及 125% 等 DPI；其他平台保持整屏边界。主进程先裁剪 `NativeImage` 再注入截图窗，截图窗收到 `capture:ready` 前保持隐藏，renderer 完成图片解码与首帧布局后才显示 / 聚焦；`backgroundThrottling=false` 只用于保证隐藏截图窗及时完成该准备阶段。`CaptureApp` 只渲染一份 `<img>` 桌面层，选区高亮通过四块纯色遮罩形成，`mousemove` 以 `requestAnimationFrame` 合并；最终裁剪使用 `naturalWidth / viewportWidth` 与 `naturalHeight / viewportHeight` 两个独立比例，标注坐标同步按 X/Y 映射。该链路不引入透明窗口、实时 backdrop blur 或远程资源，继续适配 Win7 禁硬件加速基线。
 
+截图文字输入（决议 #265）：Electron 22 的 JavaScript dialog manager 不承载 `prompt` 输入，`CaptureApp` 禁止再调用 `window.prompt()`。文字工具在 renderer 内维护单个 `{x,y,value}` 待提交状态，使用截图层 DOM `<input>` 接收系统输入法，`nextTick` 后自动聚焦；编辑器位置由纯函数按视口 8px 边距夹紧，标注锚点仍使用选区相对坐标。输入期间停止事件冒泡，Enter 仅在 `composition` 已结束且 `keyCode !== 229` 时提交，Esc 清除待提交状态；工具切换、发送和复制同步收口非空文字。Canvas 输出设置 `textBaseline='top'` 与 700 字重，对齐 DOM 预览。实现不新增窗口、IPC、依赖或平台分支。
+
+截图工具条图标（决议 #266）：`CaptureApp` 直接复用 renderer 的 `PantryIcon.vue`，新增 `capture-select`、`capture-rect`、`capture-arrow`、`capture-mosaic` 四个线性路径，发送、文字、复制、取消复用既有图形；SVG 通过 `currentColor` 继承按钮状态，保持 Win7 / Chrome 108 可用。按钮正文只包含图标，中文语义由提示和 `aria-label` 承载，工具选中状态使用 `aria-pressed`；CSS 统一 30px 正方形命中区和 hover / active / focus-visible 状态。实现不引入图标依赖、远程资源、IPC 或平台分支。
+
+截图按钮提示（决议 #267）：按钮通过 `data-tooltip` 提供中文提示文案，`::after` 绘制气泡、`::before` 绘制方向箭头，悬停与 `focus-visible` 只切换 opacity / transform / visibility，不触发布局回流。`toolbarTooltipBelow` 根据既有工具条定位结果判断 `top < 48`，通过 `.tooltip-below` 翻转提示方向；移除原生 `title` 以防双层提示，保留 `aria-label` / `aria-pressed`。实现仅使用 Chrome 108 支持的属性选择、伪元素和 transition，不新增 DOM 浮层、依赖、IPC 或平台分支。
+
 远期预留（决议 #21）：将来的本地 AI 开放接口（`local-api/`，HTTP/WS 或 MCP 服务器）将作为与 `ipc/` **并列的第二个"前台"**，复用同一 `services/` 层——界面能做的（查消息、发消息、订阅事件），接口天然也能做，不需要改动业务层。当前版本不实现，但任何人不得把业务逻辑写进 `ipc/` 层（会堵死这个口子）。
 
 ## 4. IPC 契约（摘要）
@@ -333,6 +339,10 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 | v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
 
 ## 13. 变更记录
+
+- 2026-07-21 v1.58 决议 #265：截图文字工具移除 Electron 22 不支持的 `window.prompt()`，改用 renderer 内原地 DOM 输入框；纯函数负责视口夹紧与 composition 提交判定，Canvas 统一左上基线。协议 v0.49、SQLite v13、IPC 与依赖不变，版本 **0.45.1 → 0.45.2**。
+- 2026-07-21 v1.59 决议 #266：截图工具条功能按钮统一接入本地 `PantryIcon` 线性 SVG，补四个截图专用图标并复用既有发送、文字、复制、取消图形；按钮保留 `title` / `aria-label` / `aria-pressed`。协议 v0.49、SQLite v13、IPC 与依赖不变，版本 **0.45.2 → 0.45.3**。
+- 2026-07-21 v1.60 决议 #267：截图工具条八个按钮使用 CSS 伪元素提供自定义中文提示，支持悬停延迟、键盘聚焦和视口顶部自动翻向；移除原生 `title`，保留无障碍状态。协议 v0.49、SQLite v13、IPC 与依赖不变，版本 **0.45.3 → 0.45.4**。
 
 - 2026-06-10 v0.1 初稿：选型总表（TS/electron-vite/Vue3/better-sqlite3/canvas 图片管线/builder24）、进程窗口模型、目录与分层、IPC 契约、库表与中文 FTS 方案、数据目录与迁移、备份包格式与身份映射、风险对策表、CI 与测试、里程碑。
 - 2026-06-10 v0.2 决议 #20（不支持 32 位）：Windows 仅 x64 产物，构建/CI 矩阵相应缩减；原 ia32 内存风险项改写为通用大文件/大图内存防护。

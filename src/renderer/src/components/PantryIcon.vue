@@ -72,7 +72,7 @@ withDefaults(
       <path d="M12 5.5v13" />
       <path d="M5.5 12h13" />
     </g>
-    <g v-else-if="name === 'send-many'">
+    <g v-else-if="name === 'send-many' || name === 'send'">
       <path d="M4.5 17.5 19 5.5l-4.2 13-3.4-5.1-5.8-1.3Z" />
       <path d="m11.4 13.4 3.6-3.6" />
     </g>
@@ -123,6 +123,22 @@ withDefaults(
       <circle cx="6.6" cy="16.8" r="2.1" />
       <path d="M8.5 8.2 18 17" />
       <path d="M8.5 15.8 18 7" />
+    </g>
+    <g v-else-if="name === 'capture-select'">
+      <path d="m6.2 4.8 11.5 8.1-5.2 1.1-2.8 4.8-3.5-14Z" />
+    </g>
+    <g v-else-if="name === 'capture-rect'">
+      <rect x="5.2" y="5.2" width="13.6" height="13.6" rx="1.4" />
+    </g>
+    <g v-else-if="name === 'capture-arrow'">
+      <path d="M5.5 18.5 18.5 5.5" />
+      <path d="M11.5 5.5h7v7" />
+    </g>
+    <g v-else-if="name === 'capture-mosaic'">
+      <rect x="4.8" y="4.8" width="5.8" height="5.8" rx=".7" />
+      <rect x="13.4" y="4.8" width="5.8" height="5.8" rx=".7" />
+      <rect x="4.8" y="13.4" width="5.8" height="5.8" rx=".7" />
+      <rect x="13.4" y="13.4" width="5.8" height="5.8" rx=".7" />
     </g>
     <g v-else-if="name === 'image'">
       <rect x="4.5" y="5.5" width="15" height="13" rx="2" />

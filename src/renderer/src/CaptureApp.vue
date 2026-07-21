@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import PantryIcon from './components/PantryIcon.vue'
 import { mapCaptureRectToImage } from './utils/capture-crop'
+import {
+  CAPTURE_TEXT_MAX_LENGTH,
+  normalizeCaptureText,
+  placeCaptureTextEditor,
+  shouldCommitCaptureText
+} from './utils/capture-text'
 import { placeCaptureToolbar } from './utils/capture-toolbar'
 
 // 截图框选窗（F-CAP-1）：屏幕图像做背景 → 拖拽框选 → 发送/复制/取消。
@@ -24,6 +31,7 @@ const toolbarPosition = computed(() => {
     viewportSize.value
   )
 })
+const toolbarTooltipBelow = computed(() => toolbarPosition.value.top < 48)
 type Tool = 'select' | 'rect' | 'arrow' | 'text' | 'mosaic'
 interface Annotation {
   type: Exclude<Tool, 'select'>
@@ -36,6 +44,31 @@ interface Annotation {
 const tool = ref<Tool>('select')
 const annotations = ref<Annotation[]>([])
 const drawingAnnotation = ref<number | null>(null)
+interface PendingText {
+  x: number
+  y: number
+  value: string
+}
+const textEditorEl = ref<HTMLInputElement | null>(null)
+const pendingText = ref<PendingText | null>(null)
+const textComposing = ref(false)
+const textEditorStyle = computed(() => {
+  const current = rect.value
+  const pending = pendingText.value
+  if (!current || !pending) return {}
+  const width = Math.min(260, Math.max(1, viewportSize.value.width - 16))
+  const height = 34
+  const position = placeCaptureTextEditor(
+    { x: current.x + pending.x, y: current.y + pending.y },
+    { width, height },
+    viewportSize.value
+  )
+  return {
+    left: `${position.x}px`,
+    top: `${position.y}px`,
+    width: `${width}px`
+  }
+})
 
 let unsubscribe: (() => void) | null = null
 let objectUrl = ''
@@ -84,6 +117,8 @@ async function prepareSnapshot(pngBytes: ArrayBuffer): Promise<void> {
   rect.value = null
   annotations.value = []
   tool.value = 'select'
+  pendingText.value = null
+  textComposing.value = false
   await nextTick()
   await waitForPaint()
   if (!unmounted && generation === snapshotGeneration) await window.pantry.captureReady()
@@ -119,6 +154,16 @@ function refreshToolbarLayout(): void {
 }
 
 function onKey(event: KeyboardEvent): void {
+  if (pendingText.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelPendingText()
+    } else if (shouldCommitCaptureText(event, textComposing.value)) {
+      event.preventDefault()
+      commitPendingText()
+    }
+    return
+  }
   if (event.key === 'Escape') {
     cancel()
   } else if (event.key === 'Enter' && rect.value) {
@@ -132,6 +177,7 @@ function onMouseDown(event: MouseEvent): void {
     startAnnotation(event)
     return
   }
+  cancelPendingText()
   dragging.value = true
   startX.value = event.clientX
   startY.value = event.clientY
@@ -200,6 +246,7 @@ function cancel(): void {
 }
 
 async function confirm(send: boolean): Promise<void> {
+  commitPendingText()
   const r = rect.value
   const img = snapshotEl.value
   if (!r || !img || img.naturalWidth <= 0 || img.naturalHeight <= 0) return
@@ -236,6 +283,11 @@ function inSelection(x: number, y: number): boolean {
   return !!r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
 }
 
+function setTool(nextTool: Tool): void {
+  commitPendingText()
+  tool.value = nextTool
+}
+
 function startAnnotation(event: MouseEvent): void {
   const r = rect.value
   if (!r) return
@@ -244,13 +296,59 @@ function startAnnotation(event: MouseEvent): void {
   const x = event.clientX - r.x
   const y = event.clientY - r.y
   if (activeTool === 'text') {
-    const text = window.prompt('输入标注文字')?.trim()
-    if (text) annotations.value.push({ type: 'text', x, y, w: 0, h: 0, text: text.slice(0, 80) })
+    void beginTextAnnotation(x, y)
     return
   }
   const ann: Annotation = { type: activeTool, x, y, w: 0, h: 0 }
   annotations.value.push(ann)
   drawingAnnotation.value = annotations.value.length - 1
+}
+
+async function beginTextAnnotation(x: number, y: number): Promise<void> {
+  commitPendingText()
+  pendingText.value = { x, y, value: '' }
+  textComposing.value = false
+  await nextTick()
+  textEditorEl.value?.focus({ preventScroll: true })
+}
+
+function onTextInput(event: Event): void {
+  const pending = pendingText.value
+  if (!pending) return
+  pending.value = (event.target as HTMLInputElement).value.slice(0, CAPTURE_TEXT_MAX_LENGTH)
+}
+
+function onTextEditorKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    cancelPendingText()
+    return
+  }
+  if (!shouldCommitCaptureText(event, textComposing.value)) return
+  event.preventDefault()
+  commitPendingText()
+}
+
+function onTextCompositionStart(): void {
+  textComposing.value = true
+}
+
+function onTextCompositionEnd(): void {
+  textComposing.value = false
+}
+
+function commitPendingText(): void {
+  const pending = pendingText.value
+  if (!pending) return
+  const text = normalizeCaptureText(pending.value)
+  pendingText.value = null
+  textComposing.value = false
+  if (text) annotations.value.push({ type: 'text', x: pending.x, y: pending.y, w: 0, h: 0, text })
+}
+
+function cancelPendingText(): void {
+  pendingText.value = null
+  textComposing.value = false
 }
 
 function norm(ann: Annotation): { x: number; y: number; w: number; h: number } {
@@ -285,6 +383,7 @@ function drawAnnotations(ctx: CanvasRenderingContext2D, scaleX: number, scaleY: 
   ctx.lineWidth = Math.max(2, 3 * strokeScale)
   ctx.strokeStyle = '#3d8b6b'
   ctx.fillStyle = '#3d8b6b'
+  ctx.textBaseline = 'top'
   for (const ann of annotations.value) {
     if (ann.type === 'rect') {
       const n = norm(ann)
@@ -299,7 +398,7 @@ function drawAnnotations(ctx: CanvasRenderingContext2D, scaleX: number, scaleY: 
         strokeScale
       )
     } else if (ann.type === 'text' && ann.text) {
-      ctx.font = `${Math.round(18 * scaleY)}px sans-serif`
+      ctx.font = `700 ${Math.round(18 * scaleY)}px sans-serif`
       ctx.fillText(ann.text, ann.x * scaleX, ann.y * scaleY)
     } else if (ann.type === 'mosaic') {
       drawMosaic(ctx, norm(ann), scaleX, scaleY)
@@ -403,10 +502,30 @@ function drawMosaic(
           <span v-if="ann.type === 'text'">{{ ann.text }}</span>
         </div>
       </div>
+      <input
+        v-if="pendingText"
+        ref="textEditorEl"
+        class="text-editor"
+        type="text"
+        aria-label="输入标注文字"
+        autocomplete="off"
+        :maxlength="CAPTURE_TEXT_MAX_LENGTH"
+        :style="textEditorStyle"
+        :value="pendingText.value"
+        @input="onTextInput"
+        @keydown.stop="onTextEditorKeydown"
+        @compositionstart="onTextCompositionStart"
+        @compositionend="onTextCompositionEnd"
+        @mousedown.stop
+        @mousemove.stop
+        @mouseup.stop
+        @click.stop
+      />
       <div
         v-if="!dragging"
         ref="barEl"
         class="bar"
+        :class="{ 'tooltip-below': toolbarTooltipBelow }"
         :style="{
           left: `${toolbarPosition.left}px`,
           top: `${toolbarPosition.top}px`
@@ -414,24 +533,89 @@ function drawMosaic(
         @mousedown.stop
       >
         <span class="size">{{ Math.round(rect.w) }} × {{ Math.round(rect.h) }}</span>
-        <button class="btn tool" :class="{ on: tool === 'select' }" @click="tool = 'select'">
-          选择
+        <button
+          type="button"
+          class="btn tool"
+          :class="{ on: tool === 'select' }"
+          data-tooltip="重新框选"
+          aria-label="重新框选"
+          :aria-pressed="tool === 'select'"
+          @click="setTool('select')"
+        >
+          <PantryIcon name="capture-select" :size="17" />
         </button>
-        <button class="btn tool" :class="{ on: tool === 'rect' }" @click="tool = 'rect'">
-          矩形
+        <button
+          type="button"
+          class="btn tool"
+          :class="{ on: tool === 'rect' }"
+          data-tooltip="矩形"
+          aria-label="矩形"
+          :aria-pressed="tool === 'rect'"
+          @click="setTool('rect')"
+        >
+          <PantryIcon name="capture-rect" :size="17" />
         </button>
-        <button class="btn tool" :class="{ on: tool === 'arrow' }" @click="tool = 'arrow'">
-          箭头
+        <button
+          type="button"
+          class="btn tool"
+          :class="{ on: tool === 'arrow' }"
+          data-tooltip="箭头"
+          aria-label="箭头"
+          :aria-pressed="tool === 'arrow'"
+          @click="setTool('arrow')"
+        >
+          <PantryIcon name="capture-arrow" :size="17" />
         </button>
-        <button class="btn tool" :class="{ on: tool === 'text' }" @click="tool = 'text'">
-          文字
+        <button
+          type="button"
+          class="btn tool"
+          :class="{ on: tool === 'text' }"
+          data-tooltip="文字"
+          aria-label="文字"
+          :aria-pressed="tool === 'text'"
+          @click="setTool('text')"
+        >
+          <PantryIcon name="text-select" :size="17" />
         </button>
-        <button class="btn tool" :class="{ on: tool === 'mosaic' }" @click="tool = 'mosaic'">
-          马赛克
+        <button
+          type="button"
+          class="btn tool"
+          :class="{ on: tool === 'mosaic' }"
+          data-tooltip="马赛克"
+          aria-label="马赛克"
+          :aria-pressed="tool === 'mosaic'"
+          @click="setTool('mosaic')"
+        >
+          <PantryIcon name="capture-mosaic" :size="17" />
         </button>
-        <button class="btn primary" @click="confirm(true)">发送</button>
-        <button class="btn" @click="confirm(false)">复制</button>
-        <button class="btn" @click="cancel">取消</button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="btn primary"
+          data-tooltip="发送"
+          aria-label="发送"
+          @click="confirm(true)"
+        >
+          <PantryIcon name="send" :size="17" />
+        </button>
+        <button
+          type="button"
+          class="btn"
+          data-tooltip="复制"
+          aria-label="复制"
+          @click="confirm(false)"
+        >
+          <PantryIcon name="copy" :size="17" />
+        </button>
+        <button
+          type="button"
+          class="btn cancel-btn"
+          data-tooltip="取消"
+          aria-label="取消"
+          @click="cancel"
+        >
+          <PantryIcon name="x" :size="17" />
+        </button>
       </div>
     </template>
     <div v-else class="hint">拖拽框选区域 · Esc 取消</div>
@@ -521,38 +705,155 @@ function drawMosaic(
   color: #3d8b6b;
   font-size: 18px;
   font-weight: 700;
+  line-height: 1.2;
+  white-space: pre;
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+}
+.text-editor {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  height: 34px;
+  border: 2px solid var(--primary);
+  border-radius: 5px;
+  outline: none;
+  padding: 4px 8px;
+  color: var(--text-1);
+  background: var(--material-strong);
+  box-shadow: var(--shadow-soft);
+  font: 700 18px/1.2 sans-serif;
+  caret-color: var(--primary);
+  cursor: text;
+  user-select: text;
+}
+.text-editor:focus {
+  box-shadow: 0 0 0 2px var(--primary-weak), var(--shadow-soft);
 }
 .bar {
   position: absolute;
+  z-index: 3;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   background: rgba(28, 28, 28, 0.92);
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 5px 7px;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
 }
 .size {
   color: #bbb;
   font-size: 12px;
-  margin-right: 4px;
+  margin: 0 3px 0 1px;
 }
 .btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
   border: none;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.14);
   color: #eee;
-  font-size: 12px;
-  padding: 5px 12px;
+  padding: 0;
   cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.btn::before,
+.btn::after {
+  position: absolute;
+  left: 50%;
+  z-index: 5;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 0s linear 120ms;
+}
+.btn::before {
+  content: '';
+  bottom: calc(100% + 3px);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid rgba(15, 18, 17, 0.96);
+}
+.btn::after {
+  content: attr(data-tooltip);
+  bottom: calc(100% + 8px);
+  padding: 5px 7px;
+  border-radius: 4px;
+  color: #fff;
+  background: rgba(15, 18, 17, 0.96);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+  font: 12px/1 sans-serif;
+  white-space: nowrap;
+}
+.btn:hover,
+.btn:focus-visible {
+  z-index: 4;
+}
+.btn:hover::before,
+.btn:hover::after,
+.btn:focus-visible::before,
+.btn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition-delay: 250ms;
+}
+.btn:focus-visible::before,
+.btn:focus-visible::after {
+  transition-delay: 0ms;
+}
+.bar.tooltip-below .btn::before {
+  top: calc(100% + 3px);
+  bottom: auto;
+  border-top: 0;
+  border-bottom: 5px solid rgba(15, 18, 17, 0.96);
+  transform: translate(-50%, -4px);
+}
+.bar.tooltip-below .btn::after {
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform: translate(-50%, -4px);
+}
+.bar.tooltip-below .btn:hover::before,
+.bar.tooltip-below .btn:hover::after,
+.bar.tooltip-below .btn:focus-visible::before,
+.bar.tooltip-below .btn:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.23);
+}
+.btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
 }
 .btn.primary {
   background: #3d8b6b;
   color: #fff;
 }
+.btn.primary:hover {
+  background: #327b5e;
+}
 .btn.tool.on {
   background: rgba(61, 139, 107, 0.85);
   color: #fff;
+}
+.btn.cancel-btn:hover {
+  background: rgba(213, 76, 76, 0.42);
+}
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.2);
 }
 .hint {
   position: absolute;
