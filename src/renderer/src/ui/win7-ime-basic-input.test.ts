@@ -55,10 +55,19 @@ describe('Win7 搜狗系统字体原子表情编辑器', () => {
     expect(editorSource).toContain('let composing = false')
     expect(editorSource).toContain('@compositionstart="onCompositionStart"')
     expect(editorSource).toContain('@compositionend="onCompositionEnd"')
+    expect(editorSource).toContain("emit('compositionstart')")
+    expect(editorSource).toContain("emit('compositionend')")
     expect(editorSource).toContain('if (composing || editorText() === value) return')
-    expect(chatPaneSource).toContain(
-      'if (props.win7ImeCompat && (event.isComposing || event.keyCode === 229)) return'
+    expect(chatPaneSource).toContain('const inputComposing = ref(false)')
+    expect(chatPaneSource.match(/@compositionstart="onInputCompositionStart"/g)).toHaveLength(2)
+    expect(chatPaneSource.match(/@compositionend="onInputCompositionEnd"/g)).toHaveLength(2)
+    const guard = chatPaneSource.indexOf(
+      'if (isImeCompositionKey(event, inputComposing.value)) return'
     )
+    expect(guard).toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(chatPaneSource.indexOf("if (event.key === '@'", guard))
+    expect(guard).toBeLessThan(chatPaneSource.indexOf("if (event.key !== 'Enter')", guard))
+    expect(chatPaneSource).not.toContain('props.win7ImeCompat && (event.isComposing')
   })
 
   it('纯文本粘贴归一换行，图片粘贴同步拦截浏览器默认嵌入', () => {

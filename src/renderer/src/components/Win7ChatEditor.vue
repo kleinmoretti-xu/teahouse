@@ -14,6 +14,8 @@ const emit = defineEmits<{
   keydown: [event: KeyboardEvent]
   paste: [event: ClipboardEvent]
   scroll: []
+  compositionstart: []
+  compositionend: []
 }>()
 
 const root = ref<HTMLDivElement | null>(null)
@@ -200,11 +202,13 @@ function replaceSelection(text: string): void {
 
 function onCompositionStart(): void {
   composing = true
+  emit('compositionstart')
 }
 
 function onCompositionEnd(): void {
   composing = false
   syncFromDom()
+  emit('compositionend')
 }
 
 function onPaste(event: ClipboardEvent): void {

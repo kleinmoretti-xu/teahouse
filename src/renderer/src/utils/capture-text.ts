@@ -1,3 +1,5 @@
+import { isImeCompositionKey, type ImeKeyEvent } from './ime'
+
 export interface CaptureTextPoint {
   x: number
   y: number
@@ -8,10 +10,8 @@ export interface CaptureTextSize {
   height: number
 }
 
-export interface CaptureTextKeyEvent {
+export interface CaptureTextKeyEvent extends ImeKeyEvent {
   key: string
-  isComposing: boolean
-  keyCode: number
 }
 
 export const CAPTURE_TEXT_MAX_LENGTH = 80
@@ -40,12 +40,7 @@ export function shouldCommitCaptureText(
   event: CaptureTextKeyEvent,
   compositionActive: boolean
 ): boolean {
-  return (
-    event.key === 'Enter' &&
-    !compositionActive &&
-    !event.isComposing &&
-    event.keyCode !== 229
-  )
+  return event.key === 'Enter' && !isImeCompositionKey(event, compositionActive)
 }
 
 export function normalizeCaptureText(value: string): string {

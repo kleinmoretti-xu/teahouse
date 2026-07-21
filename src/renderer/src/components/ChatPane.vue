@@ -15,6 +15,7 @@ import {
 } from '../utils/clipboard'
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
+import { isImeCompositionKey } from '../utils/ime'
 import { listTime } from '../utils/time'
 import {
   canRecallAt,
@@ -122,6 +123,7 @@ const scrollArea = ref<HTMLElement | null>(null)
 const msgsContent = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const win7EditorEl = ref<InstanceType<typeof Win7ChatEditor> | null>(null)
+const inputComposing = ref(false)
 const emojiScope = ref<HTMLElement | null>(null)
 const pkScope = ref<HTMLElement | null>(null)
 const peerProfileScope = ref<HTMLElement | null>(null)
@@ -1005,7 +1007,7 @@ async function sendPk(game: PkGame): Promise<void> {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (props.win7ImeCompat && (event.isComposing || event.keyCode === 229)) return
+  if (isImeCompositionKey(event, inputComposing.value)) return
   if (event.key === '@' && isGroup.value && canSend.value && mentionMembers.value.length > 0) {
     pendingMentionAt.value = inputSelectionRange().start
     showMentionPicker.value = true
@@ -1028,6 +1030,14 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     insertNewline()
   }
+}
+
+function onInputCompositionStart(): void {
+  inputComposing.value = true
+}
+
+function onInputCompositionEnd(): void {
+  inputComposing.value = false
 }
 
 function insertMention(nodeId: string): void {
@@ -1951,6 +1961,8 @@ async function onDrop(event: DragEvent): Promise<void> {
           @keydown="onKeydown"
           @paste="onPaste"
           @scroll="syncInputMirrorScroll"
+          @compositionstart="onInputCompositionStart"
+          @compositionend="onInputCompositionEnd"
         />
         <textarea
           v-else
@@ -1963,6 +1975,8 @@ async function onDrop(event: DragEvent): Promise<void> {
           @keydown="onKeydown"
           @paste="onPaste"
           @scroll="syncInputMirrorScroll"
+          @compositionstart="onInputCompositionStart"
+          @compositionend="onInputCompositionEnd"
         ></textarea>
       </div>
       <div class="input-bar">
