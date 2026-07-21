@@ -57,18 +57,19 @@
 > 当前补充：2026-07-16（**v0.44.9-beta.2 测试发布，决议 #259 Win7 基础 textarea A/B**）：`beta.1` 真机仍失败；交叉测试确认同一主窗口搜索框、独立设置窗口昵称输入和同机 Chrome 均正常，故障只出现在聊天自定义 textarea。已删除 #258 无效的 composition 几何脉冲；仅 Win7 聊天框改走基础 textarea，绕开 `PantryEmojiBlank`、Twemoji 镜像、透明背景和组合输入自定义处理，其他平台保持完整编辑体验。协议 v0.48、SQLite v12、IPC 与 #257 原生页面缩放保持。等待 Win7 搜狗真机判断“自定义编辑器样式链”与“Chromium 108 textarea 编辑路径”两个分支。
 > 当前补充：2026-07-16（**v0.44.9-beta.5 开发中，决议 #262 Win7 系统字体原子表情编辑器**）：`beta.4` 真机确认只恢复真实 textarea 的 `PantryEmojiBlank` 就会让搜狗候选窗再次退到窗口角落，#261 的 Win7 字体路径已撤销。Win7 改用微软雅黑系统字体 contenteditable，Twemoji 以 `1.3em` 不可拆原子节点直接参与原生 caret 布局；composition 期间不重建 DOM。其他平台编辑器、协议 v0.48、SQLite v12、IPC、依赖与原生页面缩放保持。
 > 当前补充：2026-07-21（**v0.45.0 开发中，决议 #263 普通文件 24 小时领取期限**）：私聊和群聊普通文件从发送时刻起统一保留 24 小时领取窗口，截止前已经开始的当前传输允许完成；逾期后发送端显示「发送已到期」、接收端显示「文件已过期」，关闭接收、继续与重新下载入口。协议 v0.49 增加 `expiresAt`，SQLite v13 持久化截止时间与共享出站源文件清单；图片、表情和更新包保持既有自动通道。
+> 当前补充：2026-07-21（**v0.45.1 发布修复，决议 #264 Windows CRLF 测试兼容**）：源码结构测试读取 Vue 文件后统一换行，消除 Windows checkout 的 CRLF 差异；产品行为、协议 v0.49、SQLite v13、依赖与网络均保持。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #263）→ [protocol.md](protocol.md)（主协议 v0.49）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #264）→ [protocol.md](protocol.md)（主协议 v0.49）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.45.0**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.45.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|

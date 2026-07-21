@@ -1,10 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
-const chatPaneSource = readFileSync(new URL('../components/ChatPane.vue', import.meta.url), 'utf8')
-const editorSource = readFileSync(new URL('../components/Win7ChatEditor.vue', import.meta.url), 'utf8')
-const compatEmojiSource = readFileSync(new URL('../components/CompatEmoji.vue', import.meta.url), 'utf8')
+function readSource(url: URL): string {
+  return readFileSync(url, 'utf8').replace(/\r\n?/g, '\n')
+}
+
+const appSource = readSource(new URL('../App.vue', import.meta.url))
+const chatPaneSource = readSource(new URL('../components/ChatPane.vue', import.meta.url))
+const editorSource = readSource(new URL('../components/Win7ChatEditor.vue', import.meta.url))
+const compatEmojiSource = readSource(new URL('../components/CompatEmoji.vue', import.meta.url))
 const oldCaretHelper = new URL('../utils/win7-ime-caret.ts', import.meta.url)
 
 describe('Win7 搜狗系统字体原子表情编辑器', () => {
