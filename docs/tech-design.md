@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v1.46；头像 miss 故障转移与裁剪缩放动态上限（决议 #249）；v0.44.0 开发中 |
-| 日期 | 2026-07-15 |
+| 状态 | v1.58；讨论组创建交互修复（决议 #269）；v0.45.6 开发中 |
+| 日期 | 2026-07-22 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -52,6 +52,7 @@ Naive UI 接入约束（决议 #215）：
 - 图片选择授权（决议 #235）：`file:pick` 继续只服务普通文件 / 文件夹；`img:pick` 固定使用 `openFile + multiSelections` 和 PNG/JPG/JPEG/GIF/WebP/BMP 对话框过滤器。主进程收到对话框结果后再次通过 `IMAGE_FILE_EXTENSIONS` 白名单过滤，再写入 `PathGrantStore`；renderer 的发送图片按钮只调用 `pickImages -> img:offer-path`，不接入普通文件发送分支。实际文件内容继续由决议 #234 的暂存后元数据门禁复核。
 - 文件主动取消终态（决议 #236）：`FilesService.cancel()` 只在本机存在 outgoing 上下文时把对应消息状态写为 `canceled`，接收侧取消不改消息状态；`finish()` 与 `applyMsgStatus()` 均保护本地主动取消，迟到的 offer ACK 失败、群发聚合结果和数据面异步失败无法覆盖。`MessageView.status` / `MsgRow.status` 扩展本地 `canceled` 联合类型，沿用 SQLite 文本列且无需迁移；线上消息与文件控制协议保持不变。renderer 结合 transfer 方向和消息终态区分“发送取消”与“已取消”。
 - 建群成员列表（决议 #237）：`GroupCreator` 通过纯 renderer CSS 把姓名与组织路径收敛到同一 flex 行；组织路径由本地 `PeerView.company/dept/team` 组合，空字段跳过，长文本只在 `.meta` 区域省略并保留 `title`。不新增计算缓存、组件库控件、IPC 或数据字段。
+- 建群提交稳定性（决议 #269）：`GroupCreator` 不把 Vue `ref` 内的响应式成员数组直接交给 preload；调用 `createGroup` 前复制为普通 `string[]`，满足 Electron 22 IPC 结构化克隆边界。提交状态以 `try/catch/finally` 收口，失败只投影行内错误，不记录组名、密码提示或成员内容；遮罩关闭记录 pointerdown 是否起于遮罩自身，并与最终 `click.self` 共同判定，提交期间所有关闭入口禁用。协议、preload API 与主进程 handler 不扩展。
 - 群成员批量邀请（决议 #242）：从 `GroupCreator` 抽取纯 renderer 的共享成员选择组件，统一多字段过滤、紧凑联系人行、跨搜索选择、已选标签与上限门禁；`GroupInviteDialog` 过滤当前群成员并把剩余名额作为可选上限，一次调用既有 `group:update invite`。弹窗通过 Teleport 挂到 `body`，沿用全局遮罩、焦点回收和 Esc 契约；协议、IPC、store 数据形状与数据库均不扩展。
 - 自定义头像（决议 #243/#246/#247/#248/#249）：renderer 共享 `AvatarCropDialog` 与纯函数裁剪几何，使用 Chrome 108 Canvas 将本地静态图片生成 192×192、≤32KiB WebP；裁剪拖动使用窗口级 `mousedown/mousemove/mouseup`，并在窗口失焦和卸载时统一结束。裁剪状态直接采用主进程已校验的 `source.width/height`，禁止从非响应式 DOM `naturalWidth/naturalHeight` 推导，避免解码前的 `0×0` 被 computed 缓存成无效裁剪矩形。输出阶段从原始字节创建 `ImageBitmap`，以位图作为 Canvas 绘制源；编码前读取 192×192 像素 Alpha，全部透明时拒绝保存，成功或失败都释放位图。主进程 `AvatarStore` 重新校验格式、尺寸、字节数和 SHA-256，原子写入 `userData/data/avatars`；已通过校验的哈希进入内存缓存，`has/resolvePath` 命中免重复读盘校验，prune 删除文件时同步失效，且 `.tmp` 只清理修改时间超过 1 分钟的陈旧残留、不与原子写入竞态（决议 #248）。资料保存拒绝声明受管缓存中不存在的新头像哈希，避免全网节点空请求循环。元数据只携带哈希，`AvatarService` 通过可靠 `avatar` 报文按需取图、校验、去重与重试；来源无法提供数据时经 `Messenger.sendBestEffort`（一次性 UDP 单发、不重试不等 ACK、不改在线状态）回 `miss`，请求方对群头像立即改试下一个未尝试的在线成员源、对用户头像结束本轮等待（决议 #249）；应用 ready 前把 `pantry-avatar` 登记为标准安全 scheme，`shared/avatar-url` 统一生成 `pantry-avatar://asset/<sha256>` 并严格解析固定短主机名与单段哈希路径，协议处理器只按合法哈希映射受管目录。用户头像以数字头像回退，群头像以现有群组图标回退；无第三方图片处理依赖、无外网请求。
 - 设置侧栏与个人信息卡（决议 #238）：`SettingsApp.vue` 侧栏只渲染分组导航，账号摘要 DOM 与专用样式删除，右侧账号资料编辑区保持。`App.vue` 继续以纯 CSS `:hover` 驱动个人信息卡：出现延迟为 120ms；`.avatar-wrap::after` 提供头像至卡片的透明命中桥；显示态卡片恢复 `pointer-events:auto`，因此指针停留在绝对定位的子卡片时祖先 `:hover` 持续成立。隐藏态仍为 `visibility:hidden` 与 `pointer-events:none`。不增加 Vue 响应状态、timer、IPC 或数据读取。
@@ -502,3 +503,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-16 v1.55 决议 #261：Win7 安全 textarea 与 Twemoji 覆盖层恢复相同的 `PantryEmojiBlank` 字体栈，以 `1.3em` 固定 advance 对齐输入图形、消息正文尺寸和连续表情 caret；安全布局与输入法事件路径不变。协议、SQLite、IPC 与依赖不变，版本 **0.44.9-beta.3 → 0.44.9-beta.4**。
 - 2026-07-16 v1.56 决议 #262：Win7 真机确认真实 textarea 使用空白 WebFont 会触发搜狗候选窗失位，撤销 #261 的 Win7 路径；Win7 改用系统字体 contenteditable 和 `1.3em` Twemoji 原子节点，以 DOM 原生布局统一表情尺寸与 caret。协议、SQLite、IPC 与依赖不变，版本 **0.44.9-beta.4 → 0.44.9-beta.5**。
 - 2026-07-21 v1.57 决议 #263：普通私聊/群聊文件统一 24 小时领取期限；协议 v0.49 增加 `offer.expiresAt`，SQLite v13 增加 transfer 截止时间与共享出站 manifest，`FilesService` 跨重启恢复并投影双向过期文案。版本 **0.44.9-beta.5 → 0.45.0**。
+- 2026-07-22 v1.58 决议 #269：`GroupCreator` 调用 IPC 前把响应式成员选择复制为普通数组，并以异常收尾恢复提交状态和显示行内错误；遮罩关闭要求按下与点击均起落在遮罩自身，提交期间锁定关闭入口。协议、SQLite、IPC 契约、依赖与网络均不变，版本 **0.45.5 → 0.45.6**。

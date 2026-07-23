@@ -5,6 +5,10 @@ import type { PeerView } from '../../../shared/ipc'
 import { GROUP_MAX_MEMBERS } from '../../../shared/protocol'
 import { usePeersStore } from '../stores/peers'
 import { useChatStore } from '../stores/chat'
+import {
+  shouldCloseGroupCreatorFromMask,
+  snapshotGroupMemberIds
+} from '../utils/group-creator'
 import GroupMemberPicker from './GroupMemberPicker.vue'
 
 // 发起讨论组（ui-design §7.1）：搜索选人 → 下一步设置组名 / 管理密码 / 密码提示。
@@ -26,6 +30,8 @@ const pickedIds = ref(
     .slice(0, maxPickOthers)
 )
 const creating = ref(false)
+const createError = ref('')
+let maskPointerStartedOnMask = false
 
 const selectedPeers = computed(() =>
   pickedIds.value
@@ -70,22 +76,50 @@ function nextStep(): void {
 async function create(): Promise<void> {
   if (!canCreate.value) return
   creating.value = true
-  const group = await window.pantry.createGroup(
-    name.value.trim() || fallbackName.value,
-    pickedIds.value,
-    adminPassword.value.trim(),
-    adminHint.value.trim()
-  )
-  creating.value = false
-  if (group) {
-    await chatStore.openConv(`group:${group.groupId}`)
+  createError.value = ''
+  try {
+    const group = await window.pantry.createGroup(
+      name.value.trim() || fallbackName.value,
+      snapshotGroupMemberIds(pickedIds.value),
+      adminPassword.value.trim(),
+      adminHint.value.trim()
+    )
+    if (!group) {
+      createError.value = '创建失败，请检查成员后重试。'
+      return
+    }
+    await chatStore.openConv(`group:${group.groupId}`).catch(() => undefined)
     emit('close')
+  } catch {
+    createError.value = '创建失败，请重试。'
+  } finally {
+    creating.value = false
   }
+}
+
+function rememberMaskPointerDown(event: PointerEvent): void {
+  maskPointerStartedOnMask = event.target === event.currentTarget
+}
+
+function requestMaskClose(): void {
+  const shouldClose = shouldCloseGroupCreatorFromMask(maskPointerStartedOnMask, creating.value)
+  maskPointerStartedOnMask = false
+  if (shouldClose) emit('close')
+}
+
+function backOrClose(): void {
+  if (creating.value) return
+  if (step.value === 'settings') step.value = 'members'
+  else emit('close')
 }
 </script>
 
 <template>
-  <div class="mask" @click.self="emit('close')">
+  <div
+    class="mask"
+    @pointerdown="rememberMaskPointerDown"
+    @click.self="requestMaskClose"
+  >
     <div class="dialog">
       <header class="head">
         <h3>发起讨论组</h3>
@@ -138,7 +172,9 @@ async function create(): Promise<void> {
             :input-props="{ id: 'group-admin-hint' }"
           />
         </div>
-        <p v-if="passwordError" class="error">{{ passwordError }}</p>
+        <p v-if="passwordError || createError" class="error" aria-live="polite">
+          {{ passwordError || createError }}
+        </p>
         <p v-else class="hint">管理密码不会保存明文；提示只用于帮成员回忆密码。</p>
       </section>
 
@@ -156,7 +192,8 @@ async function create(): Promise<void> {
         <NButton
           size="small"
           secondary
-          @click="step === 'settings' ? (step = 'members') : emit('close')"
+          :disabled="creating"
+          @click="backOrClose"
         >
           {{ step === 'settings' ? '上一步' : '取消' }}
         </NButton>
