@@ -1,8 +1,32 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { evaluateShareRoot, ShareService, type ShareGrantsStore } from './share'
-import type { ShareMode } from '../../shared/protocol'
+import {
+  evaluateShareRoot,
+  fitSharePage,
+  listShareDirectory,
+  resolveWithinRoot,
+  sanitizeSharePath,
+  ShareDownloadGate,
+  shareDownloadDirName,
+  ShareService,
+  type ShareGrantsStore
+} from './share'
+import {
+  SHARE_GET_MAX_PATHS,
+  SHARE_LIST_PAGE,
+  SHARE_LIST_RATE_MAX,
+  SHARE_SNAPSHOT_TTL,
+  type ShareEntry,
+  type ShareMode
+} from '../../shared/protocol'
 import type { ShareGrantRecord } from '../store/share-grants-repo'
+
+const tmpRoots: string[] = []
+afterAll(() => {
+  for (const dir of tmpRoots.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 // 共享文件柜的两条底线（决议 #271/#276）：
 // ① 权限判定只看本机配置；② 共享根不许落在会连带暴露隐私的位置。
@@ -165,5 +189,257 @@ describe('ShareService 权限判定（决议 #271）', () => {
     expect(service.listGrants()).toEqual([])
     service.reload() // 无存储可回灌，例外清空但不应抛错
     expect(service.modeFor('bob')).toBe('off')
+  })
+})
+
+// ---------- 第 ② 步：目录列举、分页快照、限流与下载授权 ----------
+
+describe('sanitizeSharePath（相对路径清洗，§8.2）', () => {
+  it('空串表示共享根，普通相对路径原样返回', () => {
+    expect(sanitizeSharePath('')).toBe('')
+    expect(sanitizeSharePath('设计稿')).toBe('设计稿')
+    expect(sanitizeSharePath('设计稿/2026/切图')).toBe('设计稿/2026/切图')
+  })
+
+  it('越权与畸形路径一律拒绝', () => {
+    expect(sanitizeSharePath('../etc')).toBeNull()
+    expect(sanitizeSharePath('a/../../etc')).toBeNull()
+    expect(sanitizeSharePath('a/./b')).toBeNull()
+    expect(sanitizeSharePath('/etc/passwd')).toBeNull()
+    expect(sanitizeSharePath('\\\\server\\share')).toBeNull()
+    expect(sanitizeSharePath('C:/Windows')).toBeNull()
+    expect(sanitizeSharePath('a\\b')).toBeNull()
+    expect(sanitizeSharePath('a//b')).toBeNull()
+    expect(sanitizeSharePath('a/')).toBeNull()
+    expect(sanitizeSharePath(123)).toBeNull()
+  })
+
+  it('深度与长度超限拒绝', () => {
+    expect(sanitizeSharePath(Array(16).fill('a').join('/'))).not.toBeNull()
+    expect(sanitizeSharePath(Array(17).fill('a').join('/'))).toBeNull()
+    expect(sanitizeSharePath('x'.repeat(256))).toBeNull()
+  })
+})
+
+describe('目录列举与越界防护（决议 #276）', () => {
+  function makeRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), 'pantry-share-root-'))
+    tmpRoots.push(root)
+    return root
+  }
+
+  it('目录在前、再按名称；隐藏项不列出', () => {
+    const root = makeRoot()
+    mkdirSync(join(root, 'b目录'))
+    mkdirSync(join(root, 'a目录'))
+    writeFileSync(join(root, 'z.txt'), 'zz')
+    writeFileSync(join(root, 'a.txt'), 'a')
+    writeFileSync(join(root, '.隐藏'), 'secret')
+    mkdirSync(join(root, '.git'))
+
+    const listing = listShareDirectory(root, '')
+    expect(listing?.entries.map((e) => e.name)).toEqual(['a目录', 'b目录', 'a.txt', 'z.txt'])
+    expect(listing?.entries[0].isDir).toBe(true)
+    expect(listing?.entries.find((e) => e.name === 'z.txt')?.size).toBe(2)
+    expect(listing?.truncated).toBe(false)
+  })
+
+  it('指向共享根之外的符号链接不列出，也解析不出来', () => {
+    const root = makeRoot()
+    const outside = makeRoot()
+    writeFileSync(join(outside, '机密.txt'), 'top secret')
+    writeFileSync(join(root, '正常.txt'), 'ok')
+    try {
+      symlinkSync(outside, join(root, '外链'))
+      symlinkSync(join(outside, '机密.txt'), join(root, '外链文件.txt'))
+    } catch {
+      return // 无权建符号链接的环境（如未开开发者模式的 Windows）跳过
+    }
+    const listing = listShareDirectory(root, '')
+    expect(listing?.entries.map((e) => e.name)).toEqual(['正常.txt'])
+    expect(resolveWithinRoot(root, '外链')).toBeNull()
+    expect(resolveWithinRoot(root, '外链文件.txt')).toBeNull()
+    expect(resolveWithinRoot(root, '正常.txt')).not.toBeNull()
+  })
+
+  it('不存在的路径与非目录返回 null', () => {
+    const root = makeRoot()
+    writeFileSync(join(root, 'f.txt'), 'x')
+    expect(listShareDirectory(root, '不存在')).toBeNull()
+    expect(listShareDirectory(root, 'f.txt')).toBeNull()
+    expect(listShareDirectory('', '')).toBeNull()
+  })
+})
+
+describe('fitSharePage（分页，§8.2）', () => {
+  const entry = (name: string): ShareEntry => ({ name, size: 1, isDir: false, mtime: 1 })
+
+  it('单页不超过条目上限', () => {
+    const entries = Array.from({ length: SHARE_LIST_PAGE + 50 }, (_, i) => entry(`f${i}`))
+    expect(fitSharePage(entries, 0)).toHaveLength(SHARE_LIST_PAGE)
+    expect(fitSharePage(entries, SHARE_LIST_PAGE)[0].name).toBe(`f${SHARE_LIST_PAGE}`)
+  })
+
+  it('超长文件名下按信封字节收窄，且至少给一条', () => {
+    // 每条约 650B，80 条稳超 32KiB 信封上限
+    const long = Array.from({ length: 80 }, (_, i) => entry(`${'名'.repeat(200)}${i}`))
+    const page = fitSharePage(long, 0)
+    expect(page.length).toBeGreaterThan(0)
+    expect(page.length).toBeLessThan(long.length)
+    expect(Buffer.byteLength(JSON.stringify(page), 'utf8')).toBeLessThanOrEqual(32 * 1024)
+    const huge: ShareEntry[] = [entry('巨'.repeat(255))]
+    expect(fitSharePage(huge, 0)).toHaveLength(1)
+  })
+})
+
+describe('ShareService 应答 list / get（§8.2）', () => {
+  function serviceWithRoot(mode: ShareMode = 'read'): { service: ShareService; root: string } {
+    const root = mkdtempSync(join(tmpdir(), 'pantry-share-svc-'))
+    tmpRoots.push(root)
+    const service = new ShareService({
+      getRoot: () => root,
+      getDefaultMode: () => mode,
+      getGrants: () => null
+    })
+    return { service, root }
+  }
+
+  it('未开放的联系人只拿到 deny，探不出目录是否存在', () => {
+    const { service, root } = serviceWithRoot('off')
+    writeFileSync(join(root, '在的.txt'), 'x')
+    expect(service.handleList('bob', { reqId: 'r1', path: '', offset: 0 })).toEqual({
+      op: 'deny',
+      reqId: 'r1',
+      reason: 'off'
+    })
+    expect(service.handleList('bob', { reqId: 'r2', path: '不存在', offset: 0 })).toEqual({
+      op: 'deny',
+      reqId: 'r2',
+      reason: 'off'
+    })
+    expect(service.handleGet('bob', ['在的.txt'])).toEqual({ ok: false, reason: 'off' })
+  })
+
+  it('第 ② 步一律只声明 read —— 上传尚未接入，不给必然被拒的入口', () => {
+    const { service, root } = serviceWithRoot('write')
+    writeFileSync(join(root, 'a.txt'), 'x')
+    const reply = service.handleList('bob', { reqId: 'r', path: '', offset: 0 })
+    expect(reply.op).toBe('list-ok')
+    if (reply.op === 'list-ok') expect(reply.perm).toBe('read')
+  })
+
+  it('翻页用同一快照，快照过期或换人则要求从头来', () => {
+    const { service, root } = serviceWithRoot()
+    for (let i = 0; i < 5; i += 1) writeFileSync(join(root, `f${i}.txt`), 'x')
+    const first = service.handleList('bob', { reqId: 'r1', path: '', offset: 0 }, 1000)
+    expect(first.op).toBe('list-ok')
+    if (first.op !== 'list-ok') return
+    expect(first.total).toBe(5)
+
+    // 翻页期间新增文件不影响本次快照，避免错位
+    writeFileSync(join(root, 'f9.txt'), 'x')
+    const second = service.handleList(
+      'bob',
+      { reqId: 'r2', path: '', offset: 2, snapshotId: first.snapshotId },
+      1500
+    )
+    expect(second.op).toBe('list-ok')
+    if (second.op === 'list-ok') expect(second.total).toBe(5)
+
+    // 别人拿着同一个快照 ID 也不行
+    expect(
+      service.handleList(
+        'mallory',
+        { reqId: 'r3', path: '', offset: 2, snapshotId: first.snapshotId },
+        1500
+      )
+    ).toEqual({ op: 'deny', reqId: 'r3', reason: 'gone' })
+
+    // 超过存活时间即失效
+    expect(
+      service.handleList(
+        'bob',
+        { reqId: 'r4', path: '', offset: 2, snapshotId: first.snapshotId },
+        1000 + SHARE_SNAPSHOT_TTL + 1
+      )
+    ).toEqual({ op: 'deny', reqId: 'r4', reason: 'gone' })
+  })
+
+  it('同一对端列目录限流，超出回 busy；窗口滑过后恢复', () => {
+    const { service } = serviceWithRoot()
+    for (let i = 0; i < SHARE_LIST_RATE_MAX; i += 1) {
+      expect(service.handleList('bob', { reqId: `r${i}`, path: '', offset: 0 }, 1000).op).toBe(
+        'list-ok'
+      )
+    }
+    expect(service.handleList('bob', { reqId: 'over', path: '', offset: 0 }, 1000)).toEqual({
+      op: 'deny',
+      reqId: 'over',
+      reason: 'busy'
+    })
+    // 换个人不受影响
+    expect(service.handleList('carol', { reqId: 'c', path: '', offset: 0 }, 1000).op).toBe('list-ok')
+    expect(
+      service.handleList('bob', { reqId: 'later', path: '', offset: 0 }, 1000 + 10_001).op
+    ).toBe('list-ok')
+  })
+
+  it('get 逐条复核路径，任何一条越界就整体拒绝', () => {
+    const { service, root } = serviceWithRoot()
+    writeFileSync(join(root, 'a.txt'), 'x')
+    writeFileSync(join(root, 'b.txt'), 'x')
+    const ok = service.handleGet('bob', ['a.txt', 'b.txt'])
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.absPaths).toHaveLength(2)
+
+    expect(service.handleGet('bob', ['a.txt', '../外面.txt'])).toEqual({
+      ok: false,
+      reason: 'not-found'
+    })
+    expect(service.handleGet('bob', ['a.txt', '不存在.txt'])).toEqual({
+      ok: false,
+      reason: 'not-found'
+    })
+    expect(service.handleGet('bob', [''])).toEqual({ ok: false, reason: 'not-found' })
+    expect(service.handleGet('bob', [])).toEqual({ ok: false, reason: 'not-found' })
+    expect(
+      service.handleGet('bob', Array.from({ length: SHARE_GET_MAX_PATHS + 1 }, () => 'a.txt'))
+    ).toEqual({ ok: false, reason: 'not-found' })
+  })
+})
+
+describe('ShareDownloadGate（下载一次性授权，决议 #275）', () => {
+  it('只对授权过的来源放行，且只放行一次', () => {
+    const gate = new ShareDownloadGate()
+    expect(gate.consume('bob', 1000)).toBeNull()
+    gate.begin('bob', '/tmp/down', 60_000, 1000)
+    expect(gate.consume('mallory', 1000)).toBeNull()
+    expect(gate.consume('bob', 1000)).toBe('/tmp/down')
+    expect(gate.consume('bob', 1000)).toBeNull()
+  })
+
+  it('超时的授权不再放行', () => {
+    const gate = new ShareDownloadGate()
+    gate.begin('bob', '/tmp/down', 60_000, 1000)
+    expect(gate.consume('bob', 61_001)).toBeNull()
+  })
+
+  it('撤销后立即失效', () => {
+    const gate = new ShareDownloadGate()
+    gate.begin('bob', '/tmp/down', 60_000, 1000)
+    gate.cancel('bob')
+    expect(gate.consume('bob', 1000)).toBeNull()
+  })
+})
+
+describe('shareDownloadDirName（默认落点）', () => {
+  it('加「文件柜-」前缀，和聊天里收到的文件目录分开', () => {
+    expect(shareDownloadDirName('张三')).toBe('文件柜-张三')
+  })
+
+  it('剥掉路径分隔符与保留字符，空名兜底', () => {
+    expect(shareDownloadDirName('a/b\\c')).toBe('文件柜-a b c')
+    expect(shareDownloadDirName('  ')).toBe('文件柜-未知节点')
+    expect(shareDownloadDirName('..')).toBe('文件柜-未知节点')
   })
 })

@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CAPS,
   MSG_TYPES,
+  UDP_MAX_PAYLOAD,
   type AckPayload,
   type Envelope,
   type MsgPayload,
   type Profile,
+  type SharePayload,
   type Timings,
   type UpdateReqPayload
 } from '../../shared/protocol'
@@ -266,6 +268,50 @@ describe('messenger 回环集成', () => {
     expect(payload.kind).toBe('text')
     if (payload.kind === 'text') expect(payload.text).toBe(longText)
     expect(a.queue.items).toHaveLength(0)
+  })
+
+  it('共享文件柜列表超过 UDP 上限时经 TCP 控制帧直达（§8.2）', async () => {
+    nextPort += 20
+    const a = await makeStack('alice', nextPort)
+    const b = await makeStack('bob', nextPort + 5, [{ host: '127.0.0.1', port: a.port }])
+    await startTcpReceiver(b)
+    a.discovery.start()
+    b.discovery.start()
+    await waitFor(() => a.registry.get(b.profile.nodeId)?.online === true)
+
+    // 200 条中文文件名远超 1200B 单包上限，必须走 TCP 兜底而不是被丢掉
+    const entries = Array.from({ length: 200 }, (_, i) => ({
+      name: `第${i}份设计稿最终版.psd`,
+      size: 1024 * i,
+      isDir: false,
+      mtime: 1_780_000_000_000 + i
+    }))
+    const payload: SharePayload = {
+      op: 'list-ok',
+      reqId: 'req-1',
+      path: '设计稿',
+      perm: 'read',
+      snapshotId: 'snap-1',
+      offset: 0,
+      total: entries.length,
+      truncated: false,
+      entries
+    }
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeGreaterThan(UDP_MAX_PAYLOAD)
+
+    const acked = await a.messenger.sendReliable(
+      b.profile.nodeId,
+      makeEnvelope<SharePayload>(MSG_TYPES.share, a.profile.nodeId, payload)
+    )
+    expect(acked).toBe(true)
+    expect(b.incoming).toHaveLength(1)
+    expect(b.incoming[0].type).toBe(MSG_TYPES.share)
+    const got = b.incoming[0].payload as SharePayload
+    expect(got.op).toBe('list-ok')
+    if (got.op === 'list-ok') {
+      expect(got.entries).toHaveLength(200)
+      expect(got.entries[199].name).toBe('第199份设计稿最终版.psd')
+    }
   })
 
   it('短文本 UDP 无 ACK 时自动降级为 TCP 控制帧', async () => {

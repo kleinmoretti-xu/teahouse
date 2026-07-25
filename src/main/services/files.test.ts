@@ -1967,3 +1967,181 @@ describe('FilesService 普通文件 24 小时领取期限（决议 #263）', () 
     await new Promise<void>((resolve) => silent.close(() => resolve()))
   })
 })
+
+describe('FilesService 共享文件柜下载（决议 #275）', () => {
+  it('发出的 share-get offer 不进聊天流、不带聊天锚点与领取期限', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-out-'))
+    tmpDirs.push(dir)
+    writeFileSync(join(dir, '资料.txt'), 'hello')
+
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const convRepo = new FakeConvRepo()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: convRepo as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    await expect(svc.offerSharePaths('node-bob', [join(dir, '资料.txt')])).resolves.toBe(true)
+
+    const offer = messenger.sent[0].env.payload as FileCtlOffer
+    expect(offer.op).toBe('offer')
+    expect(offer.purpose).toBe('share-get')
+    expect(offer.msgId).toBeUndefined()
+    expect(offer.expiresAt).toBeUndefined()
+    expect(offer.groupId).toBeUndefined()
+    expect(msgRepo.rows.size).toBe(0) // 不生成任何聊天消息
+    expect(convRepo.bumped).toHaveLength(0)
+    const row = [...transferRepo.rows.values()][0]
+    expect(row.msg_id.startsWith('share:')).toBe(true)
+    expect(row.expires_at).toBe(0)
+    await svc.stop()
+  })
+
+  it('对方离线时不发 offer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-offline-'))
+    tmpDirs.push(dir)
+    writeFileSync(join(dir, 'a.txt'), 'x')
+    const messenger = new FakeMessenger()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry([]) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: new FakeMsgRepo() as unknown as MsgRepo,
+      transferRepo: new FakeTransferRepo() as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    await expect(svc.offerSharePaths('node-bob', [join(dir, 'a.txt')])).resolves.toBe(false)
+    expect(messenger.sent).toHaveLength(0)
+    await svc.stop()
+  })
+
+  it('未授权的 share-get 一律拒收，不落盘也不入聊天', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-unauth-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      authorizeShareDownload: () => null, // 本机没请求过
+      bindAddress: '127.0.0.1'
+    })
+
+    messenger.emit('incoming', shareGetOffer('node-bob', 'transfer-unauth'))
+    await Promise.resolve()
+
+    expect(msgRepo.rows.size).toBe(0)
+    expect(transferRepo.rows.size).toBe(0)
+    const decline = messenger.sent.at(-1)?.env.payload as FileCtlPayload
+    expect(decline.op).toBe('decline')
+    await svc.stop()
+  })
+
+  it('已授权的 share-get 自动接收到指定目录，仍不进聊天流', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-auth-'))
+    tmpDirs.push(dir)
+    const downloadDir = join(dir, '文件柜-鲍勃')
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const convRepo = new FakeConvRepo()
+    let consumed = 0
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: convRepo as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      authorizeShareDownload: () => {
+        consumed += 1
+        return consumed === 1 ? downloadDir : null // 一次性
+      },
+      bindAddress: '127.0.0.1'
+    })
+
+    messenger.emit('incoming', shareGetOffer('node-bob', 'transfer-auth'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(msgRepo.rows.size).toBe(0) // 不生成聊天消息
+    expect(convRepo.bumped).toHaveLength(0)
+    const row = transferRepo.rows.get('transfer-auth')
+    expect(row?.direction).toBe('in')
+    expect(row?.expires_at).toBe(0)
+    expect(JSON.parse(row!.files).purpose).toBe('share-get')
+    expect(JSON.parse(row!.files).savedPath.startsWith(downloadDir)).toBe(true)
+    expect(messenger.sent.some((m) => (m.env.payload as FileCtlPayload).op === 'accept')).toBe(true)
+    await svc.stop()
+  })
+
+  it('上传（share-put）在第 ③ 步接入前明确拒收，不退化成普通文件卡', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-put-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      authorizeShareDownload: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    const env = shareGetOffer('node-bob', 'transfer-put')
+    ;(env.payload as FileCtlOffer).purpose = 'share-put'
+    messenger.emit('incoming', env)
+    await Promise.resolve()
+
+    expect(msgRepo.rows.size).toBe(0)
+    expect(transferRepo.rows.size).toBe(0)
+    expect((messenger.sent.at(-1)?.env.payload as FileCtlPayload).op).toBe('decline')
+    await svc.stop()
+  })
+})
+
+function shareGetOffer(from: string, transferId: string): Envelope<FileCtlOffer> {
+  return makeEnvelope<FileCtlOffer>(MSG_TYPES.fileCtl, from, {
+    op: 'offer',
+    transferId,
+    seq: 1,
+    total: 1,
+    files: [{ fileId: 'f1', path: '资料.txt', size: 5 }],
+    totalSize: 5,
+    fileCount: 1,
+    rootName: '资料.txt',
+    purpose: 'share-get'
+  })
+}

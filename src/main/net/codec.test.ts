@@ -15,6 +15,7 @@ import {
   type Profile,
   type ProfilePayload,
   type ScanRangesPayload,
+  type SharePayload,
   type UpdateReqPayload
 } from '../../shared/protocol'
 
@@ -653,5 +654,112 @@ describe('codec', () => {
     const raw = { v: 1, type: 'exit', id: 'x', from: 'node-aaaa', ts: Date.now() }
     const result = decode(Buffer.from(JSON.stringify(raw), 'utf8'))
     expect(result).toEqual({ ok: false, reason: 'no-payload' })
+  })
+})
+
+describe('codec · 共享文件柜报文（§8.2，决议 #275）', () => {
+  function roundTrip(payload: unknown): ReturnType<typeof decode> {
+    return decode(encode(makeEnvelope(MSG_TYPES.share, 'node-alice', payload)))
+  }
+
+  it('合法的 list / list-ok / get / deny 通过', () => {
+    expect(
+      roundTrip({ op: 'list', reqId: 'r1', path: '设计稿/2026', offset: 0 } satisfies SharePayload).ok
+    ).toBe(true)
+    expect(roundTrip({ op: 'list', reqId: 'r1', path: '', offset: 200 } satisfies SharePayload).ok).toBe(true)
+    expect(
+      roundTrip({
+        op: 'list-ok',
+        reqId: 'r1',
+        path: '',
+        perm: 'read',
+        snapshotId: 's1',
+        offset: 0,
+        total: 1,
+        truncated: false,
+        entries: [{ name: '封面.psd', size: 10, isDir: false, mtime: 1 }]
+      } satisfies SharePayload).ok
+    ).toBe(true)
+    expect(roundTrip({ op: 'get', reqId: 'r1', paths: ['a/b.txt'] } satisfies SharePayload).ok).toBe(true)
+    expect(roundTrip({ op: 'deny', reqId: 'r1', reason: 'busy' } satisfies SharePayload).ok).toBe(true)
+  })
+
+  it('路径穿越、绝对路径与盘符一律拒收', () => {
+    for (const path of ['../etc', 'a/../b', '/etc/passwd', 'C:/Windows', 'a\\b', 'a//b', 'a/']) {
+      expect(roundTrip({ op: 'list', reqId: 'r', path, offset: 0 })).toEqual({
+        ok: false,
+        reason: 'bad-payload:share'
+      })
+    }
+    expect(roundTrip({ op: 'get', reqId: 'r', paths: ['ok.txt', '../坏.txt'] })).toEqual({
+      ok: false,
+      reason: 'bad-payload:share'
+    })
+  })
+
+  it('get 不接受空路径（等价于整取共享根，绕过逐条校验）', () => {
+    expect(roundTrip({ op: 'get', reqId: 'r', paths: [''] })).toEqual({
+      ok: false,
+      reason: 'bad-payload:share'
+    })
+    expect(roundTrip({ op: 'get', reqId: 'r', paths: [] })).toEqual({
+      ok: false,
+      reason: 'bad-payload:share'
+    })
+  })
+
+  it('list-ok 的条目名不得含分隔符，权限与原因码必须是枚举值', () => {
+    const base = {
+      op: 'list-ok',
+      reqId: 'r',
+      path: '',
+      perm: 'read',
+      snapshotId: 's',
+      offset: 0,
+      total: 1,
+      truncated: false
+    }
+    expect(roundTrip({ ...base, entries: [{ name: 'a/b', size: 1, isDir: false, mtime: 1 }] }).ok).toBe(false)
+    expect(roundTrip({ ...base, entries: [{ name: '..', size: 1, isDir: false, mtime: 1 }] }).ok).toBe(false)
+    expect(roundTrip({ ...base, perm: 'off', entries: [] }).ok).toBe(false)
+    expect(roundTrip({ ...base, entries: [{ name: 'a', size: -1, isDir: false, mtime: 1 }] }).ok).toBe(false)
+    expect(roundTrip({ op: 'deny', reqId: 'r', reason: '随便编的' }).ok).toBe(false)
+  })
+
+  it('未知 op 与多余字段拒收', () => {
+    expect(roundTrip({ op: 'delete', reqId: 'r', path: 'a' }).ok).toBe(false)
+    expect(roundTrip({ op: 'list', reqId: 'r', path: '', offset: 0, extra: 1 }).ok).toBe(false)
+  })
+
+  it('share-get / share-put offer 不得带群上下文或聊天消息锚点', () => {
+    const offer: FileCtlOffer = {
+      op: 'offer',
+      transferId: 't1',
+      seq: 1,
+      total: 1,
+      files: [{ fileId: 'f1', path: '资料.zip', size: 10 }],
+      totalSize: 10,
+      fileCount: 1,
+      rootName: '资料.zip',
+      purpose: 'share-get'
+    }
+    expect(decode(encode(makeEnvelope(MSG_TYPES.fileCtl, 'node-alice', offer))).ok).toBe(true)
+    expect(
+      decode(
+        encode(makeEnvelope(MSG_TYPES.fileCtl, 'node-alice', { ...offer, msgId: 'm1' }))
+      ).ok
+    ).toBe(false)
+    expect(
+      decode(
+        encode(
+          makeEnvelope(MSG_TYPES.fileCtl, 'node-alice', {
+            ...offer,
+            purpose: 'share-put',
+            groupId: 'g1',
+            groupRev: 1
+          })
+        )
+      ).ok
+    ).toBe(false)
   })
 })

@@ -10,6 +10,10 @@ import {
   OFFER_FILES_PER_PACKET,
   PROTOCOL_VERSION,
   SCAN_RANGES_PER_PACKET,
+  SHARE_GET_MAX_PATHS,
+  SHARE_LIST_PAGE,
+  SHARE_NAME_MAX,
+  SHARE_PATH_MAX,
   TABLE_TEXT_LIMIT_BYTES,
   TEXT_TCP_LIMIT,
   TEXT_UDP_LIMIT,
@@ -27,8 +31,10 @@ import {
   type Profile,
   type ProfilePayload,
   type ScanRangesPayload,
+  type SharePayload,
   type UpdateReqPayload
 } from '../../shared/protocol'
+import { isShareDenyReason } from '../../shared/protocol'
 import { isAvatarHash } from '../../shared/protocol'
 import { PEERS_PER_PACKET } from '../../shared/protocol'
 import { isPkGame, isPkRef } from '../../shared/pk'
@@ -263,7 +269,16 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
         o.purpose !== undefined &&
         o.purpose !== 'image' &&
         o.purpose !== 'sticker' &&
-        o.purpose !== 'update'
+        o.purpose !== 'update' &&
+        o.purpose !== 'share-get' &&
+        o.purpose !== 'share-put'
+      ) {
+        return false
+      }
+      // 文件柜传输永不属于群聊，也不带聊天消息锚点（§8.2）
+      if (
+        (o.purpose === 'share-get' || o.purpose === 'share-put') &&
+        (o.groupId !== undefined || o.msgId !== undefined)
       ) {
         return false
       }
@@ -362,6 +377,48 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
           r.addedAt > 0
       )
     }
+    case MSG_TYPES.share: {
+      // 共享文件柜控制面（§8.2）：路径一律当相对路径校验，绝对路径 / .. / 盘符全部拒绝；
+      // 真实路径是否越出共享根由 ShareService 再用 realpath 复核。
+      if (!isRecord(payload)) return false
+      const sh = payload as Partial<SharePayload> & Record<string, unknown>
+      if (!isStr(sh.reqId, LIMITS.id)) return false
+      if (sh.op === 'list') {
+        if (!isSharePath(sh.path)) return false
+        if (!isInt(sh.offset) || (sh.offset as number) < 0) return false
+        if (sh.snapshotId !== undefined && !isStr(sh.snapshotId, LIMITS.id)) return false
+        return Object.keys(payload).every(
+          (key) => key === 'op' || key === 'reqId' || key === 'path' || key === 'offset' || key === 'snapshotId'
+        )
+      }
+      if (sh.op === 'list-ok') {
+        if (!isSharePath(sh.path)) return false
+        if (sh.perm !== 'read' && sh.perm !== 'write') return false
+        if (!isStr(sh.snapshotId, LIMITS.id)) return false
+        if (!isInt(sh.offset) || (sh.offset as number) < 0) return false
+        if (!isInt(sh.total) || (sh.total as number) < 0) return false
+        if (typeof sh.truncated !== 'boolean') return false
+        if (!Array.isArray(sh.entries) || sh.entries.length > SHARE_LIST_PAGE) return false
+        return sh.entries.every(
+          (e) =>
+            isRecord(e) &&
+            isShareEntryName(e.name) &&
+            isInt(e.size) &&
+            (e.size as number) >= 0 &&
+            typeof e.isDir === 'boolean' &&
+            isInt(e.mtime) &&
+            (e.mtime as number) >= 0
+        )
+      }
+      if (sh.op === 'get') {
+        if (!Array.isArray(sh.paths) || sh.paths.length === 0) return false
+        if (sh.paths.length > SHARE_GET_MAX_PATHS) return false
+        // 根目录整取无意义且会绕过逐条校验，因此 get 不接受空路径
+        return sh.paths.every((p) => isSharePath(p) && (p as string).length > 0)
+      }
+      if (sh.op === 'deny') return isShareDenyReason(sh.reason)
+      return false
+    }
     case MSG_TYPES.update: {
       // 自更新请求（§8.1，决议 #166/#181）：只认 op:'req' + 合法平台；
       // arch 可选，存在时用于避免 Windows/Linux 多架构安装包混用。
@@ -376,6 +433,32 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
     default:
       return isRecord(payload)
   }
+}
+
+/** 共享文件柜相对路径的格式校验（§8.2）：空串=共享根；深度与越界另由 ShareService 复核 */
+function isSharePath(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  if (utf8ByteLength(value) > SHARE_PATH_MAX) return false
+  if (value.length === 0) return true
+  if (value.startsWith('/') || value.startsWith('\\')) return false
+  if (/^[a-zA-Z]:/.test(value)) return false
+  if (value.includes('\\') || value.includes('\u0000')) return false
+  const segments = value.split('/')
+  return segments.every((seg) => seg.length > 0 && seg !== '.' && seg !== '..' && seg.length <= SHARE_NAME_MAX)
+}
+
+/** 目录条目名：非空、不含路径分隔符、不是 . / .. */
+function isShareEntryName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= SHARE_NAME_MAX &&
+    !value.includes('/') &&
+    !value.includes('\\') &&
+    !value.includes('\u0000') &&
+    value !== '.' &&
+    value !== '..'
+  )
 }
 
 function isStrictBase64(value: string): boolean {

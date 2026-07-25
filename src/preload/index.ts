@@ -30,6 +30,8 @@ import {
   type SearchResult,
   type ScanProgressView,
   type SettingsView,
+  type ShareBrowseResult,
+  type ShareDownloadResult,
   type ShareGrantView,
   type ShareRootPickResult,
   type StickerView,
@@ -174,6 +176,19 @@ const api: PantryApi = {
     ipcRenderer.invoke(IpcChannels.shareGrantList),
   setShareGrant: (nodeId: string, mode: ShareMode | null): Promise<ShareGrantView[]> =>
     ipcRenderer.invoke(IpcChannels.shareGrantSet, nodeId, mode),
+  browseShare: (
+    peerId: string,
+    path: string,
+    offset: number,
+    snapshotId?: string
+  ): Promise<ShareBrowseResult> =>
+    ipcRenderer.invoke(IpcChannels.shareBrowse, peerId, path, offset, snapshotId),
+  downloadShare: (
+    peerId: string,
+    paths: string[],
+    saveAs?: boolean
+  ): Promise<ShareDownloadResult> =>
+    ipcRenderer.invoke(IpcChannels.shareDownload, peerId, paths, saveAs === true),
   addManualPeer: (addr: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.netAddPeer, addr),
   scanRange: (cidr: string): Promise<number> => ipcRenderer.invoke(IpcChannels.netScan, cidr),

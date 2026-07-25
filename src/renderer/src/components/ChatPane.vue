@@ -35,6 +35,7 @@ import CompatEmoji from './CompatEmoji.vue'
 import MessageRow from './MessageRow.vue'
 import EmojiPanel from './EmojiPanel.vue'
 import GroupPanel from './GroupPanel.vue'
+import FileCabinetPanel from './FileCabinetPanel.vue'
 import GroupAvatar from './GroupAvatar.vue'
 import ForwardDialog from './ForwardDialog.vue'
 import PantryIcon from './PantryIcon.vue'
@@ -122,6 +123,7 @@ onUnmounted(stopInputResize)
 const showEmoji = ref(false)
 const showHistorySearch = ref(false)
 const showMembers = ref(false)
+const showCabinet = ref(false)
 const showMentionPicker = ref(false)
 const mentionIds = ref<string[]>([])
 const pendingMentionAt = ref<number | null>(null)
@@ -213,6 +215,22 @@ let bottomKeeper: ResizeObserver | null = null
 const farFromBottom = ref(false)
 
 const isGroup = computed(() => chatStore.activeConv?.type === 'group')
+
+// 文件柜入口（决议 #273）：只在私聊出现；拿不到就明确说明原因，不给"点了没反应"的按钮
+const cabinetDisabledReason = computed(() => {
+  const p = peer.value
+  if (!p) return '对方资料还没同步到'
+  if (!p.online) return '对方离线'
+  if (!(p.caps ?? []).includes(CAPS.fileCabinet)) return '对方版本不支持文件柜'
+  return ''
+})
+const cabinetTitle = computed(() => cabinetDisabledReason.value || '文件柜')
+
+function toggleCabinet(): void {
+  if (cabinetDisabledReason.value) return
+  showCabinet.value = !showCabinet.value
+  if (showCabinet.value) showMembers.value = false
+}
 const group = computed(() =>
   isGroup.value && chatStore.activeConv
     ? (groupsStore.byId[chatStore.activeConv.peerId] ?? null)
@@ -1766,10 +1784,28 @@ async function onDrop(event: DragEvent): Promise<void> {
       </template>
       <span v-if="isGroup" class="state">{{ group?.members.length ?? 0 }} 人</span>
       <span class="head-spacer"></span>
+      <button
+        v-if="!isGroup"
+        class="head-btn"
+        :class="{ disabled: !!cabinetDisabledReason }"
+        :title="cabinetTitle"
+        :aria-disabled="!!cabinetDisabledReason"
+        @click="toggleCabinet"
+      >
+        <PantryIcon name="folder" :size="17" />
+      </button>
       <button v-if="isGroup" class="head-btn" title="成员" @click="showMembers = !showMembers">
         <PantryIcon name="users" :size="17" />
       </button>
     </header>
+
+    <!-- 对方的文件柜（决议 #273）：与群信息面板同一形态，覆盖右侧一整列 -->
+    <FileCabinetPanel
+      v-if="!isGroup && showCabinet && peer"
+      :peer-id="peer.nodeId"
+      :peer-name="peerName"
+      @close="showCabinet = false"
+    />
 
     <!-- 群信息面板（决议 #67）：绝对定位覆盖右侧一整列，不挤压消息 -->
     <GroupPanel
@@ -3139,6 +3175,18 @@ async function onDrop(event: DragEvent): Promise<void> {
 .head-btn:hover {
   background: var(--surface-hover);
   color: var(--text-1);
+}
+.head-btn.disabled {
+  /* 灰显但保留 hover 提示，让用户能读到不可用的原因（决议 #17/#273） */
+  color: var(--text-3);
+  cursor: default;
+}
+.head-btn.disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
+.head-btn.disabled:active {
+  transform: none;
 }
 .head-btn:active {
   transform: scale(0.96);

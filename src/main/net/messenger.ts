@@ -298,6 +298,8 @@ function isReliableControlType(type: string): boolean {
     type === MSG_TYPES.fileCtl ||
     type === MSG_TYPES.group ||
     type === MSG_TYPES.avatar ||
-    type === MSG_TYPES.update
+    type === MSG_TYPES.update ||
+    // 共享文件柜控制面（§8.2）：list-ok 常超 UDP 上限，必须能走 TCP 控制帧兜底
+    type === MSG_TYPES.share
   )
 }

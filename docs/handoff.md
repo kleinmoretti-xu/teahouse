@@ -140,8 +140,8 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
 
 0. **共享文件柜（决议 #271–#277，设计已落档、代码零实现，目标版本 v0.47.0）**：需求 requirements §6.10、协议 protocol §8.2、模块与库表 tech-design §3/§4/§5/§12、界面 ui-design §5/§7.8/§8。**硬约束：不新增端口**（控制面复用 UDP 17878 的 `share` 报文，数据面 100% 复用 TCP 17879 的 `purpose:"share-get"|"share-put"`），`net/transfer.ts` 不动、`net/codec.ts` 只加白名单。建议按三步各自一个增量提交：
    - **① 我的文件柜 —— 已完成（v0.47.0）**：`config.fileCabinet {root,mode}`、SQLite v14 `share_grants`、`services/share.ts`（`evaluateShareRoot` + `ShareService.modeFor`）、5 个 `share:*` IPC、设置页「我的文件柜」三件套。此步不发任何报文、**未声明 `shr1`**。
-   - **② 浏览与下载（下一步）**：`shared/protocol.ts` 加 `share` 报文类型、`shr1` 与 11 个 `SHARE_*` 常量 → `codec.ts` 白名单校验 → `services/share.ts`（权限判定、目录列举、分页快照、路径清洗 + `realpath` 越界复核、限流）→ `purpose:"share-get"` 一次性授权与自动 accept → 私聊头部按钮 + `FileCabinetPanel.vue`。
-   - **③ 上传**：`purpose:"share-put"` 收端写权限复核、落点 `root/上传者显示名/`、`SHARE_PUT_MAX_BYTES` 上限、完成后写 `messages(kind='system')` 汇总提示（冒泡计未读、不弹桌面通知）。
+   - **② 浏览与下载 —— 已完成（v0.48.0）**：`share` 四个 op + `shr1` + 12 个 `SHARE_*` 常量、codec 白名单、`ShareService.handleList|handleGet`（分页快照 / 限流 / `realpath` 越界复核）、`ShareDownloadGate` 一次性授权、`FilesService.offerSharePaths` 与 `onShareGetOffer`、`share:browse` / `share:download`、`FileCabinetPanel.vue` + 私聊头部入口。`net/transfer.ts` 全程未改。
+   - **③ 上传（下一步）**：`purpose:"share-put"` 收端写权限复核、落点 `root/上传者显示名/`、`SHARE_PUT_MAX_BYTES` 上限、完成后写 `messages(kind='system')` 汇总提示（冒泡计未读、不弹桌面通知）；面板底栏加「上传到 TA 的文件柜」与拖入上传。**同时要拆掉两处第 ② 步的临时收口**：`services/share.ts` 的 `handleList` 目前把 `perm` 钳为 `'read'`（改回按 `mode` 如实回报），`services/files.ts` 的 `onOfferPart` 目前对 `share-put` 直接 decline（改为走新的落盘分支）。
    - 测试要求：`services/share.ts` 的权限判定与路径校验必须有纯函数单测（含 `..`、绝对路径、盘符、符号链接越界、深度超限、隐藏文件过滤、分页快照失效）；`share` 报文编解码进 `codec.test.ts`；浏览 → 下载 → 上传三段走回环集成测试，**绑定 `127.0.0.1` 且 `broadcastTargets: []`**。
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
 2. **代码优化状态（决议 #200/#210）**：[optimization-plan.md](optimization-plan.md) 的 18 项首批优化与 #210 第二批渲染性能优化均已完成；下一批开始前先按用户确认的范围新增决议与设计记录。

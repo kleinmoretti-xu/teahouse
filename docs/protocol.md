@@ -333,7 +333,11 @@ sequenceDiagram
 
 **限流与拒绝**：同一对端的 `list` 按 `SHARE_LIST_RATE` 限流，超限回 `deny{reason:"busy"}`；`deny` 不重试、由 UI 展示原因。请求方 `SHARE_REQ_TIMEOUT` 内未收到 `list-ok` / `deny` / offer 即按超时处理并允许手动重试。共享方的数据供流仍占用 §8 既有的 `TRANSFER_CONCURRENCY` 与 256 连接预算，不另开池子。
 
+**下载授权**：浏览方在发出 `get` 之前先登记一次性授权，绑定**来源节点**，有效期 `SHARE_GET_AUTH_TTL`。授权不绑文件名——请求时还不知道对方会把目录展开成什么。收到 `purpose:"share-get"` offer 时消费该授权：来源不符、已消费或过期一律 decline。`share-get` / `share-put` 的 offer 禁止携带 `groupId` 与 `msgId`（codec 层强制），保证它们永远不会变成聊天消息。
+
 **兼容**：旧端不声明 `shr1`，收到 `share` 会按未知 `type` 整包忽略（不回错误，符合 §4 兼容规则）；新端因此以 `shr1` 作为入口可用的前置条件。`purpose` 是既有可选字段，旧端遇到未知值时按既有校验拒绝该 offer，不会误落盘。
+
+> **实现进度（v0.48.0）**：`shr1` 已声明，`list` / `list-ok` / `get` / `deny` 与 `purpose:"share-get"` 已全线可用。**上传 `purpose:"share-put"` 尚未接入**：收到即 decline，且共享方在 `list-ok` 中**一律只声明 `perm:"read"`**（即便本机默认档是"可读可传"），避免对端显示一个必然被拒的上传入口。第 ③ 步接入上传时把 `perm` 改回按有效权限如实回报。
 
 ## 9. 协议常量（草案值，实现后按实测调整）
 
@@ -377,6 +381,7 @@ sequenceDiagram
 | SHARE_PATH_MAX / SHARE_NAME_MAX | 1024 B / 255 B | 相对路径与单个条目名长度上限 |
 | SHARE_GET_MAX_PATHS | 64 条 | 单次 `get` 可请求的条目数上限 |
 | SHARE_REQ_TIMEOUT | 8 s | `list` / `get` 未收到应答即超时，可手动重试 |
+| SHARE_GET_AUTH_TTL | 60 s | 发出 `get` 后接受对方一次 `share-get` offer 的授权时限（决议 #275） |
 | SHARE_LIST_RATE | 5 次 / 10 s | 同一对端列目录限流，超限回 `deny{reason:"busy"}`（决议 #276） |
 | SHARE_SNAPSHOT_TTL / MAX | 60 s / 8 份 | 列表分页快照存活时间与缓存份数上限 |
 | SHARE_PUT_MAX_BYTES | 2147483648 B（2 GiB） | 单次上传到对方文件柜的总量上限（决议 #272） |
@@ -460,3 +465,4 @@ sequenceDiagram
 - 2026-07-15 v0.48 决议 #249：`avatar` 新增无数据提示 `{op:"miss", hash, groupId?}`——来源无法提供数据时以一次性 UDP 单发告知，群头像请求方据此立即改试下一个在线成员源；miss 不走可靠通道（旧端整包忽略、不回 ACK，可靠发送会误判离线），不新增能力位，`get`/`data`、`av1`、32KiB 上限与全局信封不变。版本 0.43.3 → **0.44.0**。
 - 2026-07-21 v0.49 决议 #263：私聊与群聊普通文件 offer 新增 `expiresAt`，固定领取窗口 `FILE_OFFER_TTL=24h`；接收端用 `expiresAt-envelope.ts` 换算本地截止时间并限制最大 24 小时。逾期未完成 transfer 进入 `expired`，发送端与接收端分别显示「发送已到期」/「文件已过期」；图片、表情和更新包保持原语义。SQLite v13 持久化截止时间与出站源文件 manifest；版本 **0.44.9-beta.5 → 0.45.0**。
 - 2026-07-25 v0.50 决议 #271–#277：新增共享文件柜控制报文 `share`（`list` / `list-ok` / `get` / `deny`，可靠投递，`list-ok` 超 UDP 上限走既有 TCP 控制帧兜底）与能力位 `shr1`；数据面 100% 复用 §8 拉取式传输，只增加 `purpose:"share-get"`（共享方回 offer、浏览方自动 accept 拉取）与 `purpose:"share-put"`（上传方发 offer、共享方校验写权限后拉取）两个取值。**不新增任何端口**，仍为 UDP 17878 / TCP 17879。两类 purpose 不入聊天流、不带 `msgId`、不套 `FILE_OFFER_TTL`、不参与媒体撤回。权限一律由共享方本机按"默认档 + 按人例外"当场判定，协议中只出现共享根下的相对路径并强制 `realpath` 越界复核；新增 `SHARE_*` 常量共 11 项。旧端不声明 `shr1`、整包忽略 `share`，向前兼容。详见 §8.2。
+- 2026-07-25 v0.51 决议 #275 落地浏览与下载：`share` 报文的 `list` / `list-ok` / `get` / `deny` 四个 op、能力位 `shr1` 与 `purpose:"share-get"` 全部实现并进入 codec 白名单；`share` 加入可靠控制报文集合，`list-ok` 超 UDP 上限时经既有 TCP 控制帧直达（已有回环集成测试覆盖 200 条中文条目）。新增常量 `SHARE_GET_AUTH_TTL`（60s，下载一次性授权）。路径校验分两层：codec 只认相对路径（拒绝绝对路径 / `..` / 盘符 / 反斜杠 / NUL），ShareService 再做深度上限与 `realpath` 越界复核。`share-get` / `share-put` 的 offer 禁止携带 `groupId` / `msgId`。**上传 `share-put` 本版尚未接入**：收到即 decline，`list-ok` 的 `perm` 暂时钳为 `read`，详见 §8.2 实现进度注。版本 **0.47.0 → 0.48.0**。

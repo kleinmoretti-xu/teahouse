@@ -158,9 +158,12 @@ export const CAPS = {
   /** 支持讨论组群主/管理员角色、普通成员邀请与角色权限校验（决议 #241）。 */
   groupRoles: 'gr1',
   /** 支持资料/群头像哈希与可靠 avatar 按需取图（决议 #243）。 */
-  avatarImages: 'av1'
-  // 共享文件柜能力位 shr1 待浏览/下载落地后再声明（决议 #275）：
-  // 声明即代表能应答 share 报文，提前声明会让对端看到一个点不动的入口。
+  avatarImages: 'av1',
+  /**
+   * 共享文件柜（决议 #271/#275）：能应答 share 报文并收发 purpose:"share-get"|"share-put"。
+   * 只表示"支持这套协议"，不代表已开共享——是否可见、可下载、可上传一律由共享方本机当场判定。
+   */
+  fileCabinet: 'shr1'
 } as const
 
 /**
@@ -345,6 +348,91 @@ export interface FileMeta {
   isDir?: boolean
 }
 
+// ---------- 共享文件柜（§8.2，决议 #271–#277） ----------
+
+/** 单页目录条目上限；与 SHARE_LIST_FRAME_MAX 同时生效，先到者收窄当页 */
+export const SHARE_LIST_PAGE = 200
+/** 单条 list-ok 信封上限；低于 TCP 帧上限 64KiB 留头 */
+export const SHARE_LIST_FRAME_MAX = 32 * 1024
+/** 单目录列举硬上限，超出取前 N 条并置 truncated */
+export const SHARE_DIR_MAX_ENTRIES = 5000
+/** 共享根以下可展开的目录层级上限（决议 #276） */
+export const SHARE_MAX_DEPTH = 16
+/** 相对路径与单个条目名长度上限（字节 / 字符） */
+export const SHARE_PATH_MAX = 1024
+export const SHARE_NAME_MAX = 255
+/** 单次 get 可请求的条目数上限 */
+export const SHARE_GET_MAX_PATHS = 64
+/** list / get 未收到应答即超时，可手动重试 */
+export const SHARE_REQ_TIMEOUT = 8_000
+/** 同一对端列目录限流（决议 #276）：10 秒 5 次，超限回 deny{busy} */
+export const SHARE_LIST_RATE_WINDOW = 10_000
+export const SHARE_LIST_RATE_MAX = 5
+/** 列表分页快照存活时间与缓存份数上限 */
+export const SHARE_SNAPSHOT_TTL = 60_000
+export const SHARE_SNAPSHOT_MAX = 8
+/** 发出 get 后接受对方 share-get offer 的一次性授权时限（决议 #275） */
+export const SHARE_GET_AUTH_TTL = 60_000
+/** 单次上传到对方文件柜的总量上限（决议 #272，第 ③ 步启用） */
+export const SHARE_PUT_MAX_BYTES = 2 * 1024 * 1024 * 1024
+
+/** 目录条目（list-ok 携带）；只含共享根下的名字，不含任何绝对路径 */
+export interface ShareEntry {
+  name: string
+  size: number
+  isDir: boolean
+  /** 修改时间，Unix 毫秒 */
+  mtime: number
+}
+
+/** deny 的原因码；渲染层据此给出可读提示，不重试 */
+export type ShareDenyReason = 'off' | 'no-perm' | 'not-found' | 'too-deep' | 'busy' | 'gone'
+
+export function isShareDenyReason(value: unknown): value is ShareDenyReason {
+  return (
+    value === 'off' ||
+    value === 'no-perm' ||
+    value === 'not-found' ||
+    value === 'too-deep' ||
+    value === 'busy' ||
+    value === 'gone'
+  )
+}
+
+/** share 报文载荷（§8.2）：控制面走 UDP，超 1200B 由既有 TCP 控制帧兜底 */
+export type SharePayload =
+  | {
+      op: 'list'
+      reqId: string
+      /** 共享根下的相对路径；空串 = 根 */
+      path: string
+      offset: number
+      /** 翻页时原样带回 list-ok 给的快照 ID */
+      snapshotId?: string
+    }
+  | {
+      op: 'list-ok'
+      reqId: string
+      path: string
+      /** 共享方判定后告知的权限，仅用于对端 UI；每次请求仍各自复核 */
+      perm: 'read' | 'write'
+      snapshotId: string
+      offset: number
+      total: number
+      truncated: boolean
+      entries: ShareEntry[]
+    }
+  | {
+      op: 'get'
+      reqId: string
+      paths: string[]
+    }
+  | {
+      op: 'deny'
+      reqId: string
+      reason: ShareDenyReason
+    }
+
 /** 图片免确认上限（决议 #2，用户指定 20MB）；超限退化为普通文件流程 */
 export const IMG_AUTO_ACCEPT = 20 * 1024 * 1024
 /** 群聊图片内联上限（决议 #33）：超限按普通文件发送，由收端手动接收 */
@@ -365,8 +453,11 @@ export interface FileCtlOffer {
   fileCount: number
   /** 展示名：单文件=文件名，文件夹=目录名，多文件=首文件名 */
   rootName: string
-  /** image/sticker：聊天媒体；update：局域网自更新安装包（不入聊天/接收目录） */
-  purpose?: 'image' | 'sticker' | 'update'
+  /**
+   * image/sticker：聊天媒体；update：局域网自更新安装包（不入聊天/接收目录）；
+   * share-get / share-put：共享文件柜的下载与上传（决议 #275，同样不入聊天、不套领取期限）。
+   */
+  purpose?: 'image' | 'sticker' | 'update' | 'share-get' | 'share-put'
   /** 普通文件领取截止时间（发送端 Unix 毫秒）；自动媒体/更新包禁止携带。 */
   expiresAt?: number
   /** 表格图片消息的原始 TSV 文字视图；仅 purpose=image 单图可携带。 */
@@ -456,7 +547,8 @@ export const MSG_TYPES = {
   fileCtl: 'file-ctl',
   group: 'group',
   avatar: 'avatar',
-  update: 'update'
+  update: 'update',
+  share: 'share'
 } as const
 
 export function isAvatarHash(value: unknown): value is string {

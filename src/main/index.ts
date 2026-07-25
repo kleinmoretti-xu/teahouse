@@ -51,6 +51,9 @@ import {
   type ProfileSubmit,
   type ScanProgressView,
   type SettingsView,
+  type ShareBrowseFailReason,
+  type ShareBrowseResult,
+  type ShareDownloadResult,
   type ShareGrantView,
   type ShareRootPickResult,
   type TableTextMeta,
@@ -69,9 +72,14 @@ import {
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
   TIMINGS,
+  SHARE_GET_AUTH_TTL,
+  SHARE_GET_MAX_PATHS,
+  SHARE_PATH_MAX,
+  SHARE_REQ_TIMEOUT,
   isAvatarPresetValue,
   isShareMode,
   type Envelope,
+  type SharePayload,
   type Platform,
   type RuntimeArch,
   type ScanRangeSummary,
@@ -116,7 +124,12 @@ import { SearchService } from './services/search'
 import { openDatabase, openMemoryDatabase, type AppDatabase } from './store/db'
 import { PeersRepo } from './store/peers-repo'
 import { ShareGrantsRepo } from './store/share-grants-repo'
-import { evaluateShareRoot, ShareService } from './services/share'
+import {
+  evaluateShareRoot,
+  ShareDownloadGate,
+  shareDownloadDirName,
+  ShareService
+} from './services/share'
 import { ConvRepo } from './store/conv-repo'
 import { MsgRepo, msgRowToView } from './store/msg-repo'
 import { QueueRepo } from './store/queue-repo'
@@ -208,6 +221,11 @@ if (!gotLock) {
   const imageOcrCache = new ImageOcrResultCache()
   const rendererPathGrants = new PathGrantStore()
   const updateRequestGate = new UpdateRequestGate()
+  const shareDownloadGate = new ShareDownloadGate()
+  /** 本机发出的 list / get 在等应答（决议 #275）：reqId → 决议函数，超时由发起方自行清理 */
+  const sharePending = new Map<string, (payload: SharePayload | null) => void>()
+  /** peerId → 正在等待的 get reqId，便于 offer 到货时提前收口 */
+  const shareGetReq = new Map<string, string>()
   let discovery: Discovery | null = null
   let registry: PeerRegistry | null = null
   let messenger: Messenger | null = null
@@ -848,6 +866,83 @@ if (!gotLock) {
     void files.offerUpdatePackage(env.from, packagePath)
   }
 
+  /**
+   * 共享文件柜控制面（§8.2）：应答对端的 list / get，并把 list-ok / deny 交回本机等待中的请求。
+   * 权限、路径、限流全部由 ShareService 判定，这里只做转发与超时收口。
+   */
+  function handleShareCtl(env: Envelope<SharePayload>): void {
+    const payload = env.payload
+    if (payload.op === 'list-ok' || payload.op === 'deny') {
+      const settle = sharePending.get(payload.reqId)
+      if (settle) {
+        sharePending.delete(payload.reqId)
+        settle(payload)
+      }
+      return
+    }
+    if (!share || !messenger) return
+    if (payload.op === 'list') {
+      const reply = share.handleList(env.from, payload)
+      void messenger.sendReliable(env.from, makeEnvelope(MSG_TYPES.share, selfNodeId(), reply))
+      return
+    }
+    if (payload.op === 'get') {
+      const result = share.handleGet(env.from, payload.paths)
+      if (!result.ok) {
+        void messenger.sendReliable(
+          env.from,
+          makeEnvelope(MSG_TYPES.share, selfNodeId(), {
+            op: 'deny',
+            reqId: payload.reqId,
+            reason: result.reason
+          } satisfies SharePayload)
+        )
+        return
+      }
+      // 日志只记条目数，不记文件名与目录内容（决议 #6/#276）
+      console.log(`[share] 应答下载请求：${result.absPaths.length} 项`)
+      void files?.offerSharePaths(env.from, result.absPaths)
+    }
+  }
+
+  /** 对端 share-get offer 已到，提前结束对应的 get 等待 */
+  function settleShareGet(peerId: string): void {
+    const reqId = shareGetReq.get(peerId)
+    if (!reqId) return
+    shareGetReq.delete(peerId)
+    const settle = sharePending.get(reqId)
+    if (!settle) return
+    sharePending.delete(reqId)
+    settle(null)
+  }
+
+  function selfNodeId(): string {
+    return appState?.nodeId ?? ''
+  }
+
+  /** 发一条 share 请求并等应答；超时返回 null，由调用方给出可重试的提示。 */
+  async function requestShare(
+    peerId: string,
+    payload: SharePayload
+  ): Promise<SharePayload | null> {
+    if (!messenger) return null
+    const waiter = new Promise<SharePayload | null>((resolve) => {
+      sharePending.set(payload.reqId, resolve)
+      setTimeout(() => {
+        if (sharePending.delete(payload.reqId)) resolve(null)
+      }, SHARE_REQ_TIMEOUT).unref?.()
+    })
+    const sent = await messenger.sendReliable(
+      peerId,
+      makeEnvelope(MSG_TYPES.share, selfNodeId(), payload)
+    )
+    if (!sent) {
+      sharePending.delete(payload.reqId)
+      return null
+    }
+    return waiter
+  }
+
   function scanRangeItems(): SettingsView['scanRangeItems'] {
     const c = appState?.config
     if (!c) return []
@@ -1094,6 +1189,7 @@ if (!gotLock) {
       })
       messenger.on('incoming', (env: Envelope) => {
         if (env.type === MSG_TYPES.update) handleUpdateRequest(env as Envelope<UpdateReqPayload>)
+        else if (env.type === MSG_TYPES.share) handleShareCtl(env as Envelope<SharePayload>)
       })
       chat = new ChatService({
         selfId: state.nodeId,
@@ -1151,6 +1247,12 @@ if (!gotLock) {
         getUpdateDir: updatesDir,
         authorizeUpdateOffer: (peerId, name, totalSize) =>
           updateRequestGate.consume(peerId, name, totalSize),
+        authorizeShareDownload: (peerId) => {
+          const dir = shareDownloadGate.consume(peerId)
+          // 传输已开始即视为请求成功，立刻唤醒 share:download，不必干等超时
+          if (dir !== null) settleShareGet(peerId)
+          return dir
+        },
         allowDirectFileSend: () => appState?.config.allowDirectFileSend !== false,
         peerDisplayName: resolvePeerDisplayName
       })
@@ -1917,6 +2019,116 @@ if (!gotLock) {
     }
   )
 
+  // ——— 对方的文件柜（决议 #273/#275）：浏览与下载 ———
+
+  /** 入口前置条件：对端在线且声明 shr1，否则给出确定的原因而不是让用户干等超时 */
+  function shareTargetIssue(peerId: unknown): ShareBrowseFailReason | null {
+    if (typeof peerId !== 'string' || peerId.length === 0 || peerId.length > LIMITS.id) {
+      return 'offline'
+    }
+    const peer = registry?.get(peerId)
+    if (!peer || !peer.online) return 'offline'
+    if (!Array.isArray(peer.profile.caps) || !peer.profile.caps.includes(CAPS.fileCabinet)) {
+      return 'unsupported'
+    }
+    return null
+  }
+
+  ipcMain.handle(
+    IpcChannels.shareBrowse,
+    async (
+      _event,
+      peerId: unknown,
+      path: unknown,
+      offset: unknown,
+      snapshotId: unknown
+    ): Promise<ShareBrowseResult> => {
+      const issue = shareTargetIssue(peerId)
+      if (issue) return { ok: false, reason: issue }
+      if (typeof path !== 'string' || Buffer.byteLength(path, 'utf8') > SHARE_PATH_MAX) {
+        return { ok: false, reason: 'not-found' }
+      }
+      const start = typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+      const reply = await requestShare(peerId as string, {
+        op: 'list',
+        reqId: randomUUID(),
+        path,
+        offset: start,
+        ...(typeof snapshotId === 'string' && snapshotId.length > 0 && snapshotId.length <= LIMITS.id
+          ? { snapshotId }
+          : {})
+      })
+      if (!reply) return { ok: false, reason: 'timeout' }
+      if (reply.op === 'deny') return { ok: false, reason: reply.reason }
+      if (reply.op !== 'list-ok') return { ok: false, reason: 'timeout' }
+      return {
+        ok: true,
+        path: reply.path,
+        perm: reply.perm,
+        snapshotId: reply.snapshotId,
+        offset: reply.offset,
+        total: reply.total,
+        truncated: reply.truncated,
+        entries: reply.entries
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IpcChannels.shareDownload,
+    async (
+      event,
+      peerId: unknown,
+      paths: unknown,
+      saveAs: unknown
+    ): Promise<ShareDownloadResult> => {
+      const issue = shareTargetIssue(peerId)
+      if (issue) return { ok: false, reason: issue }
+      if (!Array.isArray(paths) || paths.length === 0 || paths.length > SHARE_GET_MAX_PATHS) {
+        return { ok: false, reason: 'not-found' }
+      }
+      const clean: string[] = []
+      for (const raw of paths) {
+        if (typeof raw !== 'string' || raw.length === 0) return { ok: false, reason: 'not-found' }
+        if (Buffer.byteLength(raw, 'utf8') > SHARE_PATH_MAX) return { ok: false, reason: 'not-found' }
+        clean.push(raw)
+      }
+      const target = peerId as string
+
+      let saveDir = join(
+        appState?.config.fileDir || defaultFileDir(),
+        shareDownloadDirName(resolvePeerDisplayName(target) || target)
+      )
+      if (saveAs === true) {
+        const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+        if (!owner) return { ok: true, canceled: true }
+        const picked = await dialog.showOpenDialog(owner, {
+          title: '选择下载到哪个目录',
+          properties: ['openDirectory', 'createDirectory']
+        })
+        if (picked.canceled || picked.filePaths.length === 0) return { ok: true, canceled: true }
+        saveDir = picked.filePaths[0]
+      }
+
+      // 先登记一次性授权再发请求：offer 可能在 sendReliable 的 ACK 之前就到（决议 #275）
+      shareDownloadGate.begin(target, saveDir, SHARE_GET_AUTH_TTL)
+      const reqId = randomUUID()
+      shareGetReq.set(target, reqId)
+      const reply = await requestShare(target, { op: 'get', reqId, paths: clean })
+      shareGetReq.delete(target)
+      if (reply && reply.op === 'deny') {
+        shareDownloadGate.cancel(target)
+        return { ok: false, reason: reply.reason }
+      }
+      // reply 为 null 有两种情况：传输已开始（授权被消费时提前唤醒）或对方没回应；
+      // 授权还在说明确实没等到 offer。
+      if (!reply && shareDownloadGate.consume(target) !== null) {
+        return { ok: false, reason: 'timeout' }
+      }
+      return { ok: true }
+    }
+  )
+
   ipcMain.handle(IpcChannels.filePick, async (event, directory: unknown): Promise<string[] | null> => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -2617,6 +2829,7 @@ if (!gotLock) {
       CAPS.transferWait,
       CAPS.groupRoles,
       CAPS.avatarImages,
+      CAPS.fileCabinet,
       ...updateCaps
     ])
     udpPort = envUdpPort ?? appState.config.udpPort

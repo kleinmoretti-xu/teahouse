@@ -90,7 +90,7 @@ interface IncomingState {
 interface FilesBlob {
   name: string
   savedPath?: string
-  purpose?: 'update'
+  purpose?: 'update' | 'share-get'
   direct?: boolean
   directPeerName?: string
   /** 普通入站文件的已清洗相对清单，用于期限内重启恢复。 */
@@ -129,6 +129,11 @@ export interface FilesDeps {
   getUpdateDir?: () => string
   /** 用户确认更新请求后，对来源、包名与大小做一次性授权消费。 */
   authorizeUpdateOffer?: (peerId: string, name: string, totalSize: number) => boolean
+  /**
+   * 本机刚向该节点发过 share{op:"get"} 才允许接收其 share-get 传输（决议 #275）。
+   * 命中返回落盘目录并消费授权，未授权返回 null。
+   */
+  authorizeShareDownload?: (peerId: string) => string | null
   /** 是否允许私聊直接发送自动接收；默认允许。 */
   allowDirectFileSend?: () => boolean
   /** 展示名：用于默认接收子目录（备注优先可由 main 注入）。 */
@@ -468,6 +473,48 @@ export class FilesService extends EventEmitter {
       acceptedAt: 0
     })
 
+    const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
+    if (ok) return true
+    const row = this.deps.transferRepo.get(transferId)
+    if (row && (row.status === 'accepted' || row.status === 'done')) return true
+    this.finish(transferId, 'failed')
+    return false
+  }
+
+  /**
+   * 共享文件柜下载（决议 #275）：对方请求后由共享方发起，走既有拉取式数据面。
+   * 不写聊天消息、不套领取期限；路径已由 ShareService 复核在共享根内。
+   */
+  async offerSharePaths(peerId: string, absPaths: string[]): Promise<boolean> {
+    const peer = this.deps.registry.get(peerId)
+    if (!peer || !peer.online) return false
+    const prepared = this.prepareOutgoing(absPaths, 'file')
+    if (!prepared) return false
+    prepared.purpose = 'share-get'
+    const transferId = randomUUID()
+    const msgId = `share:${transferId}`
+    const now = Date.now()
+    this.deps.transferRepo.insert({
+      transferId,
+      msgId,
+      peerId,
+      direction: 'out',
+      files: JSON.stringify({ name: prepared.rootName, purpose: 'share-get' } satisfies FilesBlob),
+      status: 'offering',
+      total: prepared.totalSize,
+      ts: now,
+      expiresAt: 0
+    })
+    this.outgoing.set(transferId, {
+      peerId,
+      msgId,
+      files: new Map(prepared.outFiles),
+      totalSize: prepared.totalSize,
+      bytesDone: 0,
+      accepted: false,
+      expiresAt: 0,
+      acceptedAt: 0
+    })
     const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
     if (ok) return true
     const row = this.deps.transferRepo.get(transferId)
@@ -996,6 +1043,17 @@ export class FilesService extends EventEmitter {
       return
     }
 
+    if (asm.purpose === 'share-get') {
+      this.onShareGetOffer(peerId, offer, asm, plans, trustedTotalSize)
+      return
+    }
+
+    // 上传到本机文件柜在第 ③ 步接入；在那之前明确拒收，不能落到普通文件流程里
+    if (asm.purpose === 'share-put') {
+      void this.declineUnknown(peerId, offer.transferId)
+      return
+    }
+
     // 图片/表情免确认条件复核（不信任发送方标记；群聊图片走 10MB 上限——决议 #33）
     const imageLimit = asm.groupId ? GROUP_IMG_AUTO_ACCEPT : IMG_AUTO_ACCEPT
     const inPurpose =
@@ -1127,6 +1185,46 @@ export class FilesService extends EventEmitter {
       cancelRef: { canceled: false, socket: null }
     })
     void this.accept(offer.transferId, this.updateDir())
+  }
+
+  /**
+   * 共享文件柜下载到货（决议 #275）：只接受本机刚请求过的来源，自动 accept 落到指定目录。
+   * 不入聊天流、不生成消息、不套领取期限——它是"当场去取"，取消了随时能再来。
+   */
+  private onShareGetOffer(
+    peerId: string,
+    offer: FileCtlOffer,
+    asm: AssemblingOffer,
+    plans: IncomingFilePlan[],
+    trustedTotalSize: number
+  ): void {
+    const saveDir = asm.groupId || asm.msgId ? null : this.deps.authorizeShareDownload?.(peerId) ?? null
+    if (!saveDir || plans.length === 0) {
+      void this.declineUnknown(peerId, offer.transferId)
+      return
+    }
+    const msgId = `share:${offer.transferId}`
+    this.deps.transferRepo.insert({
+      transferId: offer.transferId,
+      msgId,
+      peerId,
+      direction: 'in',
+      files: JSON.stringify({ name: asm.rootName, purpose: 'share-get' } satisfies FilesBlob),
+      status: 'offering',
+      total: trustedTotalSize,
+      ts: Date.now(),
+      expiresAt: 0
+    })
+    this.incoming.set(offer.transferId, {
+      peerId,
+      msgId,
+      plans,
+      bytesDone: 0,
+      expiresAt: 0,
+      queued: false,
+      cancelRef: { canceled: false, socket: null }
+    })
+    void this.accept(offer.transferId, saveDir)
   }
 
   private requestGroupMetaIfNeeded(

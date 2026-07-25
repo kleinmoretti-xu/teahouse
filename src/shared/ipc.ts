@@ -1,7 +1,7 @@
 // IPC 契约：main 与 renderer 之间唯一的对话词汇表（tech-design §4）。
 // 通道名、请求/响应类型、preload 暴露的 API 形状都只在这里定义。
 
-import type { Platform, ShareMode } from './protocol'
+import type { Platform, ShareDenyReason, ShareEntry, ShareMode } from './protocol'
 import type { PkGame, PkRefView } from './pk'
 
 export const IpcChannels = {
@@ -65,6 +65,9 @@ export const IpcChannels = {
   shareMyReveal: 'share:my-reveal',
   shareGrantList: 'share:grant-list',
   shareGrantSet: 'share:grant-set',
+  /** 对方的文件柜（决议 #273/#275）：列目录与下载 */
+  shareBrowse: 'share:browse',
+  shareDownload: 'share:download',
   netAddPeer: 'net:add-peer',
   netScan: 'net:scan',
   netScanAllRanges: 'net:scan-all-ranges',
@@ -549,6 +552,40 @@ export const SHARE_ROOT_REJECT_TEXT: Record<ShareRootRejectReason, string> = {
   unreadable: '这个目录读不到，请确认它还在且有访问权限'
 }
 
+/** 浏览失败的原因：协议侧 deny 原因码 + 三个本机侧原因 */
+export type ShareBrowseFailReason = ShareDenyReason | 'offline' | 'unsupported' | 'timeout'
+
+export const SHARE_FAIL_TEXT: Record<ShareBrowseFailReason, string> = {
+  off: '对方没有对你开放文件柜',
+  'no-perm': '对方没有给你这个权限',
+  'not-found': '这个位置已经不在了，刷新试试',
+  'too-deep': '目录层级太深，打不开',
+  busy: '操作太频繁，稍等一下再试',
+  gone: '列表已过期，正在重新获取',
+  offline: '对方当前不在线',
+  unsupported: '对方的版本还不支持文件柜',
+  timeout: '对方没有响应，稍后重试'
+}
+
+export type ShareBrowseResult =
+  | {
+      ok: true
+      path: string
+      /** 对方判定的权限，仅用于本机 UI 决定是否显示上传入口 */
+      perm: 'read' | 'write'
+      snapshotId: string
+      offset: number
+      total: number
+      truncated: boolean
+      entries: ShareEntry[]
+    }
+  | { ok: false; reason: ShareBrowseFailReason }
+
+export type ShareDownloadResult =
+  | { ok: true; canceled?: false }
+  | { ok: true; canceled: true }
+  | { ok: false; reason: ShareBrowseFailReason }
+
 export type ShareRootPickResult =
   | { ok: true; canceled: false; view: SettingsView }
   | { ok: true; canceled: true }
@@ -718,6 +755,15 @@ export interface PantryApi {
   listShareGrants(): Promise<ShareGrantView[]>
   /** 写入例外；mode 传 null 表示恢复"跟随默认档" */
   setShareGrant(nodeId: string, mode: ShareMode | null): Promise<ShareGrantView[]>
+  /** 浏览对方文件柜的一页；翻页须原样带回上次的 snapshotId */
+  browseShare(
+    peerId: string,
+    path: string,
+    offset: number,
+    snapshotId?: string
+  ): Promise<ShareBrowseResult>
+  /** 下载对方文件柜里的若干条目；saveAs=true 时先弹目录选择器 */
+  downloadShare(peerId: string, paths: string[], saveAs?: boolean): Promise<ShareDownloadResult>
   /** 手动添加节点（"ip" 或 "ip:port"）：持久化 + 立即探测 */
   addManualPeer(addr: string): Promise<boolean>
   /** 扫描一个 CIDR 网段；返回探测地址数，非法网段返回 -1 */
