@@ -184,6 +184,16 @@ export const MIGRATIONS: ReadonlyArray<string> = [
     files      TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   );
+  `,
+
+  // v14：共享文件柜按联系人例外（决议 #271/#277）
+  // 只存与默认档不同的例外；恢复"跟随默认"即删行。共享根与默认档在 config.json，不入库。
+  `
+  CREATE TABLE share_grants (
+    node_id    TEXT PRIMARY KEY,
+    mode       TEXT NOT NULL,              -- 'off' | 'read' | 'write'
+    updated_ts INTEGER NOT NULL
+  );
   `
 ]
 

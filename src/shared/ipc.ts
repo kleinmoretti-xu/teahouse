@@ -1,7 +1,7 @@
 // IPC 契约：main 与 renderer 之间唯一的对话词汇表（tech-design §4）。
 // 通道名、请求/响应类型、preload 暴露的 API 形状都只在这里定义。
 
-import type { Platform } from './protocol'
+import type { Platform, ShareMode } from './protocol'
 import type { PkGame, PkRefView } from './pk'
 
 export const IpcChannels = {
@@ -59,6 +59,12 @@ export const IpcChannels = {
   msgSearch: 'msg:search',
   msgContext: 'msg:context',
   settingsSaveApp: 'settings:save-app',
+  /** 我的文件柜（决议 #271/#277）：共享根与默认档随 settings:get / settings:updated 下发 */
+  shareMySetRoot: 'share:my-set-root',
+  shareMySetMode: 'share:my-set-mode',
+  shareMyReveal: 'share:my-reveal',
+  shareGrantList: 'share:grant-list',
+  shareGrantSet: 'share:grant-set',
   netAddPeer: 'net:add-peer',
   netScan: 'net:scan',
   netScanAllRanges: 'net:scan-all-ranges',
@@ -483,6 +489,8 @@ export interface SettingsView {
   showMessagePreview: boolean
   /** 是否允许私聊直接发送；默认接收落点为“保存位置/联系人名称”。 */
   allowDirectFileSend: boolean
+  /** 我的文件柜（决议 #271）：共享根与默认权限档，按人例外走 share:grant-list。 */
+  fileCabinet: FileCabinetView
   sound: 'none' | 'drop' | 'wood' | 'ding'
   sendKey: 'enter' | 'ctrlEnter'
   /** Electron accelerator；空串 = 禁用 */
@@ -506,6 +514,45 @@ export interface ScanRangeItemView {
   /** 该网段当前在线节点数（决议 #160）：online 且 IP ∈ CIDR 的节点计数 */
   nodeCount: number
 }
+
+/** 我的文件柜配置投影（决议 #271/#277） */
+export interface FileCabinetView {
+  /** 共享根绝对路径；空串 = 未设置，同事看不到任何内容 */
+  root: string
+  /** 默认权限档 */
+  mode: ShareMode
+  /** 按人例外条数，用于设置页概览 */
+  grantCount: number
+}
+
+/** 例外列表的一行（决议 #271）：权限 + 联系人展示信息 */
+export interface ShareGrantView {
+  nodeId: string
+  /** 显示名：本地备注优先，其次昵称 */
+  name: string
+  avatar: number
+  avatarHash: string
+  online: boolean
+  mode: ShareMode
+}
+
+/** 共享根被拒原因（决议 #276），与 main/services/share.ts 的 ShareRootRejectReason 同域 */
+export type ShareRootRejectReason = 'empty' | 'relative' | 'fs-root' | 'home' | 'app-data' | 'unreadable'
+
+/** 共享根拒绝文案：主进程只回原因码，展示文字集中在此，避免两端各写一套 */
+export const SHARE_ROOT_REJECT_TEXT: Record<ShareRootRejectReason, string> = {
+  empty: '没有选择目录',
+  relative: '请选择一个完整的目录路径',
+  'fs-root': '不能共享整个磁盘根目录，请选择其中一个文件夹',
+  home: '不能共享整个用户主目录，请选择其中一个文件夹',
+  'app-data': '不能共享茶话间自己的数据目录，请换一个文件夹',
+  unreadable: '这个目录读不到，请确认它还在且有访问权限'
+}
+
+export type ShareRootPickResult =
+  | { ok: true; canceled: false; view: SettingsView }
+  | { ok: true; canceled: true }
+  | { ok: false; reason: ShareRootRejectReason }
 
 export interface AppSettingsPatch {
   notifications?: boolean
@@ -661,6 +708,16 @@ export interface PantryApi {
   getMessageContext(convId: string, seq: number): Promise<MessageView[]>
   /** 应用级设置（通知/手动节点/扫描网段） */
   saveAppSettings(patch: AppSettingsPatch): Promise<SettingsView>
+  /** 我的文件柜：选共享根（打开目录选择器并校验）；clear=true 表示清除共享根 */
+  setShareRoot(clear?: boolean): Promise<ShareRootPickResult>
+  /** 我的文件柜：切换默认权限档 */
+  setShareMode(mode: ShareMode): Promise<SettingsView>
+  /** 我的文件柜：在系统文件管理器中打开共享根 */
+  revealShareRoot(): Promise<boolean>
+  /** 按联系人例外列表（含显示名与在线状态） */
+  listShareGrants(): Promise<ShareGrantView[]>
+  /** 写入例外；mode 传 null 表示恢复"跟随默认档" */
+  setShareGrant(nodeId: string, mode: ShareMode | null): Promise<ShareGrantView[]>
   /** 手动添加节点（"ip" 或 "ip:port"）：持久化 + 立即探测 */
   addManualPeer(addr: string): Promise<boolean>
   /** 扫描一个 CIDR 网段；返回探测地址数，非法网段返回 -1 */

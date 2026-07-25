@@ -5,8 +5,9 @@ const settingsSource = readFileSync(new URL('../SettingsApp.vue', import.meta.ur
 const iconSource = readFileSync(new URL('../components/PantryIcon.vue', import.meta.url), 'utf8')
 
 describe('设置二选一偏好滑块', () => {
-  it('头像、主题和发送键共享同一双段滑块结构', () => {
-    expect(settingsSource.match(/class="preference-segment/g)).toHaveLength(3)
+  it('头像、主题、发送键与文件柜权限共享同一滑块结构', () => {
+    // 四处：头像样式（三段）、主题（两段）、发送键（两段）、文件柜默认权限（三段，决议 #271）
+    expect(settingsSource.match(/class="preference-segment/g)).toHaveLength(4)
     expect(settingsSource).not.toContain('NRadioGroup')
     expect(settingsSource).not.toContain('NRadioButton')
     expect(settingsSource).toContain("[data-second='true']::before")

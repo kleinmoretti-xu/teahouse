@@ -30,11 +30,14 @@ import {
   type SearchResult,
   type ScanProgressView,
   type SettingsView,
+  type ShareGrantView,
+  type ShareRootPickResult,
   type StickerView,
   type TableTextMeta,
   type TransferView,
   type UpdateAvailability
 } from '../shared/ipc'
+import type { ShareMode } from '../shared/protocol'
 import { createCaptureInitReplay } from './capture-init-replay'
 
 function subscribe<T>(channel: string, listener: (data: T) => void): () => void {
@@ -162,6 +165,15 @@ const api: PantryApi = {
     ipcRenderer.invoke(IpcChannels.msgContext, convId, seq),
   saveAppSettings: (patch: AppSettingsPatch): Promise<SettingsView> =>
     ipcRenderer.invoke(IpcChannels.settingsSaveApp, patch),
+  setShareRoot: (clear?: boolean): Promise<ShareRootPickResult> =>
+    ipcRenderer.invoke(IpcChannels.shareMySetRoot, clear === true),
+  setShareMode: (mode: ShareMode): Promise<SettingsView> =>
+    ipcRenderer.invoke(IpcChannels.shareMySetMode, mode),
+  revealShareRoot: (): Promise<boolean> => ipcRenderer.invoke(IpcChannels.shareMyReveal),
+  listShareGrants: (): Promise<ShareGrantView[]> =>
+    ipcRenderer.invoke(IpcChannels.shareGrantList),
+  setShareGrant: (nodeId: string, mode: ShareMode | null): Promise<ShareGrantView[]> =>
+    ipcRenderer.invoke(IpcChannels.shareGrantSet, nodeId, mode),
   addManualPeer: (addr: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.netAddPeer, addr),
   scanRange: (cidr: string): Promise<number> => ipcRenderer.invoke(IpcChannels.netScan, cidr),

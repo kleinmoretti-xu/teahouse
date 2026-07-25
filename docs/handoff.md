@@ -139,8 +139,8 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
 ## 4. 下一步
 
 0. **共享文件柜（决议 #271–#277，设计已落档、代码零实现，目标版本 v0.47.0）**：需求 requirements §6.10、协议 protocol §8.2、模块与库表 tech-design §3/§4/§5/§12、界面 ui-design §5/§7.8/§8。**硬约束：不新增端口**（控制面复用 UDP 17878 的 `share` 报文，数据面 100% 复用 TCP 17879 的 `purpose:"share-get"|"share-put"`），`net/transfer.ts` 不动、`net/codec.ts` 只加白名单。建议按三步各自一个增量提交：
-   - **① 我的文件柜**：`config.fileCabinet {root,mode}`（默认 `off`，共享根禁选主目录根 / 系统盘根 / dataRoot）、SQLite 迁移 v14 + `share_grants` repo、`share:my-*` / `share:grant-*` IPC、设置页「我的文件柜」三件套（目录 / 默认档滑块 / 例外表格）。此步不发任何报文，可先单独交付。
-   - **② 浏览与下载**：`shared/protocol.ts` 加 `share` 报文类型、`shr1` 与 11 个 `SHARE_*` 常量 → `codec.ts` 白名单校验 → `services/share.ts`（权限判定、目录列举、分页快照、路径清洗 + `realpath` 越界复核、限流）→ `purpose:"share-get"` 一次性授权与自动 accept → 私聊头部按钮 + `FileCabinetPanel.vue`。
+   - **① 我的文件柜 —— 已完成（v0.47.0）**：`config.fileCabinet {root,mode}`、SQLite v14 `share_grants`、`services/share.ts`（`evaluateShareRoot` + `ShareService.modeFor`）、5 个 `share:*` IPC、设置页「我的文件柜」三件套。此步不发任何报文、**未声明 `shr1`**。
+   - **② 浏览与下载（下一步）**：`shared/protocol.ts` 加 `share` 报文类型、`shr1` 与 11 个 `SHARE_*` 常量 → `codec.ts` 白名单校验 → `services/share.ts`（权限判定、目录列举、分页快照、路径清洗 + `realpath` 越界复核、限流）→ `purpose:"share-get"` 一次性授权与自动 accept → 私聊头部按钮 + `FileCabinetPanel.vue`。
    - **③ 上传**：`purpose:"share-put"` 收端写权限复核、落点 `root/上传者显示名/`、`SHARE_PUT_MAX_BYTES` 上限、完成后写 `messages(kind='system')` 汇总提示（冒泡计未读、不弹桌面通知）。
    - 测试要求：`services/share.ts` 的权限判定与路径校验必须有纯函数单测（含 `..`、绝对路径、盘符、符号链接越界、深度超限、隐藏文件过滤、分页快照失效）；`share` 报文编解码进 `codec.test.ts`；浏览 → 下载 → 上传三段走回环集成测试，**绑定 `127.0.0.1` 且 `broadcastTargets: []`**。
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。

@@ -14,7 +14,16 @@ import {
   type Tray
 } from 'electron'
 import { networkInterfaces } from 'node:os'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, extname, join, resolve } from 'node:path'
@@ -42,6 +51,8 @@ import {
   type ProfileSubmit,
   type ScanProgressView,
   type SettingsView,
+  type ShareGrantView,
+  type ShareRootPickResult,
   type TableTextMeta,
   type TransferView,
   type UpdateAvailability
@@ -59,6 +70,7 @@ import {
   TABLE_TEXT_LIMIT_BYTES,
   TIMINGS,
   isAvatarPresetValue,
+  isShareMode,
   type Envelope,
   type Platform,
   type RuntimeArch,
@@ -103,6 +115,8 @@ import { PorterService } from './services/porter'
 import { SearchService } from './services/search'
 import { openDatabase, openMemoryDatabase, type AppDatabase } from './store/db'
 import { PeersRepo } from './store/peers-repo'
+import { ShareGrantsRepo } from './store/share-grants-repo'
+import { evaluateShareRoot, ShareService } from './services/share'
 import { ConvRepo } from './store/conv-repo'
 import { MsgRepo, msgRowToView } from './store/msg-repo'
 import { QueueRepo } from './store/queue-repo'
@@ -211,6 +225,8 @@ if (!gotLock) {
   let search: SearchService | null = null
   let msgRepoRef: MsgRepo | null = null
   let stickerRepo: StickerRepo | null = null
+  let shareGrantsRepo: ShareGrantsRepo | null = null
+  let share: ShareService | null = null
   let capturing = false
   let pruneTimer: ReturnType<typeof setInterval> | null = null
   let avatarPruneTimer: ReturnType<typeof setTimeout> | null = null
@@ -324,6 +340,7 @@ if (!gotLock) {
   const stickersDir = (): string => join(app.getPath('userData'), 'data', 'stickers')
   const imageThumbnailsDir = (): string => join(app.getPath('userData'), 'data', 'image-thumbnails')
   const avatarsDir = (): string => join(app.getPath('userData'), 'data', 'avatars')
+  const dataRoot = (): string => join(app.getPath('userData'), 'data')
   const managedMediaRoots = (): string[] => [imagesDir(), importedMediaDir(), stickersDir()]
   const managedStickerRoots = (): string[] => [stickersDir(), importedMediaDir()]
   const imagePreview = new ImagePreviewService(imageThumbnailsDir())
@@ -1197,6 +1214,8 @@ if (!gotLock) {
       search = new SearchService(db, registry, (id) => remarks.get(id) ?? '')
       msgRepoRef = new MsgRepo(db)
       stickerRepo = new StickerRepo(db)
+      shareGrantsRepo = new ShareGrantsRepo(db)
+      share?.reload() // 库比 ShareService 晚就绪，此处回灌已保存的按人例外
       chat.prune() // 启动清理（过期队列/去重窗口），之后每小时一次
       pruneTimer = setInterval(() => chat?.prune(), 3_600_000)
       pruneTimer.unref?.()
@@ -1632,6 +1651,11 @@ if (!gotLock) {
       fontScale,
       showMessagePreview: c?.showMessagePreview !== false,
       allowDirectFileSend: c?.allowDirectFileSend !== false,
+      fileCabinet: {
+        root: c?.fileCabinet?.root ?? '',
+        mode: c?.fileCabinet?.mode ?? 'off',
+        grantCount: share?.listGrants().length ?? 0
+      },
       sound,
       sendKey: c?.sendKey === 'ctrlEnter' ? 'ctrlEnter' : 'enter',
       captureShortcut: c?.captureShortcut ?? DEFAULT_CAPTURE_SHORTCUT,
@@ -1807,6 +1831,91 @@ if (!gotLock) {
     })
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
   })
+
+  // ——— 我的文件柜（决议 #271/#276/#277）：ipc 层只做参数校验与转发，判定在 ShareService ———
+
+  function shareGrantViews(): ShareGrantView[] {
+    if (!share) return []
+    return share.listGrants().map((g) => {
+      const record = registry?.get(g.nodeId)
+      return {
+        nodeId: g.nodeId,
+        name: resolvePeerDisplayName(g.nodeId) || g.nodeId.slice(0, 8),
+        avatar: record?.profile.avatar ?? -1,
+        avatarHash: record?.profile.avatarHash ?? '',
+        online: record?.online === true,
+        mode: g.mode
+      }
+    })
+  }
+
+  ipcMain.handle(
+    IpcChannels.shareMySetRoot,
+    async (event, clear: unknown): Promise<ShareRootPickResult> => {
+      if (!appState) return { ok: false, reason: 'empty' }
+      if (clear === true) {
+        saveAppSettings(appState, {
+          fileCabinet: { root: '', mode: appState.config.fileCabinet.mode }
+        })
+        return { ok: true, canceled: false, view: broadcastSettings() }
+      }
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+      if (!owner) return { ok: true, canceled: true }
+      const result = await dialog.showOpenDialog(owner, {
+        title: '选择共享给同事的目录',
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (result.canceled || result.filePaths.length === 0) return { ok: true, canceled: true }
+      const picked = result.filePaths[0]
+      const check = evaluateShareRoot(picked, {
+        home: app.getPath('home'),
+        dataRoot: dataRoot()
+      })
+      if (!check.ok) return { ok: false, reason: check.reason }
+      try {
+        if (!statSync(check.path).isDirectory()) return { ok: false, reason: 'unreadable' }
+        accessSync(check.path, fsConstants.R_OK)
+      } catch {
+        return { ok: false, reason: 'unreadable' }
+      }
+      saveAppSettings(appState, {
+        fileCabinet: { root: check.path, mode: appState.config.fileCabinet.mode }
+      })
+      // 日志只记是否已设置，绝不记录共享根路径本身（决议 #6/#276）
+      console.log('[share] 共享目录已设置')
+      return { ok: true, canceled: false, view: broadcastSettings() }
+    }
+  )
+
+  ipcMain.handle(IpcChannels.shareMySetMode, (_event, mode: unknown): SettingsView => {
+    if (!appState || !isShareMode(mode)) return settingsView()
+    saveAppSettings(appState, {
+      fileCabinet: { root: appState.config.fileCabinet.root, mode }
+    })
+    return broadcastSettings()
+  })
+
+  ipcMain.handle(IpcChannels.shareMyReveal, (): boolean => {
+    const root = appState?.config.fileCabinet.root ?? ''
+    if (root.length === 0 || !existsSync(root)) return false
+    shell.openPath(root).catch(() => undefined)
+    return true
+  })
+
+  ipcMain.handle(IpcChannels.shareGrantList, (): ShareGrantView[] => shareGrantViews())
+
+  ipcMain.handle(
+    IpcChannels.shareGrantSet,
+    (_event, nodeId: unknown, mode: unknown): ShareGrantView[] => {
+      if (typeof nodeId !== 'string' || nodeId.length === 0 || nodeId.length > LIMITS.id) {
+        return shareGrantViews()
+      }
+      if (mode !== null && !isShareMode(mode)) return shareGrantViews()
+      share?.setGrant(nodeId, mode)
+      broadcastSettings() // grantCount 变了，设置页与主窗一起刷新
+      return shareGrantViews()
+    }
+  )
 
   ipcMain.handle(IpcChannels.filePick, async (event, directory: unknown): Promise<string[] | null> => {
     if (!mainWindow) return null
@@ -2515,6 +2624,12 @@ if (!gotLock) {
     netState.udpPort = udpPort
     appState.profile.tcpPort = tcpPort
     applyAutoLaunch(appState.config.autoLaunch)
+    // 文件柜权限判定只依赖本机配置，库不可用时例外退化为内存态（决议 #271/#277）
+    share = new ShareService({
+      getRoot: () => appState?.config.fileCabinet.root ?? '',
+      getDefaultMode: () => appState?.config.fileCabinet.mode ?? 'off',
+      getGrants: () => shareGrantsRepo
+    })
 
     // pantry-img://<transferId> —— 渲染层取图的唯一通道（绕开 file:// 的 CSP/安全限制，
     // 且只放行 transfers 表里登记过的路径，不开任意文件读取口子）

@@ -159,7 +159,31 @@ export const CAPS = {
   groupRoles: 'gr1',
   /** 支持资料/群头像哈希与可靠 avatar 按需取图（决议 #243）。 */
   avatarImages: 'av1'
+  // 共享文件柜能力位 shr1 待浏览/下载落地后再声明（决议 #275）：
+  // 声明即代表能应答 share 报文，提前声明会让对端看到一个点不动的入口。
 } as const
+
+/**
+ * 共享文件柜权限档（protocol §8.2 / 决议 #271）：
+ * off = 完全不可见，read = 可浏览与下载，write = 额外允许上传新文件（不可删改覆盖）。
+ * 既是本机默认档与按人例外的取值，也是 `share{op:"list-ok"}` 里 `perm` 的取值域。
+ */
+export type ShareMode = 'off' | 'read' | 'write'
+
+export function isShareMode(value: unknown): value is ShareMode {
+  return value === 'off' || value === 'read' || value === 'write'
+}
+
+/**
+ * 有效权限（决议 #271）：命中按人例外则用例外，否则回落默认档。
+ * 判定只在共享方本机进行，不信任任何对端声明。
+ */
+export function effectiveShareMode(
+  defaultMode: ShareMode,
+  grant: ShareMode | null | undefined
+): ShareMode {
+  return grant ?? defaultMode
+}
 
 /** 报文信封（protocol §4） */
 export interface Envelope<T = unknown> {

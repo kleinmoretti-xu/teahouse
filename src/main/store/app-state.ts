@@ -8,8 +8,10 @@ import {
   DEFAULT_UDP_PORT,
   isAvatarHash,
   isAvatarPresetValue,
+  isShareMode,
   type Platform,
-  type Profile
+  type Profile,
+  type ShareMode
 } from '../../shared/protocol'
 
 // 本地状态：identity.json（节点身份，永不变）+ config.json（资料与应用设置）。
@@ -59,6 +61,8 @@ export interface ConfigFile {
   showMessagePreview: boolean
   /** 允许私聊直接发送；默认接收目录统一为“保存位置/联系人名称”（群聊不适用直接发送） */
   allowDirectFileSend: boolean
+  /** 共享文件柜（决议 #271/#277）：共享根 + 默认权限档；按人例外在 SQLite share_grants */
+  fileCabinet: FileCabinetConfig
   /** 提示音：none 默认静音，其余交给系统通知播放 */
   sound: 'none' | 'drop' | 'wood' | 'ding'
   /** 发送键行为 */
@@ -67,6 +71,13 @@ export interface ConfigFile {
   captureShortcut: string
   /** 显示/隐藏主窗快捷键；空串=禁用 */
   showHideShortcut: string
+}
+
+export interface FileCabinetConfig {
+  /** 共享根绝对路径；空串 = 未设置，功能整体关闭 */
+  root: string
+  /** 默认权限档；缺省 off，老配置升级上来不会凭空开放目录 */
+  mode: ShareMode
 }
 
 export interface ScanRangeSourceRecord {
@@ -209,6 +220,7 @@ export function saveAppSettings(
       | 'fontScale'
       | 'showMessagePreview'
       | 'allowDirectFileSend'
+      | 'fileCabinet'
       | 'sound'
       | 'sendKey'
       | 'captureShortcut'
@@ -251,6 +263,12 @@ export function saveAppSettings(
   }
   if (patch.allowDirectFileSend !== undefined) {
     state.config.allowDirectFileSend = patch.allowDirectFileSend
+  }
+  if (patch.fileCabinet !== undefined) {
+    state.config.fileCabinet = {
+      root: typeof patch.fileCabinet.root === 'string' ? patch.fileCabinet.root : '',
+      mode: isShareMode(patch.fileCabinet.mode) ? patch.fileCabinet.mode : 'off'
+    }
   }
   if (patch.sound !== undefined) state.config.sound = patch.sound
   if (patch.sendKey !== undefined) state.config.sendKey = patch.sendKey
@@ -342,6 +360,7 @@ export function loadAppState(
       fontScale: 100,
       showMessagePreview: true,
       allowDirectFileSend: true,
+      fileCabinet: { root: '', mode: 'off' },
       sound: 'none',
       sendKey: 'enter',
       captureShortcut: 'CommandOrControl+Alt+A',
@@ -424,6 +443,14 @@ export function loadAppState(
   config.fontScale = config.fontScale === 110 || config.fontScale === 125 ? config.fontScale : 100
   config.showMessagePreview = config.showMessagePreview !== false
   config.allowDirectFileSend = config.allowDirectFileSend !== false
+  // 共享文件柜默认关闭（决议 #271）：老配置缺字段或字段损坏时不得凭空开放任何目录
+  config.fileCabinet =
+    config.fileCabinet && typeof config.fileCabinet === 'object'
+      ? {
+          root: typeof config.fileCabinet.root === 'string' ? config.fileCabinet.root : '',
+          mode: isShareMode(config.fileCabinet.mode) ? config.fileCabinet.mode : 'off'
+        }
+      : { root: '', mode: 'off' }
   config.sound =
     config.sound === 'drop' || config.sound === 'wood' || config.sound === 'ding'
       ? config.sound

@@ -18,6 +18,7 @@ import { DedupRepo } from './dedup-repo'
 import { TransferRepo } from './transfer-repo'
 import { GroupRepo } from './group-repo'
 import { StickerRepo } from './sticker-repo'
+import { ShareGrantsRepo } from './share-grants-repo'
 import { toFtsQuery, toFtsTokens } from './fts'
 import { SearchService } from '../services/search'
 import { PorterService } from '../services/porter'
@@ -70,7 +71,7 @@ try {
   console.log(`[db-selftest] runtime node=${process.versions.node} abi=${process.versions.modules}`)
 
   // 1. 迁移就位
-  assert.equal(db.pragma('user_version', { simple: true }), 13, '迁移版本应为 13')
+  assert.equal(db.pragma('user_version', { simple: true }), 14, '迁移版本应为 14')
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal', '应为 WAL 模式')
   const messageIndexes = new Set(
     (
@@ -112,7 +113,7 @@ try {
     ''
   )
   applyMigrations(legacyDb)
-  assert.equal(legacyDb.pragma('user_version', { simple: true }), 13, 'v10 数据库应迁移至 v13')
+  assert.equal(legacyDb.pragma('user_version', { simple: true }), 14, 'v10 数据库应迁移至 v14')
   const migratedGroup = new GroupRepo(legacyDb).get('g-v10')
   assert.equal(migratedGroup?.ownerId, 'node-creator', '旧群优先以仍在群内的创建者作为群主')
   assert.deepEqual(migratedGroup?.adminIds, [], '旧群管理员默认应为空')
@@ -122,7 +123,7 @@ try {
   for (let index = 0; index < 11; index += 1) legacyV11.exec(MIGRATIONS[index])
   legacyV11.pragma('user_version = 11')
   applyMigrations(legacyV11)
-  assert.equal(legacyV11.pragma('user_version', { simple: true }), 13, 'v11 数据库应迁移至 v13')
+  assert.equal(legacyV11.pragma('user_version', { simple: true }), 14, 'v11 数据库应迁移至 v14')
   const peerColumns = legacyV11.pragma('table_info(peers)') as Array<{ name: string }>
   const groupColumns = legacyV11.pragma('table_info(groups)') as Array<{ name: string }>
   assert.equal(peerColumns.some((column) => column.name === 'avatar_hash'), true)
@@ -138,7 +139,7 @@ try {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run('legacy-transfer', 'legacy-message', 'node-bob', 'out', '{}', 'offering', 0, 10, 1)
   applyMigrations(legacyV12)
-  assert.equal(legacyV12.pragma('user_version', { simple: true }), 13, 'v12 数据库应迁移至 v13')
+  assert.equal(legacyV12.pragma('user_version', { simple: true }), 14, 'v12 数据库应迁移至 v14')
   const legacyTransfer = legacyV12
     .prepare('SELECT expires_at FROM transfers WHERE transfer_id = ?')
     .get('legacy-transfer') as { expires_at: number }
@@ -149,6 +150,16 @@ try {
     'v13 应创建出站源文件清单表'
   )
   legacyV12.close()
+
+  // v13 → v14：共享文件柜按人例外表（决议 #271/#277），老库升级后不得带任何既有例外
+  const legacyV13 = new Database(join(dir, 'legacy-v13.db'))
+  for (let index = 0; index < 13; index += 1) legacyV13.exec(MIGRATIONS[index])
+  legacyV13.pragma('user_version = 13')
+  applyMigrations(legacyV13)
+  assert.equal(legacyV13.pragma('user_version', { simple: true }), 14, 'v13 数据库应迁移至 v14')
+  const v14Grants = new ShareGrantsRepo(legacyV13)
+  assert.equal(v14Grants.list().length, 0, '升级到 v14 不得凭空产生例外')
+  legacyV13.close()
 
   // 2. 联系人 upsert / 载入往返
   const repo = new PeersRepo(db)
@@ -540,6 +551,29 @@ try {
   assert.equal(stickerRepo.list()[0].id, 's-2', '最新收藏在前')
   assert.equal(stickerRepo.remove('s-1'), '/tmp/s-1.webp', '删除返回路径供清理文件')
   assert.equal(stickerRepo.list().length, 1)
+
+  // 11.5 共享文件柜按人例外（决议 #271/#277）：写入、改档、删行往返
+  const grantsRepo = new ShareGrantsRepo(db)
+  assert.equal(grantsRepo.list().length, 0, '初始应无例外')
+  grantsRepo.set('node-alice', 'write', 2000)
+  grantsRepo.set('node-bob', 'off', 1000)
+  assert.equal(grantsRepo.list().length, 2)
+  assert.equal(grantsRepo.list()[0].nodeId, 'node-alice', '最近改动的例外在前')
+  assert.equal(grantsRepo.loadAll().get('node-alice'), 'write')
+  grantsRepo.set('node-alice', 'read', 3000)
+  assert.equal(grantsRepo.loadAll().get('node-alice'), 'read', '同一联系人改档应覆盖而非新增')
+  assert.equal(grantsRepo.list().length, 2)
+  grantsRepo.set('node-bob', null)
+  assert.equal(grantsRepo.loadAll().has('node-bob'), false, '传 null 应删行=恢复跟随默认')
+  assert.equal(grantsRepo.list().length, 1)
+  db.prepare('INSERT INTO share_grants (node_id, mode, updated_ts) VALUES (?, ?, ?)').run(
+    'node-broken',
+    'nonsense',
+    4000
+  )
+  assert.equal(grantsRepo.loadAll().has('node-broken'), false, '损坏档位按无例外忽略')
+  assert.equal(grantsRepo.list().length, 1, '损坏行不进例外列表')
+  db.prepare('DELETE FROM share_grants').run()
 
   // 12. 迁移备份包：消息库 + 群/表情/传输元数据 + 图片/表情媒体
   const imagePath = join(dir, 'image.webp')

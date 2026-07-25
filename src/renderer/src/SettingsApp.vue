@@ -18,11 +18,14 @@ import {
   type AvatarSourcePick,
   type ConversationView,
   type DataExportOptions,
+  type PeerView,
   type ScanRangeItemView,
   type SettingsView,
-  type TransferView
+  type ShareGrantView,
+  type TransferView,
+  SHARE_ROOT_REJECT_TEXT
 } from '../../shared/ipc'
-import { DEFAULT_TCP_PORT, DEFAULT_UDP_PORT } from '../../shared/protocol'
+import { DEFAULT_TCP_PORT, DEFAULT_UDP_PORT, type ShareMode } from '../../shared/protocol'
 import { applyAppearance } from './utils/appearance'
 import { applyPerformanceProfile } from './utils/performance-profile'
 import {
@@ -281,6 +284,7 @@ async function reload(): Promise<void> {
   syncForm(s)
   conversations.value = await window.pantry.listConversations()
   transfers.value = await window.pantry.listTransfers(30)
+  await loadShareGrants()
 }
 
 function syncForm(s: SettingsView): void {
@@ -452,6 +456,96 @@ async function toggleMessagePreview(value: boolean): Promise<void> {
 
 async function toggleDirectFileReceive(value: boolean): Promise<void> {
   await saveApp({ allowDirectFileSend: value })
+}
+
+// —— 我的文件柜（决议 #271/#272/#276）：共享根 + 默认档 + 按人例外 ——
+
+const SHARE_MODE_OPTIONS: Array<{ label: string; value: ShareMode }> = [
+  { label: '不共享', value: 'off' },
+  { label: '只读', value: 'read' },
+  { label: '可读可传', value: 'write' }
+]
+
+const shareGrants = ref<ShareGrantView[]>([])
+const sharePeers = ref<PeerView[]>([])
+const shareRootError = ref('')
+const newGrantId = ref<string | null>(null)
+
+const shareRoot = computed(() => settings.value?.fileCabinet.root ?? '')
+const shareMode = computed<ShareMode>(() => settings.value?.fileCabinet.mode ?? 'off')
+
+const shareModeHint = computed(() => {
+  if (!shareRoot.value) return '先选择共享目录，权限才会生效。'
+  if (shareMode.value === 'write') {
+    return '同事可以浏览、下载，也能往你的文件柜放新文件；他们不能删除、改名或覆盖你已有的文件。'
+  }
+  if (shareMode.value === 'read') return '同事可以浏览和下载，不能往里放东西。'
+  return '默认谁都看不到；可以在下面单独给某位同事开放。'
+})
+
+const shareGrantCandidates = computed(() =>
+  sharePeers.value
+    .filter((p) => !shareGrants.value.some((g) => g.nodeId === p.nodeId))
+    .map((p) => ({
+      label: `${p.remark || p.nick || p.nodeId.slice(0, 8)}${p.online ? '' : '（离线）'}`,
+      value: p.nodeId
+    }))
+)
+
+async function loadShareGrants(): Promise<void> {
+  shareGrants.value = await window.pantry.listShareGrants()
+  sharePeers.value = await window.pantry.getPeers()
+}
+
+async function pickShareRoot(): Promise<void> {
+  shareRootError.value = ''
+  const result = await window.pantry.setShareRoot()
+  if (!result.ok) {
+    shareRootError.value = SHARE_ROOT_REJECT_TEXT[result.reason]
+    return
+  }
+  if (result.canceled) return
+  syncForm(result.view)
+  flashSaved('共享目录已设置')
+}
+
+async function clearShareRoot(): Promise<void> {
+  shareRootError.value = ''
+  const result = await window.pantry.setShareRoot(true)
+  if (result.ok && !result.canceled) {
+    syncForm(result.view)
+    flashSaved('已停止共享')
+  }
+}
+
+async function revealShareRoot(): Promise<void> {
+  await window.pantry.revealShareRoot()
+}
+
+async function changeShareMode(mode: ShareMode): Promise<void> {
+  if (mode === shareMode.value) return
+  syncForm(await window.pantry.setShareMode(mode))
+  flashSaved()
+}
+
+// 新例外默认给"只读"：加例外多半是为了对某人开一条缝，写权限再手动往上调
+async function addShareGrant(): Promise<void> {
+  const nodeId = newGrantId.value
+  if (!nodeId) return
+  shareGrants.value = await window.pantry.setShareGrant(nodeId, 'read')
+  newGrantId.value = null
+  flashSaved('已添加例外')
+}
+
+async function changeShareGrant(nodeId: string, mode: string | number | null): Promise<void> {
+  if (mode !== 'off' && mode !== 'read' && mode !== 'write') return
+  shareGrants.value = await window.pantry.setShareGrant(nodeId, mode)
+  flashSaved()
+}
+
+async function removeShareGrant(nodeId: string): Promise<void> {
+  shareGrants.value = await window.pantry.setShareGrant(nodeId, null)
+  flashSaved('已恢复跟随默认')
 }
 
 async function changeFontScale(value: string | number | null): Promise<void> {
@@ -1082,6 +1176,109 @@ async function confirmRemove(cidr: string): Promise<void> {
                 :value="settings.allowDirectFileSend"
                 @update:value="toggleDirectFileReceive"
               />
+            </div>
+          </div>
+
+          <!-- 我的文件柜（决议 #271/#272/#276）：共享根 + 默认档 + 按人例外 -->
+          <div class="panel">
+            <div class="panel-head">
+              <h2>我的文件柜</h2>
+              <p>共享一个目录，同事在私聊里就能自己来取；开放上传时他们只能新增文件。</p>
+            </div>
+            <div class="setting-line">
+              <div>
+                <strong>共享目录</strong>
+                <small v-if="shareRoot" class="path">{{ shareRoot }}</small>
+                <small v-else>未设置共享目录，同事看不到任何内容。</small>
+                <small v-if="shareRootError" class="share-error">{{ shareRootError }}</small>
+              </div>
+              <div class="share-root-ops">
+                <NButton v-if="shareRoot" secondary size="small" @click="revealShareRoot">
+                  打开
+                </NButton>
+                <NButton secondary size="small" @click="pickShareRoot">
+                  {{ shareRoot ? '更改' : '选择目录' }}
+                </NButton>
+                <NButton v-if="shareRoot" secondary size="small" @click="clearShareRoot">
+                  停止共享
+                </NButton>
+              </div>
+            </div>
+            <div class="setting-line">
+              <div>
+                <strong>默认权限</strong>
+                <small>{{ shareModeHint }}</small>
+              </div>
+              <div
+                class="preference-segment share-mode"
+                role="radiogroup"
+                aria-label="文件柜默认权限"
+              >
+                <button
+                  v-for="opt in SHARE_MODE_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  role="radio"
+                  :class="{ on: shareMode === opt.value }"
+                  :aria-checked="shareMode === opt.value"
+                  :disabled="!shareRoot"
+                  @click="changeShareMode(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+            <div class="share-grants">
+              <div class="grants-head">
+                <strong>按联系人例外</strong>
+                <small>例外优先于默认权限，可以单独调高，也可以单独关掉。</small>
+              </div>
+              <div class="inline-form">
+                <NSelect
+                  v-model:value="newGrantId"
+                  :options="shareGrantCandidates"
+                  :disabled="!shareRoot"
+                  filterable
+                  clearable
+                  placeholder="搜索联系人，为 TA 单独设置权限"
+                />
+                <NButton type="primary" :disabled="!newGrantId" @click="addShareGrant">
+                  添加
+                </NButton>
+              </div>
+              <div v-if="shareGrants.length === 0" class="empty-state">所有同事都按默认权限</div>
+              <div v-else class="grant-table">
+                <div class="grant-row grant-head">
+                  <span>联系人</span>
+                  <span>权限</span>
+                  <span>操作</span>
+                </div>
+                <div v-for="g in shareGrants" :key="g.nodeId" class="grant-row">
+                  <div class="grant-peer">
+                    <AvatarMark
+                      class="grant-avatar"
+                      :avatar="g.avatar"
+                      :avatar-hash="g.avatarHash"
+                      :name="g.name"
+                      :offline="!g.online"
+                    />
+                    <span class="grant-name" :class="{ offline: !g.online }">{{ g.name }}</span>
+                  </div>
+                  <NSelect
+                    :value="g.mode"
+                    :options="SHARE_MODE_OPTIONS"
+                    size="small"
+                    @update:value="(v: string | number | null) => changeShareGrant(g.nodeId, v)"
+                  />
+                  <button
+                    class="icon-button danger"
+                    title="移除例外（恢复跟随默认权限）"
+                    @click="removeShareGrant(g.nodeId)"
+                  >
+                    <PantryIcon name="x" :size="14" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2298,6 +2495,117 @@ async function confirmRemove(cidr: string): Promise<void> {
 }
 
 /* 网段扫描表格（决议 #160）：网段 / 在线节点数 / 操作 三列对齐，贴合设置页标尺 */
+/* 我的文件柜（决议 #271）：三段权限滑块沿用头像模式的等分底座，例外表沿用网段表的紧凑三列 */
+.share-mode {
+  width: 246px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.share-mode::before {
+  display: none;
+}
+
+.share-mode button.on {
+  background: var(--bg-window);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.share-mode button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.share-root-ops {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.share-error {
+  color: var(--danger, #c9463c);
+}
+
+.share-grants {
+  margin-top: var(--sp-3);
+}
+
+.grants-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.grants-head > strong {
+  font-size: var(--fs-body);
+  color: var(--text-1);
+}
+
+.grants-head > small {
+  min-width: 0;
+  font-size: var(--fs-aux);
+  color: var(--text-3);
+}
+
+.grant-table {
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  overflow: hidden;
+}
+
+.grant-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px 32px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.grant-row + .grant-row {
+  border-top: 1px solid var(--line);
+}
+
+.grant-head {
+  background: var(--bg-list);
+  border-bottom: 1px solid var(--line);
+}
+
+.grant-head > span {
+  font-size: var(--fs-aux);
+  color: var(--text-3);
+}
+
+.grant-head > span:nth-child(3) {
+  text-align: right;
+}
+
+.grant-peer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.grant-avatar {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.grant-name {
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 离线灰显 + 副文字口径沿用决议 #17 */
+.grant-name.offline {
+  color: var(--text-3);
+}
+
 .range-table {
   border: 1px solid var(--line);
   border-radius: var(--r-control);
