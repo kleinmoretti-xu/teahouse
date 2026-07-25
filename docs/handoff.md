@@ -114,7 +114,7 @@ npm run smoke     # 启动 1.5s 干净退出（PANTRY_SMOKE 钩子，CI 同款�
 ```
 
 - 本机三客户端联调：懒人入口用 `npm run dev:2` 一次拉起前两个、`npm run dev:3` 一次拉起三个；也可分别在三个终端跑 `npm run dev:client1`、`npm run dev:client2`、`npm run dev:client3`。三个实例使用 `/tmp/pantry-dev1..3` 和 `17878/27878/37878` UDP 端口、`17879/27879/37879` TCP 端口。
-- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #269，续 #270+）；协议改动必须 protocol.md 先行。
+- 决策落档：新决议追加到 requirements §9 决议记录 / §11 变更记录（编号已到 #277，续 #278+）；协议改动必须 protocol.md 先行。
 - 与用户协作：**全程中文**；用户技术方向不在网络/协议——技术细节直接定但落档、**不要追问底层**；产品可感知取舍（功能形态/默认参数）用 2-4 个带推荐的选项问他。
 
 ## 3. 代码地图（src/，分层铁律见 AGENTS.md #7）
@@ -138,6 +138,11 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
 
 ## 4. 下一步
 
+0. **共享文件柜（决议 #271–#277，设计已落档、代码零实现，目标版本 v0.47.0）**：需求 requirements §6.10、协议 protocol §8.2、模块与库表 tech-design §3/§4/§5/§12、界面 ui-design §5/§7.8/§8。**硬约束：不新增端口**（控制面复用 UDP 17878 的 `share` 报文，数据面 100% 复用 TCP 17879 的 `purpose:"share-get"|"share-put"`），`net/transfer.ts` 不动、`net/codec.ts` 只加白名单。建议按三步各自一个增量提交：
+   - **① 我的文件柜**：`config.fileCabinet {root,mode}`（默认 `off`，共享根禁选主目录根 / 系统盘根 / dataRoot）、SQLite 迁移 v14 + `share_grants` repo、`share:my-*` / `share:grant-*` IPC、设置页「我的文件柜」三件套（目录 / 默认档滑块 / 例外表格）。此步不发任何报文，可先单独交付。
+   - **② 浏览与下载**：`shared/protocol.ts` 加 `share` 报文类型、`shr1` 与 11 个 `SHARE_*` 常量 → `codec.ts` 白名单校验 → `services/share.ts`（权限判定、目录列举、分页快照、路径清洗 + `realpath` 越界复核、限流）→ `purpose:"share-get"` 一次性授权与自动 accept → 私聊头部按钮 + `FileCabinetPanel.vue`。
+   - **③ 上传**：`purpose:"share-put"` 收端写权限复核、落点 `root/上传者显示名/`、`SHARE_PUT_MAX_BYTES` 上限、完成后写 `messages(kind='system')` 汇总提示（冒泡计未读、不弹桌面通知）。
+   - 测试要求：`services/share.ts` 的权限判定与路径校验必须有纯函数单测（含 `..`、绝对路径、盘符、符号链接越界、深度超限、隐藏文件过滤、分页快照失效）；`share` 报文编解码进 `codec.test.ts`；浏览 → 下载 → 上传三段走回环集成测试，**绑定 `127.0.0.1` 且 `broadcastTargets: []`**。
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
 2. **代码优化状态（决议 #200/#210）**：[optimization-plan.md](optimization-plan.md) 的 18 项首批优化与 #210 第二批渲染性能优化均已完成；下一批开始前先按用户确认的范围新增决议与设计记录。
 3. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。

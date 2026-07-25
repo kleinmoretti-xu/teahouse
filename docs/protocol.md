@@ -49,7 +49,7 @@
 }
 ```
 
-**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`av1` 自定义头像**（决议 #243，理解资料/群元数据头像哈希与 `avatar` 按需取图）、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`tbl1` 表格图片文字视图**（决议 #190，支持 `file-ctl offer.tableText/tableTextTruncated`，图片气泡可在图片 / 原始 TSV 文本间切换）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`tw1` 传输排队与可恢复取消**（决议 #211，支持接收 TCP `wait` 帧；作为发送方时收到对端 cancel 后保留供流授权，允许接收方此后凭原 transferId 断点重拉）、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
+**caps 能力位**（短串，入站按 `LIMITS.capItem` 截断、未知位忽略）：`grp1` 群聊、`img1` 图片消息、**`av1` 自定义头像**（决议 #243，理解资料/群元数据头像哈希与 `avatar` 按需取图）、**`mrec1` 媒体撤回**（决议 #188，支持 `file-ctl offer.msgId` 与图片 / 未完成文件撤回）、**`tbl1` 表格图片文字视图**（决议 #190，支持 `file-ctl offer.tableText/tableTextTruncated`，图片气泡可在图片 / 原始 TSV 文本间切换）、**`fd1` 私聊文件直接发送**（决议 #174，支持接收 `file-ctl {op:"direct"}` 并按本地策略自动 accept）、**`tw1` 传输排队与可恢复取消**（决议 #211，支持接收 TCP `wait` 帧；作为发送方时收到对端 cancel 后保留供流授权，允许接收方此后凭原 transferId 断点重拉）、**`shr1` 共享文件柜**（决议 #271/#275，支持 `share` 报文的 `list/list-ok/get/deny` 与 `file-ctl offer.purpose:"share-get"|"share-put"`）——只声明能力，**不代表已开共享**：是否可见、可下载、可上传一律由共享方本机按"默认档 + 按人例外"当场判定，未声明者按未知类型忽略 `share` 报文，新端对其灰显文件柜入口并拒收其 `purpose:"share-*"` offer、**`upd1` 可作为本平台更新源**（决议 #166/#170/#181）——声明者运行于可分发形态（Windows nsis 安装版可自留安装器、Linux deb 可经 `dpkg-deb` 自重打包），且本机已有可提供的本平台安装包，能向同平台、同架构、版本更低的节点提供安装包；形态不可分发 / 尚未备妥包时不声明。绿色版（portable / AppImage）机制上同样适用，本期实现聚焦 nsis / deb。
 
 ## 4. 报文信封（UDP 与 TCP 控制帧通用）
 
@@ -81,6 +81,7 @@
 | `ack` | 单播 | UDP/TCP | `{ackFor: id}`，对 `msg` 与 `file-ctl` 的确认 |
 | `file-ctl` | 单播 | UDP | 文件控制：offer / accept / decline / cancel / direct（`direct` 为发送方在私聊文件卡片上请求直接发送；`offer.purpose:"update"` 为自更新包，见 §8） |
 | `update` | 单播 | UDP/TCP | 局域网自更新：可靠控制报文；`req` 请求对端发来其平台安装包（决议 #166/#170，见 §8） |
+| `share` | 单播 | UDP/TCP | 共享文件柜控制：list / list-ok / get / deny（见 §8.2；`list-ok` 常超 UDP 上限，走既有 TCP 控制帧兜底） |
 | `group` | 单播 | UDP | 群元数据：info / need（见 §7.4） |
 | `avatar` | 单播 | UDP/TCP | 自定义头像按 SHA-256 请求 / 返回 / 无数据提示（见 §7.5） |
 
@@ -262,6 +263,78 @@ sequenceDiagram
 4. 校验通过 → 应用更新（nsis 静默装 / deb 经 pkexec 授权装）并重启；B 保留该包、自身改为声明 `upd1`，成为新的更新源（接力扩散）。
 5. 全程纯内网点对点、零外网；信任内网边界（决议 #5，v1 不签名），以"用户确认 + SHA-256 + 同平台同架构 + 版本核对"为安全底线。
 
+### 8.2 共享文件柜（决议 #271–#277）
+
+需求见 requirements §6.10。**硬约束：不新增任何端口、不新增数据面**——控制面走既有 UDP 17878（新增 `share` 报文，可靠投递 + ACK，单包超 `UDP_MAX_PAYLOAD` 时按既有规则改走 TCP 控制帧 `msg` 兜底），数据面 100% 复用 §8 的拉取式 TCP 17879，只多两个 `purpose`。
+
+**基本口径**：
+
+- **权限只在共享方判定**。浏览方拿到的 `perm` 只是"共享方告诉我我能干什么"，用于 UI 灰显；共享方在每一次 `list` / `get` / `share-put` offer 上都**重新独立判定**，不信任对端声明。有效权限 = 按人例外命中则用例外，否则用默认档，三档为 `off` / `read` / `write`。
+- **协议里只出现共享根下的相对路径**，永远不含共享根的真实绝对路径、盘符或用户名目录，接收侧也不接受任何绝对路径。
+- 双方必须在线且都声明 `shr1`；对端未声明时不得发送 `share` 报文（旧端会整包忽略），也不得向其发 `purpose:"share-*"` 的 offer。
+- `share` 报文和 `purpose:"share-get"|"share-put"` 的传输**不进聊天流**：不带 `msgId`、不生成 `messages` 记录、不写 FTS、不套用 `FILE_OFFER_TTL` 领取期限、不参与媒体撤回。
+
+**报文载荷**：
+
+```jsonc
+// list：浏览方 → 共享方，请求列出某目录的一页
+{ "op":"list", "reqId":"uuid", "path":"设计稿/2026", "offset":0, "snapshotId":"a1b2…" }
+
+// list-ok：共享方 → 浏览方，返回一页
+{ "op":"list-ok", "reqId":"uuid", "path":"设计稿/2026",
+  "perm":"read",                    // read | write（off 不回 list-ok，回 deny）
+  "snapshotId":"a1b2…",             // 本次列表快照，翻页必须原样带回
+  "offset":0, "total":137, "truncated":false,
+  "entries":[ { "name":"封面.psd", "size":10485760, "isDir":false, "mtime":1780000000000 } ] }
+
+// get：浏览方 → 共享方，请求下载若干条目（文件或整个子目录）
+{ "op":"get", "reqId":"uuid", "paths":["设计稿/2026/封面.psd","设计稿/2026/切图"] }
+
+// deny：共享方 → 浏览方，拒绝并说明原因
+{ "op":"deny", "reqId":"uuid", "reason":"off" }   // off|no-perm|not-found|too-deep|busy|gone
+```
+
+**下载时序**（复用 §8 的拉取式数据面，共享方仍是数据发送方）：
+
+```mermaid
+sequenceDiagram
+    participant B as 浏览方 B
+    participant O as 共享方 O
+    B->>O: share{op:list, path, offset}（UDP，可靠）
+    O-->>B: ack
+    O->>B: share{op:list-ok, perm, entries[…], total}（超 1200B 走 TCP 控制帧）
+    Note over B: 面板展示；勾选要下载的条目
+    B->>O: share{op:get, paths[…]}
+    O-->>B: ack
+    Note over O: 复核权限与每条路径 → 展开目录为相对路径树
+    O->>B: file-ctl{op:offer, purpose:"share-get", transferId, files[…]}
+    Note over B: 自动 accept（不入聊天流、无需用户确认）
+    B->>O: file-ctl{op:accept} → TCP 17879 pull / pull-ok / done / finish
+```
+
+**上传时序**（上传方是数据发送方，共享方拉取，与普通文件方向一致）：
+
+```mermaid
+sequenceDiagram
+    participant U as 上传方 U
+    participant O as 共享方 O
+    Note over U: 面板显示 perm=write 才允许触发
+    U->>O: file-ctl{op:offer, purpose:"share-put", transferId, files[…]}
+    O-->>U: ack
+    Note over O: 复核 U 的有效权限 == write、总量 ≤ SHARE_PUT_MAX_BYTES、逐条路径清洗
+    O->>U: file-ctl{op:accept}（权限不足则 decline）
+    O->>U: TCP 17879 pull / pull-ok / done / finish
+    Note over O: 落到 共享根/上传者显示名/，重名加后缀；完成后插一条本地系统提示
+```
+
+**分页与快照**：共享方收到 `offset:0` 的 `list` 时读目录、过滤、排序（目录在前、再按名称）后生成一份快照并返回 `snapshotId`；浏览方翻页必须原样带回该 ID，共享方直接从快照切片，保证翻页期间目录变动不会漏项或重复。快照最多缓存 `SHARE_SNAPSHOT_MAX` 份、存活 `SHARE_SNAPSHOT_TTL`，过期或未命中时回 `deny{reason:"gone"}`，浏览方自动从第 0 页重新拉取。单页条目数与整条 `list-ok` 信封大小同时受限（`SHARE_LIST_PAGE` / `SHARE_LIST_FRAME_MAX`），共享方按先到者收窄当页条目数；单目录条目超过 `SHARE_DIR_MAX_ENTRIES` 时只取前 N 条并置 `truncated:true`。
+
+**入站校验（与既有白名单同等强度）**：`reqId` 为受限非空字符串；`path` 为相对路径，长度 ≤ `SHARE_PATH_MAX`，拒绝绝对路径、`..`、盘符与保留字符，段数 ≤ `SHARE_MAX_DEPTH`，空串表示共享根；`offset` 为非负安全整数；`paths[]` 条数 ≤ `SHARE_GET_MAX_PATHS`，逐条同 `path` 校验；`entries[].name` ≤ `SHARE_NAME_MAX` 且不含路径分隔符，`size/mtime` 为非负安全整数；`perm` 与 `reason` 必须是上面的枚举值；未知 op、未知字段、超限一律拒绝。**路径解析后必须复核真实路径仍在共享根内**（`realpath` 比对），指向根外的符号链接在列举时跳过、在 `get` 时按 `not-found` 拒绝。`purpose:"share-get"` 的 offer 只接受来自本机刚刚发起过 `get` 的那个节点、且 transferId 未被消费；`purpose:"share-put"` 的 offer 一律按共享方本机权限判定，`files[].path` 沿用 §8 的清洗规则并强制落在上传者子目录内。
+
+**限流与拒绝**：同一对端的 `list` 按 `SHARE_LIST_RATE` 限流，超限回 `deny{reason:"busy"}`；`deny` 不重试、由 UI 展示原因。请求方 `SHARE_REQ_TIMEOUT` 内未收到 `list-ok` / `deny` / offer 即按超时处理并允许手动重试。共享方的数据供流仍占用 §8 既有的 `TRANSFER_CONCURRENCY` 与 256 连接预算，不另开池子。
+
+**兼容**：旧端不声明 `shr1`，收到 `share` 会按未知 `type` 整包忽略（不回错误，符合 §4 兼容规则）；新端因此以 `shr1` 作为入口可用的前置条件。`purpose` 是既有可选字段，旧端遇到未知值时按既有校验拒绝该 offer，不会误落盘。
+
 ## 9. 协议常量（草案值，实现后按实测调整）
 
 | 常量 | 草案值 | 说明 |
@@ -297,6 +370,16 @@ sequenceDiagram
 | PULL_WAIT_HEARTBEAT | 20 s | 发送端排队 / 哈希收尾期间 `wait` 帧保活间隔（决议 #211） |
 | PULL_IDLE_TIMEOUT | 60 s | 接收端拉取空闲超时，超时判失败、可断点续传重试（决议 #211） |
 | FILE_OFFER_TTL | 24 h | 私聊/群聊普通文件从发送时刻起的领取窗口（决议 #263） |
+| SHARE_LIST_PAGE | 200 条 | 单页目录条目上限（决议 #275），与下一行同时生效、先到者收窄 |
+| SHARE_LIST_FRAME_MAX | 32 KiB | 单条 `list-ok` 信封上限；低于 TCP 帧上限 64 KiB 留头 |
+| SHARE_DIR_MAX_ENTRIES | 5000 条 | 单目录列举硬上限，超出取前 N 条并置 `truncated:true` |
+| SHARE_MAX_DEPTH | 16 层 | 共享根以下可展开的目录层级上限（决议 #276） |
+| SHARE_PATH_MAX / SHARE_NAME_MAX | 1024 B / 255 B | 相对路径与单个条目名长度上限 |
+| SHARE_GET_MAX_PATHS | 64 条 | 单次 `get` 可请求的条目数上限 |
+| SHARE_REQ_TIMEOUT | 8 s | `list` / `get` 未收到应答即超时，可手动重试 |
+| SHARE_LIST_RATE | 5 次 / 10 s | 同一对端列目录限流，超限回 `deny{reason:"busy"}`（决议 #276） |
+| SHARE_SNAPSHOT_TTL / MAX | 60 s / 8 份 | 列表分页快照存活时间与缓存份数上限 |
+| SHARE_PUT_MAX_BYTES | 2147483648 B（2 GiB） | 单次上传到对方文件柜的总量上限（决议 #272） |
 
 ## 10. 与 IPMSG 机制对照（借鉴关系备忘）
 
@@ -376,3 +459,4 @@ sequenceDiagram
 - 2026-07-15 v0.47 决议 #247：renderer 头像裁剪从原始受检字节创建 `ImageBitmap`，Canvas 编码前拒绝全透明结果；线上 `avatarHash`、`avatar` 载荷、`av1`、全局信封、32KiB 上限与受管 URL 均不变。版本 0.43.1 → **0.43.2**。
 - 2026-07-15 v0.48 决议 #249：`avatar` 新增无数据提示 `{op:"miss", hash, groupId?}`——来源无法提供数据时以一次性 UDP 单发告知，群头像请求方据此立即改试下一个在线成员源；miss 不走可靠通道（旧端整包忽略、不回 ACK，可靠发送会误判离线），不新增能力位，`get`/`data`、`av1`、32KiB 上限与全局信封不变。版本 0.43.3 → **0.44.0**。
 - 2026-07-21 v0.49 决议 #263：私聊与群聊普通文件 offer 新增 `expiresAt`，固定领取窗口 `FILE_OFFER_TTL=24h`；接收端用 `expiresAt-envelope.ts` 换算本地截止时间并限制最大 24 小时。逾期未完成 transfer 进入 `expired`，发送端与接收端分别显示「发送已到期」/「文件已过期」；图片、表情和更新包保持原语义。SQLite v13 持久化截止时间与出站源文件 manifest；版本 **0.44.9-beta.5 → 0.45.0**。
+- 2026-07-25 v0.50 决议 #271–#277：新增共享文件柜控制报文 `share`（`list` / `list-ok` / `get` / `deny`，可靠投递，`list-ok` 超 UDP 上限走既有 TCP 控制帧兜底）与能力位 `shr1`；数据面 100% 复用 §8 拉取式传输，只增加 `purpose:"share-get"`（共享方回 offer、浏览方自动 accept 拉取）与 `purpose:"share-put"`（上传方发 offer、共享方校验写权限后拉取）两个取值。**不新增任何端口**，仍为 UDP 17878 / TCP 17879。两类 purpose 不入聊天流、不带 `msgId`、不套 `FILE_OFFER_TTL`、不参与媒体撤回。权限一律由共享方本机按"默认档 + 按人例外"当场判定，协议中只出现共享根下的相对路径并强制 `realpath` 越界复核；新增 `SHARE_*` 常量共 11 项。旧端不声明 `shr1`、整包忽略 `share`，向前兼容。详见 §8.2。

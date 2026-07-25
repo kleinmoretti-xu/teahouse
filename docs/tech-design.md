@@ -112,7 +112,7 @@ src/
 │  │  └─ compat/           # 内网通 / IPMSG 兼容适配器；独立 UDP/TCP/codec/capabilities，不进入主协议 UdpChannel
 │  ├─ store/
 │  │  ├─ db.ts             # 打开/迁移（用户版本号 PRAGMA user_version 递增迁移）
-│  │  ├─ repo/*.ts         # peers / conversations / messages / groups / transfers / stickers / queue / dedup
+│  │  ├─ repo/*.ts         # peers / conversations / messages / groups / transfers / stickers / queue / dedup / share-grants
 │  │  └─ fts.ts            # 中文按字预切 + FTS5 查询
 │  ├─ services/
 │  │  ├─ chat.ts           # 发消息编排：写库→网络→状态回推（核心用例层）
@@ -121,6 +121,7 @@ src/
 │  │  ├─ porter.ts         # 导出（HTML/TXT/备份包）与导入（身份映射+去重）
 │  │  ├─ settings.ts       # config.json、数据目录迁移、自启（linux 写 autostart desktop 文件）
 │  │  ├─ updater.ts        # 局域网自更新编排（决议 #166/#170）：同平台版本比对择源、索包请求复核、本地包查找、后续 SHA-256+版本核对、触发安装重启
+│  │  ├─ share.ts          # 共享文件柜编排（决议 #271–#277）：权限判定（默认档 + 按人例外）、目录列举与分页快照、路径校验与 realpath 越界复核、下载 offer 生成、上传落点计算与系统提示
 │  │  └─ nwt-compat.ts     # 内网通兼容节点发现、普通文本收发、ACK、附件 offer 与能力投影
 │  ├─ ipc/                 # handle 注册（只做参数校验+转发 services）、事件推送
 │  └─ util/                # logger / paths / sanitize（文件名清洗）/ atomic-write / self-package（deb 自重打包·nsis 定位自留包）/ apply-update（替换重启）
@@ -166,6 +167,8 @@ src/
 | `conv:list` / `conv:pin` / `conv:mute` / `conv:markRead` / `conv:remove` | 会话列表操作 |
 | `msg:page(convId, beforeTs, n)` / `msg:send` / `msg:resend` / `msg:recall` / `msg:nudge` / `msg:pk` / `msg:search` | 消息分页（倒序游标）、发送、重发、撤回（文本 / PK / 图片 / 未完成文件统一入口）、私聊窗口震动、PK 分歧解决、当前会话历史搜索 |
 | `file:grant-paths` / `file:offer` / `file:direct` / `group-file:offer` / `file:accept` / `file:cancel` / `file:reveal` | 文件传输四件套；`file:grant-paths` 只为拖拽 / 粘贴产生的本地路径登记一次性授权，`file:offer` / `group-file:offer` 仍必须消耗授权；`file:direct` 由发送方文件卡片触发，在已有私聊普通文件 transfer 上发送 `file-ctl {op:"direct"}`；群聊发送为多条点对点 transfer 的发送侧编排且不支持直接发送 |
+| `share:my-get` / `share:my-set-root` / `share:my-set-mode` / `share:my-reveal` / `share:grant-list` / `share:grant-set` | 我的文件柜（决议 #271/#277）：读取当前配置、选目录并落 `config.fileCabinet.root`（选目录时拦截主目录根 / 系统盘根 / 应用数据目录）、切换默认档 `off\|read\|write`、在系统文件管理器打开共享根、按联系人例外的列表与写入（`share_grants`，写入 `off` 之外的值即为例外，清除例外传 `null`） |
+| `share:browse(peerId, path, offset, snapshotId?)` / `share:download(peerId, paths[], saveDirOverride?)` / `share:upload(peerId, localPaths[])` | 对方文件柜（决议 #273/#275）：`browse` 发 `share{op:list}` 并等待 `list-ok` / `deny`，`SHARE_REQ_TIMEOUT` 超时报错，返回 `{perm, entries, offset, total, truncated, snapshotId}`；`download` 发 `share{op:get}` 后由服务层登记一次性授权、自动 accept 随后到达的 `purpose:"share-get"` offer；`upload` 复用 `file:grant-paths` 的路径授权后直接发 `purpose:"share-put"` offer。三者进度与结果全部复用既有 `transfer:*` 事件，不新增传输事件 |
 | `img:send-bytes` / `group-img:send-bytes` | 粘贴 / 截图产生的图片 bytes 发送；表格粘贴增强可额外传入受限 `tableText/tableTextTruncated`，服务层仅在对端支持 `tbl1` 时把它写入图片 offer |
 | `group:create` / `group:update` | 讨论组 |
 | `search:query(q, scope)` | 全局搜索（联系人/组/记录/文件 四分类一次返回） |
@@ -175,7 +178,7 @@ src/
 | `nwt:*`（后续实现时在 `shared/ipc.ts` 固化） | 内网通兼容模式：启停、独立网段扫描、兼容节点列表、普通文本发送、兼容能力投影、实验附件 offer；详见 [nwt-compat-design.md](nwt-compat-design.md) |
 | `shot:start` | 触发截图流程 |
 
-事件（main → renderer，`webContents.send`）：`peers:updated`、`msg:new`、`msg:status`（发送中/已送达/排队/失败）、`msg:nudge-received`、`transfer:progress`（节流 ≤4 次/s）、`transfer:done|failed`、`group:updated`、`avatar:ready`、`net:state`（在线/端口冲突/网卡变化）、`net:scan-progress`（主界面全局网段刷新进度，节流推送）、`badge:update`。
+事件（main → renderer，`webContents.send`）：`peers:updated`、`msg:new`、`msg:status`（发送中/已送达/排队/失败）、`msg:nudge-received`、`transfer:progress`（节流 ≤4 次/s）、`transfer:done|failed`、`group:updated`、`avatar:ready`、`net:state`（在线/端口冲突/网卡变化）、`net:scan-progress`（主界面全局网段刷新进度，节流推送）、`badge:update`、`share:config-updated`（我的文件柜根目录 / 默认档 / 按人例外发生变化，主窗与设置窗共同订阅以保持一致；不含目录内容，浏览结果一律按需 `share:browse` 拉取）。
 
 ## 5. 数据库设计（SQLite，WAL）
 
@@ -201,6 +204,7 @@ outgoing_file_manifests(msg_id TEXT PK, files TEXT, expires_at INT)
 send_queue(msg_id TEXT PK, peer_id, envelope TEXT, created INT, attempts INT)
 dedup(msg_id TEXT PK, recv_ts INT)
 stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
+share_grants(node_id TEXT PK, mode TEXT, updated_ts INT)   -- v14：共享文件柜按联系人例外，mode: 'off'|'read'|'write'
 ```
 
 - 索引：`messages(conv_id, ts, seq)`、`messages(seq)`、`messages(conv_id, seq)`、`peers(last_seen)`、`send_queue(peer_id)`、`transfers(status)`、`transfers(expires_at, status)`。v10 追加两个 `seq` 索引（决议 #200 / OPT-5），用于全局 `MAX(seq)` 取号、会话内按 `seq` 分页 / 上下文窗口和会话预览，避免历史量增大后退化为全表或全会话扫描。v13 为普通文件 transfer 增加 `expires_at`，并用 `outgoing_file_manifests` 按消息保存一份源文件清单，避免群发时为每个成员重复持久化大目录 manifest。
@@ -211,6 +215,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 - 媒体撤回（决议 #188）不新增 SQLite 表或列：图片 / 文件仍分别写 `messages.kind='image'|'file'`，`file_ref` 保留 transfer 引用；变化是发送端先生成 `msgId` 并写入 `file-ctl offer.msgId`，接收端用同一 `msgId` 入库。`messages.status='recalled'` 和既有 FTS 清理逻辑继续表达撤回；文件是否可撤回由关联 `transfers.status` 与 `file_ref.transferIds[]` 计算，不把“已接收完成”另存成新列。
 - 表格图片消息（决议 #190）同样不新增 SQLite 表或列：仍写 `messages.kind='image'`，`content='[图片]'`，在 `file_ref` JSON 中可选保存 `tableText`（原始 TSV，最多 4096B UTF-8）与 `tableTextTruncated`（发送端截断时为 true）。这些字段不写 FTS、不参与会话预览；导出 HTML/TXT 时可在图片后附“表格文本”。旧记录没有该字段时按普通图片处理。
 - 普通文件领取期限（决议 #263）由 `transfers.expires_at` 持久化，私聊和群聊同为发送时刻 +24 小时；图片、表情和更新传输写 0。出站源文件的 `{fileId,absPath,size}` 清单只写本机 `outgoing_file_manifests`，不进入聊天消息、协议日志或迁移备份；同一群消息的多条点对点 transfer 共用 `msg_id` 对应的一份 manifest。入站 transfer 的受检相对路径计划保存在既有 `files` JSON 里，使期限内重启仍可恢复断点上下文。启动时恢复未过期记录、清理孤立 manifest；逾期或旧记录缺少恢复上下文时安全收口。领取期限只允许到期前开始/恢复，已经建立的当前 TCP 拉取可完成；该尝试失败或重启中断时再按截止时间决定 `failed` 或 `expired`。
+- 共享文件柜（决议 #271–#277）的**按联系人例外**存 v14 新表 `share_grants`，主键为对端 nodeId，`mode` 取 `off|read|write`，只保存与默认档不同的例外行（改回"跟随默认"即删行）。选它而不是塞进 `config.json`：例外与 `peers` 同域，设置页要按显示名 / 在线状态渲染表格，直接 `LEFT JOIN peers` 即可；config 每次全量原子写，不适合承载条数不定的记录。**共享根路径与默认档不进 SQLite**，见 §6 的 `config.fileCabinet`。文件柜的上传下载**复用 `transfers` 表**，只在既有 `files` JSON 里带上 `purpose:'share-get'|'share-put'` 供传输记录区分来源，**不新增列**；这类 transfer 的 `msg_id` 为空、`expires_at` 写 0（不套决议 #263 的领取期限）。"有人上传到我的文件柜"的提示复用 `messages(kind='system')` 写入该联系人的单聊会话，不进 FTS、不新增表。目录列表快照只在 `ShareService` 内存里按 `SHARE_SNAPSHOT_TTL` 存活，**不落库**。
 - 内网通兼容联系人（决议 #194/#195）不得直接混入主协议 `peers` 语义。首版可仅在内存维护 `CompatPeer`；若需要跨重启保留最近发现节点，新增独立 `compat_peers` 表，键为 `compat_id = ipmsg:<host>:<port>:<user>:<hostName>`，只保存昵称、主机名、IP、端口、编码、兼容能力、在线时间与来源，不参与主协议 `node_id`、profileRev、caps、gossip 或补发队列。实验附件 offer 使用独立 `compat_file_offers`，不得复用茶话间 `transfers` 的自动接收、直接发送、媒体撤回和自更新语义。
 - 中文搜索：FTS5 不会切中文词 → **入库时把 `text` 按字拆开以空格连接**写入 fts 表，查询同样按字拆 + `"…"` 短语匹配；文件名/联系人走 `LIKE %…%`（千级数据量足够）。会话内历史搜索固定带 `conv_id` 范围，直接在 `messages` 上按 `kind/content/file_ref/ts` 白名单条件查询：关键词匹配 `content` 与 `file_ref` 展示名，图片/文件/日期筛选只影响本地 SQLite 查询，不产生协议报文或数据库迁移；空关键词允许返回当前会话最近记录，仍受类型、日期与 limit 约束；图片/文件命中返回解析后的 `FileRefView`，渲染层仅用 `transferId` 走既有 `pantry-img://` 安全协议显示缩略图，不暴露本地保存路径。
 - 定时清理（启动 + 每小时）：`dedup` 超 24h、`send_queue` 超 7 天或单 peer 超 200 条（裁剪时回推 UI 标失败）；启动时将残留 `sending` 态消息复位为失败（可点重发），杜绝"永远转圈"。
@@ -225,7 +230,7 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 ├─ images/                   # 图片消息缓存（收+发）
 ├─ stickers/                 # 表情包（压缩后的 WebP/GIF）
 ├─ logs/                     # 按天滚动，留 7 天
-└─ config.json               # 设置（原子写）；含 manualPeers / scanRanges / scanRangeSources / ignoredScanRanges / allowDirectFileSend / nwtCompat
+└─ config.json               # 设置（原子写）；含 manualPeers / scanRanges / scanRangeSources / ignoredScanRanges / allowDirectFileSend / fileCabinet / nwtCompat
 ```
 
 整体数据目录迁移流程（v1.0 打磨项）：校验目标可写 → 关闭 db → 复制（带进度）→ 校验文件数/大小 → 写新路径入旧位置的 `redirect.json` 与全局配置 → 重开 db；失败自动回滚。
@@ -233,6 +238,8 @@ stickers(id TEXT PK, path, w INT, h INT, animated INT, sort INT, added INT)
 扫描范围自动分享（决议 #114）属于设置同步，不入 SQLite：`config.scanRanges` 保留旧字符串数组；`scanRangeSources` 记录 `self/remote`、来源 nodeId/显示名、添加时间与上次自动扫描时间；`ignoredScanRanges` 记录用户主动移除过的 CIDR，远端再次分享时不自动加回。`RangeSync` 只收发 `scan-ranges` 配置候选；主进程收到新 CIDR 后按 30–90 分钟抖动、12 小时去重、在线规模 hash 抽样调度 `Discovery.scanHosts()`，手动扫描仍走即时路径。
 
 主界面全局网段刷新（决议 #115 / #197）仍属于显式手动扫描：`peers:scan-all-ranges` 在主进程读取当前 `config.scanRanges`，归一化合法 CIDR 后展开并按 IP 去重，再以 8ms 间隔逐个调用 `Discovery.probe()`；进度通过 `net:scan-progress` 推给主窗口，含 `done/total/rangeCount/status`。该扫描不改配置、不入 SQLite、不新增线上协议；运行中重复调用只返回当前进度，避免并发扫描。**二次确认（决议 #197）纯在主窗口渲染层（`App.vue`）完成**：点击刷新按钮 → 弹出确认对话框并展示当前 `SettingsView.scanRangeItems`（或回退 `scanRanges`）列表摘要 → 用户点「开始扫描」后才调用既有 `window.pantry.scanAllRanges()`；取消 / 遮罩 / Esc 不发 IPC。不新增 IPC 通道、不改主进程扫描状态机；设置页单网段 `peers:scan` 仍直调、无确认。
+
+共享文件柜配置（决议 #271/#276/#277）存放在 `config.fileCabinet`，缺省视为 `{ root: '', mode: 'off' }`——**默认不共享，升级上来的老配置不会凭空开放任何目录**。`root` 是用户自选的本机绝对路径，只在本机使用、绝不进入协议或日志；写入前由 `settings.ts` 校验：目录存在且可读、不是用户主目录根 / 系统盘根 / 应用 `dataRoot` 及其子目录，命中即拒绝并回具体原因。`mode` 取 `off|read|write`，是**默认档**，按联系人的例外在 SQLite（见 §5 `share_grants`）。共享根不纳入数据目录迁移、不进导出备份包（它是用户自己的普通目录，不属于应用数据）。文件柜下载的默认落点为 `getSaveDir()/文件柜-<对方显示名>/`，与决议 #179 的联系人子目录同级但前缀区分，便于和聊天里收到的文件分开；上传的落点由接收方计算为 `root/<上传者显示名>/`，两处显示名都走 `sanitizeFileName`（本地备注优先、其次昵称）。
 
 内网通兼容配置（决议 #194/#195）独立存放在 `config.nwtCompat`，默认关闭：`enabled`、`port`（默认 2425）、`ranges`、`manualPeers`、`scanOnStartup`、`experimentalFile`。兼容扫描只读取这些独立 IP 段，不自动复用茶话间 `scanRanges`，也不参与 `scan-ranges` 同步；服务启动时若 `2425/UDP` 被占用，兼容模式进入不可用状态并在设置页提示，不影响主协议 17878/17879 端口与普通聊天。`experimentalFile` 默认关闭，只有完成内网通 TCP `GETFILEDATA` 闭环后才允许暴露给 UI。
 
@@ -337,6 +344,7 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 | v0.28 | 私聊文件直接发送：发送端文件卡片「直接发送」入口、caps `fd1`、`file-ctl {op:"direct"}`、接收端自动 accept；默认文件接收统一到 `文件保存位置/联系人名称/`，另存为除外；群聊文件不支持直接发送 | shared/protocol、net/codec、services/files、settings、renderer FileCard |
 | v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回 | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
 | v0.32.x | 全局刷新二次确认、群成员上限 200 等（已发布 v0.32.3） | App.vue、protocol GROUP_MAX_MEMBERS |
+| v0.47 | 共享文件柜（分三步）：①我的文件柜（`config.fileCabinet` + SQLite v14 `share_grants` + 设置页共享目录 / 默认档 / 按人例外 + 共享根禁选校验）②浏览与下载（caps `shr1`、`share` 报文与 codec 白名单、分页快照、`realpath` 越界复核、私聊头部按钮 + 右侧覆盖面板、`purpose:"share-get"` 自动 accept）③上传（`purpose:"share-put"`、写权限复核、落 `root/上传者名/`、私聊系统提示） | shared/protocol、shared/ipc、net/codec（仅加白名单，transfer 不动）、store/migrations + share-grants-repo、services/share、settings、renderer FileCabinetPanel / stores/share / SettingsView |
 | 待办 · 暂缓 | 内网通兼容模式（#194–#196 设计；**#199 不排期**） | 见 nwt-compat-design.md；勿提前写 net/compat |
 | 待办 · 暂缓 | 内网通实验附件互通（依赖上项 + TCP GETFILEDATA 闭环） | 同上 |
 | v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
@@ -507,3 +515,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-21 v1.57 决议 #263：普通私聊/群聊文件统一 24 小时领取期限；协议 v0.49 增加 `offer.expiresAt`，SQLite v13 增加 transfer 截止时间与共享出站 manifest，`FilesService` 跨重启恢复并投影双向过期文案。版本 **0.44.9-beta.5 → 0.45.0**。
 - 2026-07-22 v1.58 决议 #269：`GroupCreator` 调用 IPC 前把响应式成员选择复制为普通数组，并以异常收尾恢复提交状态和显示行内错误；遮罩关闭要求按下与点击均起落在遮罩自身，提交期间锁定关闭入口。协议、SQLite、IPC 契约、依赖与网络均不变，版本 **0.45.5 → 0.45.6**。
 - 2026-07-25 v1.59 决议 #270：`readClipboardTableText` 收紧为「唯一 `<table>` 且表外无实质文字」或「列数一致、≥2 列、首列非全空的多行 TSV」；`ChatPane` 粘贴命中后改为插入草稿 + 提示条，剪贴板图片项在事件内同步捕获，新增 `utils/table-paste.ts` 纯函数与 `table` 图标。协议、SQLite、IPC 契约、依赖与网络均不变，版本 **0.45.6 → 0.46.0**。
+- 2026-07-25 v1.60 决议 #271–#277（共享文件柜设计轮，**只落档、代码零改动**）：新增 `services/share.ts`（权限判定 / 目录列举与分页快照 / 路径校验与 `realpath` 越界复核 / 下载 offer / 上传落点 / 系统提示）与 `store/share-grants-repo.ts`；`net/` 只在 `codec.ts` 增加 `share` 报文白名单，`transfer.ts` 与端口配置不动。IPC 新增 `share:my-*` / `share:grant-*` / `share:browse|download|upload` 与 `share:config-updated` 事件，传输进度复用既有 `transfer:*`。SQLite 升 **v14** 增 `share_grants(node_id PK, mode, updated_ts)`，`config.json` 增 `fileCabinet {root, mode}`（缺省 `off`，共享根禁选主目录根 / 系统盘根 / dataRoot），文件柜传输复用 `transfers` 只在 `files` JSON 带 `purpose`。里程碑新增 v0.47 三步交付。
