@@ -16,6 +16,13 @@ import {
 import { emojiAdvanceWidth, fontOfStyle, setTextMeasurer } from '../utils/emoji-metrics'
 import { emojiToTwemojiCode, twemojiUrl } from '../utils/twemoji-assets'
 import { isImeCompositionKey } from '../utils/ime'
+import {
+  TABLE_PASTE_HINT_MS,
+  draftWithoutTablePaste,
+  tablePasteHintIntact,
+  tablePasteHintText,
+  type TablePasteHint
+} from '../utils/table-paste'
 import { listTime } from '../utils/time'
 import {
   canRecallAt,
@@ -179,6 +186,19 @@ const nudgeNow = ref(Date.now())
 const nudgeFeedback = ref<{ text: string; kind: 'ok' | 'warn' } | null>(null)
 let nudgeFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 let nudgeRetryTimer: ReturnType<typeof setInterval> | null = null
+// 表格粘贴提示条（决议 #270）：粘贴只插入文本，发不发图片由用户决定
+const tablePasteHint = ref<TablePasteHint | null>(null)
+let tablePasteHintTimer: ReturnType<typeof setTimeout> | null = null
+/** 提示条待发的表格素材；含 ArrayBuffer，不进 store、不经 IPC */
+let tablePastePayload: {
+  rawText: string
+  meta: ClipboardTableText
+  imageBytes: ArrayBuffer | null
+  imageExt: string
+} | null = null
+const tablePasteHintLabel = computed(() =>
+  tablePasteHintText(tablePasteHint.value?.oversize ?? false)
+)
 let applyingConversationScroll = false
 const SCROLL_BOTTOM_THRESHOLD = 24
 const CLIPBOARD_NATIVE_FALLBACK_DELAY_MS = 80
@@ -375,6 +395,7 @@ onUnmounted(() => {
   if (peerProfileSavedTimer) clearTimeout(peerProfileSavedTimer)
   if (nudgeFeedbackTimer) clearTimeout(nudgeFeedbackTimer)
   if (nudgeRetryTimer) clearInterval(nudgeRetryTimer)
+  clearTablePasteHint()
   stopRecallCountdownTimer()
   if (clipboardImageFallbackTimer) clearTimeout(clipboardImageFallbackTimer)
   historySearchRun += 1
@@ -391,6 +412,7 @@ watch(
     closePeerProfile()
     mentionIds.value = []
     nudgeFeedback.value = null
+    clearTablePasteHint()
     resetHistorySearch()
     if (isGroup.value && id) void groupsStore.ensure(id)
   },
@@ -401,6 +423,10 @@ watch([historyQuery, historyKind, historyFrom, historyTo], () => scheduleHistory
 
 watch(draft, () => {
   void nextTick(syncInputMirrorScroll)
+  // 用户一改草稿，捕获的表格素材就与输入框对不上了，直接收起提示条（决议 #270）
+  if (tablePasteHint.value && !tablePasteHintIntact(draft.value, tablePasteHint.value)) {
+    clearTablePasteHint()
+  }
 })
 
 watch(
@@ -894,13 +920,15 @@ function insertNewline(): void {
   })
 }
 
-function insertTextAtCursor(text: string): void {
+/** 在光标处插入文本，返回插入起点（表格粘贴提示条要靠它把这段摘回来） */
+function insertTextAtCursor(text: string): number {
   const { start, end } = inputSelectionRange()
   draft.value = draft.value.slice(0, start) + text + draft.value.slice(end)
   void nextTick(() => {
     focusInput()
     setInputSelection(start + text.length)
   })
+  return start
 }
 
 async function send(): Promise<void> {
@@ -1345,16 +1373,56 @@ async function renderTableTextImageBytes(text: string): Promise<ArrayBuffer | nu
   })
 }
 
-async function sendTablePaste(data: DataTransfer, meta: ClipboardTableText): Promise<void> {
+function clearTablePasteHint(): void {
+  tablePasteHint.value = null
+  tablePastePayload = null
+  if (tablePasteHintTimer) {
+    clearTimeout(tablePasteHintTimer)
+    tablePasteHintTimer = null
+  }
+}
+
+/**
+ * 表格粘贴只插入原文并给出「发送为图片」入口（决议 #270）。
+ * 旧行为是命中即直接发图片：没有预览也没有逃生口，一次误判等于误发消息（Issue #19）。
+ */
+async function prepareTablePaste(data: DataTransfer, meta: ClipboardTableText): Promise<void> {
   const plainText = normalizeClipboardText(data.getData('text/plain'))
   const rawText = plainText.includes('\t') ? plainText : meta.tableText
+  // DataTransfer 出了本次事件即失效，剪贴板现成图片项必须此刻取走
   const imageItem = await readClipboardImageItem(data)
-  const bytes = imageItem?.bytes ?? (await renderTableTextImageBytes(rawText))
+  const start = insertTextAtCursor(rawText)
+  tablePastePayload = {
+    rawText,
+    meta,
+    imageBytes: imageItem?.bytes ?? null,
+    imageExt: imageItem?.ext ?? '.png'
+  }
+  tablePasteHint.value = { start, text: rawText, draft: draft.value, oversize: overLimit.value }
+  if (tablePasteHintTimer) clearTimeout(tablePasteHintTimer)
+  // 超限草稿本来就发不出去，提示条再自动消失就等于把唯一出路也关掉
+  tablePasteHintTimer = overLimit.value
+    ? null
+    : setTimeout(() => {
+        tablePasteHintTimer = null
+        clearTablePasteHint()
+      }, TABLE_PASTE_HINT_MS)
+}
+
+async function sendTablePasteImage(): Promise<void> {
+  const hint = tablePasteHint.value
+  const payload = tablePastePayload
+  if (!hint || !payload || !canSendMedia.value) return
+  const bytes = payload.imageBytes ?? (await renderTableTextImageBytes(payload.rawText))
   if (!bytes) {
-    insertTextAtCursor(rawText)
+    // 渲染失败就只收起提示条，文本仍留在草稿里，不丢内容
+    clearTablePasteHint()
     return
   }
-  await chatStore.sendImageBytes(`粘贴表格${imageItem?.ext ?? '.png'}`, bytes, meta)
+  draft.value = draftWithoutTablePaste(hint)
+  clearTablePasteHint()
+  void nextTick(focusInput)
+  await chatStore.sendImageBytes(`粘贴表格${payload.imageExt}`, bytes, payload.meta)
 }
 
 /** Ctrl+V 粘贴：复制的文件按路径发（保留文件名/类型），截图位图按 bytes 发（F-MSG-3 / 决议 #76） */
@@ -1381,7 +1449,7 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
     const tableText = readClipboardTableText(data)
     if (tableText) {
       event.preventDefault()
-      await sendTablePaste(data, tableText)
+      await prepareTablePaste(data, tableText)
       return
     }
     // 复制网页 / 富文本 emoji 时，剪贴板常同时带 text/plain 和 image/png；文本交给 textarea 原生粘贴。
@@ -1924,6 +1992,26 @@ async function onDrop(event: DragEvent): Promise<void> {
           {{ peersStore.nameOf(id) }}
         </button>
       </div>
+      <div v-if="tablePasteHint" class="table-paste-hint" role="status" aria-live="polite">
+        <PantryIcon name="table" :size="16" />
+        <span class="table-paste-hint-text">{{ tablePasteHintLabel }}</span>
+        <button
+          class="table-paste-hint-action"
+          type="button"
+          :disabled="!canSendMedia"
+          @click="sendTablePasteImage"
+        >
+          发送为图片
+        </button>
+        <button
+          class="table-paste-hint-close"
+          type="button"
+          aria-label="忽略"
+          @click="clearTablePasteHint"
+        >
+          <PantryIcon name="x" :size="14" />
+        </button>
+      </div>
       <div
         class="input-shell"
         :class="{ 'has-mirror': draftUsesEmojiMirror }"
@@ -2131,6 +2219,73 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 .mention-picker button:hover {
   background: var(--surface-hover);
+}
+/* 表格粘贴提示条（决议 #270）：粘贴只插入文本，这条给出"改发图片"的入口，可随时忽略 */
+.table-paste-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 0 0 6px;
+  padding: 0 6px 0 10px;
+  background: var(--bg-list);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-2);
+  animation: table-paste-hint-in 120ms ease-out;
+}
+.table-paste-hint-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-paste-hint-action {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.table-paste-hint-action:hover:not(:disabled) {
+  background: var(--primary-weak);
+}
+.table-paste-hint-action:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+.table-paste-hint-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.table-paste-hint-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-2);
+}
+@keyframes table-paste-hint-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-paste-hint {
+    animation: none;
+  }
 }
 /* "回到最新"悬浮圆按钮（决议 #134）：贴消息区右下角，白底 + 茶青箭头 + 柔和阴影 */
 .jump-latest {

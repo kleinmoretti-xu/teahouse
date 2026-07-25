@@ -11,14 +11,18 @@ export function hasClipboardText(data: ClipboardTextSource): boolean {
   return data.getData('text/plain').length > 0
 }
 
+/**
+ * 只把「整段剪贴板确实就是一张表」判为表格粘贴（决议 #270）。
+ * 旧口径是「HTML 任意位置有 <table>」或「纯文本含任意一个 \t 且至少两行」，
+ * 前者会把「正文 + 表格」的网页片段整块吃掉（且只取第一张表，图片与文字视图对不上），
+ * 后者会把随手打的制表符、Tab 缩进的代码和日志全判成表格（Issue #19）。
+ */
 export function readClipboardTableText(data: ClipboardTextSource): ClipboardTableText | null {
-  const html = data.getData('text/html')
   const plain = normalizeClipboardText(data.getData('text/plain'))
-  const hasTableHtml = /<table[\s>]/i.test(html)
-  const htmlText = hasTableHtml ? tableHtmlToText(html) : ''
-  const text = hasTableHtml ? htmlText || plain : plain
+  const htmlText = readHtmlTableText(data.getData('text/html'))
+  const text = htmlText ?? plain
   if (!text) return null
-  if (!hasTableHtml && !isTsvTableText(text)) return null
+  if (htmlText === null && !isTsvTableText(text)) return null
   const truncated = truncateUtf8(text, TABLE_TEXT_LIMIT_BYTES)
   return {
     tableText: truncated.text,
@@ -65,9 +69,21 @@ export function normalizeClipboardText(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
+/**
+ * 纯文本侧口径：表格软件复制矩形区域时每行列数必然一致，
+ * 而随手输入的制表符几乎不可能对齐，Tab 缩进的代码首列必然全空。
+ */
 function isTsvTableText(text: string): boolean {
   if (!text.includes('\t')) return false
-  return text.split('\n').filter((line) => line.length > 0).length >= 2
+  const rows = text
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => line.split('\t'))
+  if (rows.length < 2) return false
+  const colCount = rows[0].length
+  if (colCount < 2) return false
+  if (rows.some((row) => row.length !== colCount)) return false
+  return rows.some((row) => row[0].trim().length > 0)
 }
 
 function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
@@ -84,11 +100,35 @@ function truncateUtf8(text: string, maxBytes: number): { text: string; truncated
   return { text: out, truncated: true }
 }
 
-function tableHtmlToText(html: string): string {
-  if (typeof DOMParser === 'undefined') return ''
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  const table = doc.querySelector('table')
-  if (!table) return ''
+/**
+ * HTML 侧口径：片段里有且仅有一张 table、且表格之外没有实质文字时才算表格粘贴。
+ * 返回 null 表示「不是纯表格片段」，调用方退回纯文本口径（DOMParser 不可用时同样退回）。
+ */
+function readHtmlTableText(html: string): string | null {
+  if (!/<table[\s>]/i.test(html)) return null
+  if (typeof DOMParser === 'undefined') return null
+  let doc: Document
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html')
+  } catch {
+    return null
+  }
+  const tables = Array.from(doc.querySelectorAll('table'))
+  if (tables.length !== 1) return null
+  const table = tables[0]
+  const outsideLength =
+    squeezeWhitespace(doc.body?.textContent ?? '').length -
+    squeezeWhitespace(table.textContent ?? '').length
+  if (outsideLength > 0) return null
+  const text = tableRowsToText(table)
+  return text.length > 0 ? text : null
+}
+
+function squeezeWhitespace(text: string): string {
+  return text.replace(/\s+/g, '')
+}
+
+function tableRowsToText(table: Element): string {
   return Array.from(table.querySelectorAll('tr'))
     .map((row) =>
       Array.from(row.querySelectorAll('th,td'))

@@ -140,6 +140,12 @@ withDefaults(
       <rect x="4.8" y="13.4" width="5.8" height="5.8" rx=".7" />
       <rect x="13.4" y="13.4" width="5.8" height="5.8" rx=".7" />
     </g>
+    <!-- 表格：外框 + 一横一竖分格，用于表格粘贴提示 -->
+    <g v-else-if="name === 'table'">
+      <rect x="4.5" y="5.5" width="15" height="13" rx="1.6" />
+      <path d="M4.5 10h15" />
+      <path d="M10.2 10v8.5" />
+    </g>
     <g v-else-if="name === 'image'">
       <rect x="4.5" y="5.5" width="15" height="13" rx="2" />
       <path d="m6.8 16 4-4 3 3 2-2 3 3" />
