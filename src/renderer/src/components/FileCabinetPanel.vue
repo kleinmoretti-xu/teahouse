@@ -2,10 +2,12 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   SHARE_FAIL_TEXT,
+  SHARE_UPLOAD_FAIL_TEXT,
   type ShareBrowseFailReason,
   type TransferView
 } from '../../../shared/ipc'
 import type { ShareEntry } from '../../../shared/protocol'
+import { useChatStore } from '../stores/chat'
 import PantryIcon from './PantryIcon.vue'
 import FileTypeIcon from './FileTypeIcon.vue'
 
@@ -33,6 +35,14 @@ const picked = ref<Set<string>>(new Set())
 const downloading = ref(false)
 const downloadNote = ref('')
 const transfer = ref<TransferView | null>(null)
+const uploading = ref(false)
+const dragActive = ref(false)
+const chatStore = useChatStore()
+
+const canUpload = computed(() => perm.value === 'write')
+const uploadHint = computed(
+  () => `文件会放进 TA 文件柜的「${chatStore.selfNick || '你的名字'}」文件夹里`
+)
 
 const crumbs = computed<Crumb[]>(() => {
   const list: Crumb[] = [{ name: '文件柜', path: '' }]
@@ -167,13 +177,55 @@ async function download(saveAs: boolean): Promise<void> {
   downloadNote.value = '已开始下载'
 }
 
+// 上传永远落到对方共享根下以我命名的子目录，与当前浏览到哪一层无关（决议 #272）
+async function upload(directory: boolean): Promise<void> {
+  if (!canUpload.value || uploading.value) return
+  uploading.value = true
+  downloadNote.value = ''
+  transfer.value = null
+  const result = await window.pantry.uploadShare(props.peerId, undefined, directory)
+  uploading.value = false
+  if (!result.ok) {
+    downloadNote.value = SHARE_UPLOAD_FAIL_TEXT[result.reason]
+    return
+  }
+  if (result.canceled) return
+  downloadNote.value = `正在上传 ${result.fileCount} 个文件`
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
+  dragActive.value = false
+  if (!canUpload.value || uploading.value) return
+  const paths = [...(event.dataTransfer?.files ?? [])]
+    .map((f) => (f as File & { path?: string }).path ?? '')
+    .filter((p) => p.length > 0)
+  if (paths.length === 0) return
+  uploading.value = true
+  downloadNote.value = ''
+  transfer.value = null
+  const granted = await window.pantry.grantFilePaths(paths)
+  const result = await window.pantry.uploadShare(props.peerId, granted)
+  uploading.value = false
+  if (!result.ok) {
+    downloadNote.value = SHARE_UPLOAD_FAIL_TEXT[result.reason]
+    return
+  }
+  if (!result.canceled) downloadNote.value = `正在上传 ${result.fileCount} 个文件`
+}
+
+function onDragOver(event: DragEvent): void {
+  if (!canUpload.value) return
+  event.preventDefault()
+  dragActive.value = true
+}
+
 // 文件柜传输不进聊天流，进度只在本面板就地显示（决议 #275）
 const stopTransfer = window.pantry.onTransferUpdated((view) => {
   if (view.peerId !== props.peerId || !view.msgId.startsWith('share:')) return
-  if (view.direction !== 'in') return
   transfer.value = view
-  if (view.status === 'done') downloadNote.value = '下载完成'
-  else if (view.status === 'failed') downloadNote.value = '下载失败，可重试'
+  const up = view.direction === 'out'
+  if (view.status === 'done') downloadNote.value = up ? '上传完成' : '下载完成'
+  else if (view.status === 'failed') downloadNote.value = up ? '上传失败，可重试' : '下载失败，可重试'
   else if (view.status === 'canceled') downloadNote.value = '已取消'
 })
 
@@ -199,7 +251,14 @@ onUnmounted(() => stopTransfer())
 </script>
 
 <template>
-  <aside class="panel" aria-label="对方的文件柜">
+  <aside
+    class="panel"
+    :class="{ 'drag-active': dragActive }"
+    aria-label="对方的文件柜"
+    @dragover="onDragOver"
+    @dragleave="dragActive = false"
+    @drop.prevent="onDrop"
+  >
     <header class="panel-head">
       <span class="panel-title">{{ peerName }} 的文件柜</span>
       <button class="icon-btn" title="关闭" @click="emit('close')">
@@ -288,30 +347,35 @@ onUnmounted(() => stopTransfer())
       >
         取消
       </button>
-      <button v-else-if="transfer?.status === 'done'" class="link" @click="revealDone">
+      <button
+        v-else-if="transfer?.status === 'done' && transfer.direction === 'in'"
+        class="link"
+        @click="revealDone"
+      >
         打开位置
       </button>
     </div>
 
     <footer class="panel-foot">
-      <span class="perm" :class="perm">{{ perm === 'write' ? '可上传' : '只读' }}</span>
-      <div class="foot-actions">
-        <button
-          v-if="pickedCount > 0"
-          class="ghost"
-          :disabled="downloading"
-          @click="download(true)"
-        >
-          另存为
-        </button>
-        <button
-          class="primary"
-          :disabled="pickedCount === 0 || downloading"
-          @click="download(false)"
-        >
-          {{ pickedCount > 0 ? `下载（${pickedCount}）` : '请选择要下载的内容' }}
-        </button>
+      <div class="foot-row">
+        <span class="perm" :class="perm">{{ canUpload ? '可上传' : '只读' }}</span>
+        <div class="foot-actions">
+          <template v-if="pickedCount > 0">
+            <button class="ghost" :disabled="downloading" @click="download(true)">另存为</button>
+            <button class="primary" :disabled="downloading" @click="download(false)">
+              下载（{{ pickedCount }}）
+            </button>
+          </template>
+          <template v-else-if="canUpload">
+            <button class="ghost" :disabled="uploading" @click="upload(true)">上传文件夹</button>
+            <button class="primary" :disabled="uploading" @click="upload(false)">
+              上传到 TA 的文件柜
+            </button>
+          </template>
+          <span v-else class="foot-tip">勾选后可下载</span>
+        </div>
       </div>
+      <p v-if="canUpload" class="foot-note">{{ uploadHint }}</p>
     </footer>
   </aside>
 </template>
@@ -539,12 +603,34 @@ onUnmounted(() => stopTransfer())
   flex-shrink: 0;
 }
 
+.panel.drag-active {
+  outline: 2px dashed var(--primary);
+  outline-offset: -6px;
+}
+
 .panel-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.foot-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
+}
+
+.foot-tip,
+.foot-note {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.foot-note {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .perm {

@@ -12,6 +12,7 @@ import {
   OFFER_ASSEMBLE_TIMEOUT,
   OFFER_FILES_PER_PACKET,
   PULL_IDLE_TIMEOUT,
+  SHARE_PUT_MAX_BYTES,
   CAPS,
   TABLE_TEXT_LIMIT_BYTES,
   UPDATE_PACKAGE_MAX_BYTES,
@@ -90,7 +91,7 @@ interface IncomingState {
 interface FilesBlob {
   name: string
   savedPath?: string
-  purpose?: 'update' | 'share-get'
+  purpose?: 'update' | 'share-get' | 'share-put'
   direct?: boolean
   directPeerName?: string
   /** 普通入站文件的已清洗相对清单，用于期限内重启恢复。 */
@@ -134,6 +135,11 @@ export interface FilesDeps {
    * 命中返回落盘目录并消费授权，未授权返回 null。
    */
   authorizeShareDownload?: (peerId: string) => string | null
+  /**
+   * 别人上传到本机文件柜（决议 #272）：按写权限与总量复核，
+   * 通过返回落盘目录（`共享根/上传者显示名/`），拒绝返回 null。
+   */
+  authorizeShareUpload?: (peerId: string, totalSize: number) => string | null
   /** 是否允许私聊直接发送自动接收；默认允许。 */
   allowDirectFileSend?: () => boolean
   /** 展示名：用于默认接收子目录（备注优先可由 main 注入）。 */
@@ -500,6 +506,52 @@ export class FilesService extends EventEmitter {
       peerId,
       direction: 'out',
       files: JSON.stringify({ name: prepared.rootName, purpose: 'share-get' } satisfies FilesBlob),
+      status: 'offering',
+      total: prepared.totalSize,
+      ts: now,
+      expiresAt: 0
+    })
+    this.outgoing.set(transferId, {
+      peerId,
+      msgId,
+      files: new Map(prepared.outFiles),
+      totalSize: prepared.totalSize,
+      bytesDone: 0,
+      accepted: false,
+      expiresAt: 0,
+      acceptedAt: 0
+    })
+    const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
+    if (ok) return true
+    const row = this.deps.transferRepo.get(transferId)
+    if (row && (row.status === 'accepted' || row.status === 'done')) return true
+    this.finish(transferId, 'failed')
+    return false
+  }
+
+  /**
+   * 上传到对方的文件柜（决议 #272）：本机是数据发送方，对方复核写权限后来拉。
+   * 不写聊天消息、不套领取期限；落点由接收方本机计算，本端无从指定。
+   */
+  async offerSharePut(peerId: string, absPaths: string[]): Promise<boolean> {
+    const peer = this.deps.registry.get(peerId)
+    if (!peer || !peer.online) return false
+    if (!Array.isArray(peer.profile.caps) || !peer.profile.caps.includes(CAPS.fileCabinet)) {
+      return false
+    }
+    const prepared = this.prepareOutgoing(absPaths, 'file')
+    if (!prepared) return false
+    if (prepared.totalSize > SHARE_PUT_MAX_BYTES) return false
+    prepared.purpose = 'share-put'
+    const transferId = randomUUID()
+    const msgId = `share:${transferId}`
+    const now = Date.now()
+    this.deps.transferRepo.insert({
+      transferId,
+      msgId,
+      peerId,
+      direction: 'out',
+      files: JSON.stringify({ name: prepared.rootName, purpose: 'share-put' } satisfies FilesBlob),
       status: 'offering',
       total: prepared.totalSize,
       ts: now,
@@ -1048,9 +1100,8 @@ export class FilesService extends EventEmitter {
       return
     }
 
-    // 上传到本机文件柜在第 ③ 步接入；在那之前明确拒收，不能落到普通文件流程里
     if (asm.purpose === 'share-put') {
-      void this.declineUnknown(peerId, offer.transferId)
+      this.onSharePutOffer(peerId, offer, asm, plans, trustedTotalSize)
       return
     }
 
@@ -1225,6 +1276,83 @@ export class FilesService extends EventEmitter {
       cancelRef: { canceled: false, socket: null }
     })
     void this.accept(offer.transferId, saveDir)
+  }
+
+  /**
+   * 别人往本机文件柜传东西（决议 #272）：权限与总量复核在 ShareService，
+   * 落点固定为共享根下以上传者命名的子目录；同样不入聊天流，完成后才插一条系统提示。
+   */
+  private onSharePutOffer(
+    peerId: string,
+    offer: FileCtlOffer,
+    asm: AssemblingOffer,
+    plans: IncomingFilePlan[],
+    trustedTotalSize: number
+  ): void {
+    const dir =
+      asm.groupId || asm.msgId
+        ? null
+        : this.deps.authorizeShareUpload?.(peerId, trustedTotalSize) ?? null
+    if (!dir || plans.length === 0) {
+      void this.declineUnknown(peerId, offer.transferId)
+      return
+    }
+    const msgId = `share:${offer.transferId}`
+    this.deps.transferRepo.insert({
+      transferId: offer.transferId,
+      msgId,
+      peerId,
+      direction: 'in',
+      files: JSON.stringify({ name: asm.rootName, purpose: 'share-put' } satisfies FilesBlob),
+      status: 'offering',
+      total: trustedTotalSize,
+      ts: Date.now(),
+      expiresAt: 0
+    })
+    this.incoming.set(offer.transferId, {
+      peerId,
+      msgId,
+      plans,
+      bytesDone: 0,
+      expiresAt: 0,
+      queued: false,
+      cancelRef: { canceled: false, socket: null }
+    })
+    void this.accept(offer.transferId, dir)
+  }
+
+  /**
+   * 上传到货后的唯一提示（决议 #274）：在与上传者的私聊里插一条系统提示，
+   * 会话冒泡并计未读，但不弹桌面通知（notifyIncoming 对 system 直接返回）。
+   * 单次上传只汇总成一条，消息 ID 取 transferId 保证幂等。
+   */
+  private announceShareUpload(transferId: string, peerId: string, fileCount: number): void {
+    const convId = this.deps.convRepo.ensureSingle(peerId)
+    const name = this.deps.peerDisplayName?.(peerId) || '对方'
+    const now = Date.now()
+    const inserted = this.deps.msgRepo.insert({
+      id: `share:${transferId}:uploaded`,
+      convId,
+      senderId: peerId,
+      isMine: false,
+      kind: 'system',
+      content: `${name} 上传了 ${fileCount} 个文件到你的文件柜`,
+      fileRef: JSON.stringify({
+        transferId,
+        name: '文件柜',
+        size: 0,
+        count: fileCount,
+        dir: true
+      } satisfies FileRefView),
+      ts: now,
+      status: 'sent'
+    })
+    if (!inserted) return
+    this.deps.convRepo.bump(convId, now)
+    this.deps.convRepo.incUnread(convId)
+    const row = this.deps.msgRepo.get(`share:${transferId}:uploaded`)
+    if (row) this.emit('message', msgRowToView(row))
+    this.emitConvs()
   }
 
   private requestGroupMetaIfNeeded(
@@ -1429,6 +1557,11 @@ export class FilesService extends EventEmitter {
     const current = this.deps.transferRepo.get(transferId)
     if (!current) return
     if (current.status === 'expired' && status !== 'expired') return
+    // 提示所需的文件数只在 incoming 上下文里，finish 末尾会清掉，先取出来
+    const uploadedCount =
+      status === 'done' && current.direction === 'in' && this.blobPurpose(current) === 'share-put'
+        ? (this.incoming.get(transferId)?.plans.filter((p) => !p.isDir).length ?? 0)
+        : 0
     // 本机已作废供流上下文的取消终态，不接受迟到 ACK / 数据面回调覆盖（决议 #236）。
     // 对端取消后 outgoing 仍保留，若数据其实已经完整送达，served 仍可按数据面结论收口。
     if (
@@ -1458,6 +1591,15 @@ export class FilesService extends EventEmitter {
     this.emitTransfer(transferId, true)
     this.lastEmit.delete(transferId)
     this.scheduleExpiry()
+    if (uploadedCount > 0) this.announceShareUpload(transferId, current.peer_id, uploadedCount)
+  }
+
+  private blobPurpose(row: { files: string }): FilesBlob['purpose'] {
+    try {
+      return (JSON.parse(row.files) as FilesBlob).purpose
+    } catch {
+      return undefined
+    }
   }
 
   private updateBlob(transferId: string, patch: Partial<FilesBlob>): void {

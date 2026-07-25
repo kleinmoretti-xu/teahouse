@@ -1,7 +1,14 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   evaluateShareRoot,
   fitSharePage,
@@ -11,12 +18,14 @@ import {
   ShareDownloadGate,
   shareDownloadDirName,
   ShareService,
+  shareUploadDirName,
   type ShareGrantsStore
 } from './share'
 import {
   SHARE_GET_MAX_PATHS,
   SHARE_LIST_PAGE,
   SHARE_LIST_RATE_MAX,
+  SHARE_PUT_MAX_BYTES,
   SHARE_SNAPSHOT_TTL,
   type ShareEntry,
   type ShareMode
@@ -320,12 +329,16 @@ describe('ShareService 应答 list / get（§8.2）', () => {
     expect(service.handleGet('bob', ['在的.txt'])).toEqual({ ok: false, reason: 'off' })
   })
 
-  it('第 ② 步一律只声明 read —— 上传尚未接入，不给必然被拒的入口', () => {
-    const { service, root } = serviceWithRoot('write')
-    writeFileSync(join(root, 'a.txt'), 'x')
-    const reply = service.handleList('bob', { reqId: 'r', path: '', offset: 0 })
-    expect(reply.op).toBe('list-ok')
-    if (reply.op === 'list-ok') expect(reply.perm).toBe('read')
+  it('perm 如实回报有效权限，对端据此决定是否显示上传入口', () => {
+    const writable = serviceWithRoot('write')
+    writeFileSync(join(writable.root, 'a.txt'), 'x')
+    const w = writable.service.handleList('bob', { reqId: 'r', path: '', offset: 0 })
+    expect(w.op === 'list-ok' && w.perm).toBe('write')
+
+    const readable = serviceWithRoot('read')
+    writeFileSync(join(readable.root, 'a.txt'), 'x')
+    const r = readable.service.handleList('bob', { reqId: 'r', path: '', offset: 0 })
+    expect(r.op === 'list-ok' && r.perm).toBe('read')
   })
 
   it('翻页用同一快照，快照过期或换人则要求从头来', () => {
@@ -441,5 +454,76 @@ describe('shareDownloadDirName（默认落点）', () => {
     expect(shareDownloadDirName('a/b\\c')).toBe('文件柜-a b c')
     expect(shareDownloadDirName('  ')).toBe('文件柜-未知节点')
     expect(shareDownloadDirName('..')).toBe('文件柜-未知节点')
+  })
+})
+
+describe('ShareService.handlePut（上传落点与写权限，决议 #272）', () => {
+  function svc(mode: ShareMode): { service: ShareService; root: string } {
+    const root = mkdtempSync(join(tmpdir(), 'pantry-share-put-'))
+    tmpRoots.push(root)
+    return {
+      service: new ShareService({
+        getRoot: () => root,
+        getDefaultMode: () => mode,
+        getGrants: () => null
+      }),
+      root
+    }
+  }
+
+  it('只读与不共享一律拒绝上传', () => {
+    expect(svc('read').service.handlePut('bob', 10, '张三')).toBeNull()
+    expect(svc('off').service.handlePut('bob', 10, '张三')).toBeNull()
+  })
+
+  it('可读可传时落到共享根下以上传者命名的子目录', () => {
+    const { service, root } = svc('write')
+    expect(service.handlePut('bob', 10, '张三')).toBe(join(realpathSync(root), '张三'))
+  })
+
+  it('上传者名字里的分隔符被剥掉，无法越级写到共享根之外', () => {
+    const { service, root } = svc('write')
+    const real = realpathSync(root)
+    // 关键是"落点必须仍在共享根正下方且只有一层"，具体清洗后的名字长什么样不重要
+    for (const evil of ['../../etc', 'a/b', 'a\\b', '..', '  ']) {
+      const target = service.handlePut('bob', 10, evil)
+      expect(target).not.toBeNull()
+      expect(dirname(target!)).toBe(real)
+      expect(basename(target!)).not.toBe('..')
+      expect(basename(target!)).not.toBe('.')
+    }
+    expect(service.handlePut('bob', 10, '  ')).toBe(join(real, '未知节点'))
+  })
+
+  it('按人例外能单独放开上传', () => {
+    const { service, root } = svc('read')
+    expect(service.handlePut('bob', 10, '张三')).toBeNull()
+    service.setGrant('bob', 'write')
+    expect(service.handlePut('bob', 10, '张三')).toBe(join(realpathSync(root), '张三'))
+  })
+
+  it('超过单次上传上限或非法大小拒绝', () => {
+    const { service } = svc('write')
+    expect(service.handlePut('bob', SHARE_PUT_MAX_BYTES, '张三')).not.toBeNull()
+    expect(service.handlePut('bob', SHARE_PUT_MAX_BYTES + 1, '张三')).toBeNull()
+    expect(service.handlePut('bob', -1, '张三')).toBeNull()
+    expect(service.handlePut('bob', 1.5, '张三')).toBeNull()
+  })
+
+  it('共享根不存在时拒绝', () => {
+    const service = new ShareService({
+      getRoot: () => join(tmpdir(), 'pantry-不存在的共享根'),
+      getDefaultMode: () => 'write',
+      getGrants: () => null
+    })
+    expect(service.handlePut('bob', 10, '张三')).toBeNull()
+  })
+})
+
+describe('shareUploadDirName（上传落点目录名）', () => {
+  it('直接用清洗后的显示名，不加前缀', () => {
+    expect(shareUploadDirName('张三')).toBe('张三')
+    expect(shareUploadDirName('a/b\\c')).toBe('a b c')
+    expect(shareUploadDirName('..')).toBe('未知节点')
   })
 })

@@ -12,6 +12,7 @@ import {
   SHARE_MAX_DEPTH,
   SHARE_NAME_MAX,
   SHARE_PATH_MAX,
+  SHARE_PUT_MAX_BYTES,
   SHARE_SNAPSHOT_MAX,
   SHARE_SNAPSHOT_TTL,
   type ShareDenyReason,
@@ -317,9 +318,7 @@ export class ShareService {
       op: 'list-ok',
       reqId: req.reqId,
       path: rel,
-      // 上传（purpose:"share-put"）在第 ③ 步才接入，此前一律只声明 read——
-      // 否则对端会显示一个必然被拒的上传入口。第 ③ 步把这里改回 mode。
-      perm: 'read',
+      perm: mode,
       snapshotId,
       offset,
       total: snapshot.entries.length,
@@ -348,6 +347,26 @@ export class ShareService {
       absPaths.push(abs)
     }
     return { ok: true, absPaths }
+  }
+
+  /**
+   * 上传请求（决议 #272）：只有有效权限为 write 才放行，落点由本机算成
+   * `共享根/<上传者显示名>/`，上传方无从指定。返回落盘目录，拒绝返回 null。
+   */
+  handlePut(peerId: string, totalSize: number, uploaderDisplayName: string): string | null {
+    if (this.modeFor(peerId) !== 'write') return null
+    if (!Number.isSafeInteger(totalSize) || totalSize < 0 || totalSize > SHARE_PUT_MAX_BYTES) {
+      return null
+    }
+    const root = this.deps.getRoot()
+    if (root.trim().length === 0) return null
+    let realRoot: string
+    try {
+      realRoot = realpathSync(root) // 共享根本身必须存在；子目录由落盘流程按需创建
+    } catch {
+      return null
+    }
+    return join(realRoot, shareUploadDirName(uploaderDisplayName))
   }
 
   /** 同一对端 10 秒最多 5 次列目录（决议 #276），防止有人拿它反复扫盘。 */
@@ -387,18 +406,30 @@ export class ShareService {
 // eslint-disable-next-line no-control-regex
 const BAD_DIR_CHARS = new RegExp('[<>:"|?*/\\\\\\u0000-\\u001f]', 'g')
 
-/**
- * 文件柜下载的默认落点目录名（决议 #271）：`文件柜-<对方显示名>`。
- * 加前缀是为了和决议 #179 的「聊天里收到的文件」目录一眼分开。
- */
-export function shareDownloadDirName(displayName: string): string {
+function cleanDirName(displayName: string): string {
   const clean = displayName
     .replace(BAD_DIR_CHARS, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 60)
     .trim()
-  return `文件柜-${clean && clean !== '.' && clean !== '..' ? clean : '未知节点'}`
+  return clean && clean !== '.' && clean !== '..' ? clean : '未知节点'
+}
+
+/**
+ * 文件柜下载的默认落点目录名（决议 #271）：`文件柜-<对方显示名>`。
+ * 加前缀是为了和决议 #179 的「聊天里收到的文件」目录一眼分开。
+ */
+export function shareDownloadDirName(displayName: string): string {
+  return `文件柜-${cleanDirName(displayName)}`
+}
+
+/**
+ * 别人上传到我的文件柜时的落点目录名（决议 #272）：共享根下以上传者命名的子目录。
+ * 名字由接收方本机算，不进协议——上传方因此无法指定落点。
+ */
+export function shareUploadDirName(uploaderDisplayName: string): string {
+  return cleanDirName(uploaderDisplayName)
 }
 
 /**

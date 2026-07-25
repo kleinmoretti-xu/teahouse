@@ -19,6 +19,7 @@ import {
   constants as fsConstants,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -56,6 +57,7 @@ import {
   type ShareDownloadResult,
   type ShareGrantView,
   type ShareRootPickResult,
+  type ShareUploadResult,
   type TableTextMeta,
   type TransferView,
   type UpdateAvailability
@@ -75,6 +77,7 @@ import {
   SHARE_GET_AUTH_TTL,
   SHARE_GET_MAX_PATHS,
   SHARE_PATH_MAX,
+  SHARE_PUT_MAX_BYTES,
   SHARE_REQ_TIMEOUT,
   isAvatarPresetValue,
   isShareMode,
@@ -916,6 +919,36 @@ if (!gotLock) {
     settle(null)
   }
 
+  /** 上传前先在本机量一遍：递归统计文件数与总字节，读不到返回 null。 */
+  function measureUploadPaths(paths: string[]): { fileCount: number; totalSize: number } | null {
+    let fileCount = 0
+    let totalSize = 0
+    const walk = (target: string, depth: number): boolean => {
+      if (depth > 32) return false
+      let st: ReturnType<typeof statSync>
+      try {
+        st = statSync(target)
+      } catch {
+        return false
+      }
+      if (st.isDirectory()) {
+        let names: string[]
+        try {
+          names = readdirSync(target)
+        } catch {
+          return false
+        }
+        return names.every((name) => walk(join(target, name), depth + 1))
+      }
+      if (!st.isFile()) return true // 设备文件等非常规条目跳过，不计入
+      fileCount += 1
+      totalSize += st.size
+      return true
+    }
+    for (const p of paths) if (!walk(p, 0)) return null
+    return fileCount > 0 ? { fileCount, totalSize } : null
+  }
+
   function selfNodeId(): string {
     return appState?.nodeId ?? ''
   }
@@ -1247,6 +1280,8 @@ if (!gotLock) {
         getUpdateDir: updatesDir,
         authorizeUpdateOffer: (peerId, name, totalSize) =>
           updateRequestGate.consume(peerId, name, totalSize),
+        authorizeShareUpload: (peerId, totalSize) =>
+          share?.handlePut(peerId, totalSize, resolvePeerDisplayName(peerId) || peerId) ?? null,
         authorizeShareDownload: (peerId) => {
           const dir = shareDownloadGate.consume(peerId)
           // 传输已开始即视为请求成功，立刻唤醒 share:download，不必干等超时
@@ -2126,6 +2161,53 @@ if (!gotLock) {
         return { ok: false, reason: 'timeout' }
       }
       return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    IpcChannels.shareUpload,
+    async (
+      event,
+      peerId: unknown,
+      localPaths: unknown,
+      directory: unknown
+    ): Promise<ShareUploadResult> => {
+      const issue = shareTargetIssue(peerId)
+      if (issue) return { ok: false, reason: issue === 'offline' ? 'offline' : 'unsupported' }
+      const target = peerId as string
+
+      let paths: string[]
+      if (localPaths === null || localPaths === undefined) {
+        const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+        if (!owner) return { ok: true, canceled: true }
+        const picked = await dialog.showOpenDialog(owner, {
+          title: directory === true ? '选择要上传的文件夹' : '选择要上传的文件',
+          properties: directory === true ? ['openDirectory'] : ['openFile', 'multiSelections']
+        })
+        if (picked.canceled || picked.filePaths.length === 0) return { ok: true, canceled: true }
+        paths = picked.filePaths
+      } else {
+        // 拖拽进来的路径必须先经 file:grant-paths 授权，规则同普通文件发送
+        if (!Array.isArray(localPaths) || localPaths.length === 0 || localPaths.length > 100) {
+          return { ok: false, reason: 'unreadable' }
+        }
+        if (!localPaths.every((p) => typeof p === 'string' && p.length > 0 && p.length < 2048)) {
+          return { ok: false, reason: 'unreadable' }
+        }
+        paths = localPaths as string[]
+        if (!rendererPathGrants.consume(event.sender.id, paths)) {
+          return { ok: false, reason: 'unreadable' }
+        }
+      }
+
+      const measured = measureUploadPaths(paths)
+      if (!measured) return { ok: false, reason: 'unreadable' }
+      if (measured.totalSize > SHARE_PUT_MAX_BYTES) return { ok: false, reason: 'too-large' }
+      const ok = await files?.offerSharePut(target, paths)
+      if (!ok) return { ok: false, reason: 'rejected' }
+      // 日志只记数量与字节数，不记文件名（决议 #6/#276）
+      console.log(`[share] 上传已发起：${measured.fileCount} 项`)
+      return { ok: true, fileCount: measured.fileCount }
     }
   )
 

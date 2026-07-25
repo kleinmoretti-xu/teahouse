@@ -34,6 +34,7 @@ import {
   type ShareDownloadResult,
   type ShareGrantView,
   type ShareRootPickResult,
+  type ShareUploadResult,
   type StickerView,
   type TableTextMeta,
   type TransferView,
@@ -189,6 +190,12 @@ const api: PantryApi = {
     saveAs?: boolean
   ): Promise<ShareDownloadResult> =>
     ipcRenderer.invoke(IpcChannels.shareDownload, peerId, paths, saveAs === true),
+  uploadShare: (
+    peerId: string,
+    localPaths?: string[],
+    directory?: boolean
+  ): Promise<ShareUploadResult> =>
+    ipcRenderer.invoke(IpcChannels.shareUpload, peerId, localPaths ?? null, directory === true),
   addManualPeer: (addr: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.netAddPeer, addr),
   scanRange: (cidr: string): Promise<number> => ipcRenderer.invoke(IpcChannels.netScan, cidr),

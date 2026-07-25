@@ -52,11 +52,25 @@ function openMessageMenu(event: MouseEvent): void {
 function openTextLink(url: string): void {
   void window.pantry.openUrl(url)
 }
+
+/** 文件柜上传提示：点一下直接打开本机落盘目录（决议 #274） */
+function revealSystemTarget(): void {
+  const transferId = props.msg.fileRef?.transferId
+  if (transferId) void window.pantry.revealTransfer(transferId)
+}
 </script>
 
 <template>
   <div v-if="showSeparator" class="sep">{{ separatorTime(props.msg.ts) }}</div>
-  <div v-if="props.msg.kind === 'system'" class="system-line">{{ props.msg.text }}</div>
+  <!-- 文件柜上传提示（决议 #274）带 fileRef，可点开落盘目录；其余系统提示是纯文本 -->
+  <button
+    v-if="props.msg.kind === 'system' && props.msg.fileRef"
+    class="system-line system-action"
+    @click="revealSystemTarget"
+  >
+    {{ props.msg.text }}
+  </button>
+  <div v-else-if="props.msg.kind === 'system'" class="system-line">{{ props.msg.text }}</div>
   <div
     v-else-if="props.msg.status !== 'recalled'"
     :id="`msg-${props.msg.id}`"
@@ -169,6 +183,17 @@ function openTextLink(url: string): void {
   font-size: 12px;
   color: var(--text-3);
   margin: 10px 0;
+}
+.system-action {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.system-action:hover {
+  color: var(--primary);
+  text-decoration: underline;
 }
 .row {
   display: flex;

@@ -337,7 +337,7 @@ sequenceDiagram
 
 **兼容**：旧端不声明 `shr1`，收到 `share` 会按未知 `type` 整包忽略（不回错误，符合 §4 兼容规则）；新端因此以 `shr1` 作为入口可用的前置条件。`purpose` 是既有可选字段，旧端遇到未知值时按既有校验拒绝该 offer，不会误落盘。
 
-> **实现进度（v0.48.0）**：`shr1` 已声明，`list` / `list-ok` / `get` / `deny` 与 `purpose:"share-get"` 已全线可用。**上传 `purpose:"share-put"` 尚未接入**：收到即 decline，且共享方在 `list-ok` 中**一律只声明 `perm:"read"`**（即便本机默认档是"可读可传"），避免对端显示一个必然被拒的上传入口。第 ③ 步接入上传时把 `perm` 改回按有效权限如实回报。
+**上传落点与复核（决议 #272）**：`purpose:"share-put"` 的 offer 由上传方主动发出，不需要先问。共享方收到后独立复核三件事：① 该节点的有效权限必须是 `write`；② 清单实算总大小 ≤ `SHARE_PUT_MAX_BYTES`（不信任 offer 声明值）；③ 共享根仍存在。通过后落点固定为 `共享根/<上传者显示名>/`，显示名取本地备注优先、其次昵称，经与接收目录同一套清洗（剥离路径分隔符与保留字符，空名兜底"未知节点"），**因此上传方无法指定落点、也无法越出共享根一层**。文件级相对路径仍走 §8 的既有清洗与重名加后缀，不覆盖任何已有文件。落盘完成后共享方在与上传者的私聊里插一条汇总系统提示（`messages.kind='system'`，消息 ID 取 transferId 保证幂等），会话冒泡并计未读但不弹桌面通知。
 
 ## 9. 协议常量（草案值，实现后按实测调整）
 
@@ -466,3 +466,4 @@ sequenceDiagram
 - 2026-07-21 v0.49 决议 #263：私聊与群聊普通文件 offer 新增 `expiresAt`，固定领取窗口 `FILE_OFFER_TTL=24h`；接收端用 `expiresAt-envelope.ts` 换算本地截止时间并限制最大 24 小时。逾期未完成 transfer 进入 `expired`，发送端与接收端分别显示「发送已到期」/「文件已过期」；图片、表情和更新包保持原语义。SQLite v13 持久化截止时间与出站源文件 manifest；版本 **0.44.9-beta.5 → 0.45.0**。
 - 2026-07-25 v0.50 决议 #271–#277：新增共享文件柜控制报文 `share`（`list` / `list-ok` / `get` / `deny`，可靠投递，`list-ok` 超 UDP 上限走既有 TCP 控制帧兜底）与能力位 `shr1`；数据面 100% 复用 §8 拉取式传输，只增加 `purpose:"share-get"`（共享方回 offer、浏览方自动 accept 拉取）与 `purpose:"share-put"`（上传方发 offer、共享方校验写权限后拉取）两个取值。**不新增任何端口**，仍为 UDP 17878 / TCP 17879。两类 purpose 不入聊天流、不带 `msgId`、不套 `FILE_OFFER_TTL`、不参与媒体撤回。权限一律由共享方本机按"默认档 + 按人例外"当场判定，协议中只出现共享根下的相对路径并强制 `realpath` 越界复核；新增 `SHARE_*` 常量共 11 项。旧端不声明 `shr1`、整包忽略 `share`，向前兼容。详见 §8.2。
 - 2026-07-25 v0.51 决议 #275 落地浏览与下载：`share` 报文的 `list` / `list-ok` / `get` / `deny` 四个 op、能力位 `shr1` 与 `purpose:"share-get"` 全部实现并进入 codec 白名单；`share` 加入可靠控制报文集合，`list-ok` 超 UDP 上限时经既有 TCP 控制帧直达（已有回环集成测试覆盖 200 条中文条目）。新增常量 `SHARE_GET_AUTH_TTL`（60s，下载一次性授权）。路径校验分两层：codec 只认相对路径（拒绝绝对路径 / `..` / 盘符 / 反斜杠 / NUL），ShareService 再做深度上限与 `realpath` 越界复核。`share-get` / `share-put` 的 offer 禁止携带 `groupId` / `msgId`。**上传 `share-put` 本版尚未接入**：收到即 decline，`list-ok` 的 `perm` 暂时钳为 `read`，详见 §8.2 实现进度注。版本 **0.47.0 → 0.48.0**。
+- 2026-07-25 v0.52 决议 #272/#274 落地上传：`purpose:"share-put"` 打通——上传方直接发 offer，共享方按"有效权限 == write + 清单实算总量 ≤ `SHARE_PUT_MAX_BYTES` + 共享根存在"三项独立复核后自动 accept 并拉取，落点固定为 `共享根/<上传者显示名>/`，上传方无从指定。同时拆除 v0.51 的临时收口：`list-ok` 的 `perm` 恢复按有效权限如实回报，`share-put` 不再一律 decline。落盘完成后生成一条幂等汇总系统提示（不弹桌面通知）。协议字段无新增，仅启用既有 `purpose` 取值；`SHARE_PUT_MAX_BYTES` 由常量转为实际生效。版本 **0.48.0 → 0.49.0**。

@@ -68,6 +68,7 @@ export const IpcChannels = {
   /** 对方的文件柜（决议 #273/#275）：列目录与下载 */
   shareBrowse: 'share:browse',
   shareDownload: 'share:download',
+  shareUpload: 'share:upload',
   netAddPeer: 'net:add-peer',
   netScan: 'net:scan',
   netScanAllRanges: 'net:scan-all-ranges',
@@ -581,6 +582,29 @@ export type ShareBrowseResult =
     }
   | { ok: false; reason: ShareBrowseFailReason }
 
+export type ShareUploadResult =
+  | { ok: true; canceled?: false; fileCount: number }
+  | { ok: true; canceled: true }
+  | { ok: false; reason: ShareUploadFailReason }
+
+/** 上传失败原因：三个本机侧原因 + 对端拒绝 / 超限 */
+export type ShareUploadFailReason =
+  | 'offline'
+  | 'unsupported'
+  | 'no-perm'
+  | 'too-large'
+  | 'unreadable'
+  | 'rejected'
+
+export const SHARE_UPLOAD_FAIL_TEXT: Record<ShareUploadFailReason, string> = {
+  offline: '对方当前不在线',
+  unsupported: '对方的版本还不支持文件柜',
+  'no-perm': '对方没有开放上传',
+  'too-large': '这次选的内容超过 2 GB，分几次传',
+  unreadable: '有文件读不到，检查一下是否被移动或删除',
+  rejected: '对方拒收了这次上传'
+}
+
 export type ShareDownloadResult =
   | { ok: true; canceled?: false }
   | { ok: true; canceled: true }
@@ -764,6 +788,15 @@ export interface PantryApi {
   ): Promise<ShareBrowseResult>
   /** 下载对方文件柜里的若干条目；saveAs=true 时先弹目录选择器 */
   downloadShare(peerId: string, paths: string[], saveAs?: boolean): Promise<ShareDownloadResult>
+  /**
+   * 上传到对方文件柜。localPaths 省略时先弹选择器（directory=true 选文件夹）；
+   * 传入拖拽得到的本地路径时须先经 grantFilePaths 授权。
+   */
+  uploadShare(
+    peerId: string,
+    localPaths?: string[],
+    directory?: boolean
+  ): Promise<ShareUploadResult>
   /** 手动添加节点（"ip" 或 "ip:port"）：持久化 + 立即探测 */
   addManualPeer(addr: string): Promise<boolean>
   /** 扫描一个 CIDR 网段；返回探测地址数，非法网段返回 -1 */

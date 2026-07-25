@@ -12,7 +12,7 @@ import {
   type FileCtlPayload,
   type GroupMeta
 } from '../../shared/protocol'
-import type { ConversationView } from '../../shared/ipc'
+import type { ConversationView, MessageView } from '../../shared/ipc'
 import type { Messenger } from '../net/messenger'
 import type { PeerRegistry } from '../net/peer-registry'
 import type { ConvRepo } from '../store/conv-repo'
@@ -2100,29 +2100,81 @@ describe('FilesService 共享文件柜下载（决议 #275）', () => {
     await svc.stop()
   })
 
-  it('上传（share-put）在第 ③ 步接入前明确拒收，不退化成普通文件卡', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-put-'))
-    tmpDirs.push(dir)
+})
+
+describe('FilesService 共享文件柜上传（决议 #272/#274）', () => {
+  function makeSvc(options: {
+    dir: string
+    authorizeShareUpload?: (peerId: string, totalSize: number) => string | null
+    caps?: string[]
+  }): {
+    svc: FilesService
+    messenger: FakeMessenger
+    msgRepo: FakeMsgRepo
+    transferRepo: FakeTransferRepo
+    convRepo: FakeConvRepo
+  } {
     const messenger = new FakeMessenger()
     const msgRepo = new FakeMsgRepo()
     const transferRepo = new FakeTransferRepo()
+    const convRepo = new FakeConvRepo()
     const svc = new FilesService({
       selfId: 'node-self',
       messenger: messenger as unknown as Messenger,
-      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
-      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      registry: new FakeRegistry(
+        ['node-bob'],
+        options.caps ?? [CAPS.fileCabinet]
+      ) as unknown as PeerRegistry,
+      convRepo: convRepo as unknown as ConvRepo,
       msgRepo: msgRepo as unknown as MsgRepo,
       transferRepo: transferRepo as unknown as TransferRepo,
       tcpPort: 0,
-      getSaveDir: () => dir,
-      getImagesDir: () => dir,
-      authorizeShareDownload: () => dir,
+      getSaveDir: () => options.dir,
+      getImagesDir: () => options.dir,
+      peerDisplayName: () => '鲍勃',
+      ...(options.authorizeShareUpload ? { authorizeShareUpload: options.authorizeShareUpload } : {}),
       bindAddress: '127.0.0.1'
     })
+    return { svc, messenger, msgRepo, transferRepo, convRepo }
+  }
 
-    const env = shareGetOffer('node-bob', 'transfer-put')
-    ;(env.payload as FileCtlOffer).purpose = 'share-put'
-    messenger.emit('incoming', env)
+  it('上传 offer 带 share-put，不进聊天流也不套领取期限', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-put-send-'))
+    tmpDirs.push(dir)
+    writeFileSync(join(dir, '周报.docx'), 'x')
+    const { svc, messenger, msgRepo, transferRepo } = makeSvc({ dir })
+
+    await expect(svc.offerSharePut('node-bob', [join(dir, '周报.docx')])).resolves.toBe(true)
+    const offer = messenger.sent[0].env.payload as FileCtlOffer
+    expect(offer.purpose).toBe('share-put')
+    expect(offer.msgId).toBeUndefined()
+    expect(offer.expiresAt).toBeUndefined()
+    expect(msgRepo.rows.size).toBe(0)
+    const row = [...transferRepo.rows.values()][0]
+    expect(row.direction).toBe('out')
+    expect(row.expires_at).toBe(0)
+    await svc.stop()
+  })
+
+  it('对端未声明 shr1 时不发上传 offer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-put-nocap-'))
+    tmpDirs.push(dir)
+    writeFileSync(join(dir, 'a.txt'), 'x')
+    const { svc, messenger } = makeSvc({ dir, caps: [] })
+    await expect(svc.offerSharePut('node-bob', [join(dir, 'a.txt')])).resolves.toBe(false)
+    expect(messenger.sent).toHaveLength(0)
+    await svc.stop()
+  })
+
+  it('没有写权限时拒收上传，不落盘也不入聊天', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-put-noperm-'))
+    tmpDirs.push(dir)
+    const { svc, messenger, msgRepo, transferRepo } = makeSvc({
+      dir,
+      authorizeShareUpload: () => null
+    })
+
+    messenger.emit('incoming', sharePutOffer('node-bob', 'transfer-noperm'))
     await Promise.resolve()
 
     expect(msgRepo.rows.size).toBe(0)
@@ -2130,7 +2182,102 @@ describe('FilesService 共享文件柜下载（决议 #275）', () => {
     expect((messenger.sent.at(-1)?.env.payload as FileCtlPayload).op).toBe('decline')
     await svc.stop()
   })
+
+  it('有写权限时自动接收到指定子目录，落点由本机算、上传方指定不了', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-put-ok-'))
+    tmpDirs.push(dir)
+    const landing = join(dir, '鲍勃')
+    const sizes: number[] = []
+    const { svc, messenger, msgRepo, transferRepo } = makeSvc({
+      dir,
+      authorizeShareUpload: (_peerId, totalSize) => {
+        sizes.push(totalSize)
+        return landing
+      }
+    })
+
+    messenger.emit('incoming', sharePutOffer('node-bob', 'transfer-put-ok'))
+    await Promise.resolve()
+
+    expect(sizes).toEqual([5]) // 复核用的是清单实算大小，不是发送方声明值
+    expect(msgRepo.rows.size).toBe(0) // 落盘完成前不产生任何提示
+    const row = transferRepo.rows.get('transfer-put-ok')
+    expect(row?.direction).toBe('in')
+    expect(JSON.parse(row!.files).purpose).toBe('share-put')
+    expect(JSON.parse(row!.files).savedPath.startsWith(landing)).toBe(true)
+    await svc.stop()
+  })
+
+  it('上传完成后在私聊插一条汇总系统提示，计未读且可点开目录', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-put-note-'))
+    tmpDirs.push(dir)
+    const { svc, messenger, msgRepo, convRepo } = makeSvc({
+      dir,
+      authorizeShareUpload: () => join(dir, '鲍勃')
+    })
+    const messages: MessageView[] = []
+    svc.on('message', (m: MessageView) => messages.push(m))
+
+    messenger.emit('incoming', sharePutOffer('node-bob', 'transfer-note'))
+    await Promise.resolve()
+    ;(svc as unknown as { finish(id: string, status: string): void }).finish(
+      'transfer-note',
+      'done'
+    )
+
+    expect(msgRepo.rows.size).toBe(1)
+    const row = [...msgRepo.rows.values()][0]
+    expect(row.kind).toBe('system')
+    expect(row.content).toBe('鲍勃 上传了 1 个文件到你的文件柜')
+    expect(row.conv_id).toBe('single:node-bob')
+    expect(JSON.parse(row.file_ref!).transferId).toBe('transfer-note')
+    expect(messages).toHaveLength(1)
+    expect(convRepo.bumped.at(-1)?.convId).toBe('single:node-bob')
+
+    // 幂等：重复收口不再插第二条
+    ;(svc as unknown as { finish(id: string, status: string): void }).finish(
+      'transfer-note',
+      'done'
+    )
+    expect(msgRepo.rows.size).toBe(1)
+    await svc.stop()
+  })
+
+  it('下载完成不产生系统提示（只有上传才提示，决议 #274）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-get-note-'))
+    tmpDirs.push(dir)
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: messenger as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: new FakeTransferRepo() as unknown as TransferRepo,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      authorizeShareDownload: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+
+    messenger.emit('incoming', shareGetOffer('node-bob', 'transfer-get-note'))
+    await Promise.resolve()
+    ;(svc as unknown as { finish(id: string, status: string): void }).finish(
+      'transfer-get-note',
+      'done'
+    )
+    expect(msgRepo.rows.size).toBe(0)
+    await svc.stop()
+  })
 })
+
+function sharePutOffer(from: string, transferId: string): Envelope<FileCtlOffer> {
+  const env = shareGetOffer(from, transferId)
+  env.payload.purpose = 'share-put'
+  return env
+}
 
 function shareGetOffer(from: string, transferId: string): Envelope<FileCtlOffer> {
   return makeEnvelope<FileCtlOffer>(MSG_TYPES.fileCtl, from, {
