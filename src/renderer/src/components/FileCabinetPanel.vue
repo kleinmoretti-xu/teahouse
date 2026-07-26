@@ -30,7 +30,10 @@ const total = ref(0)
 const truncated = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
+// 首屏失败（整页替换成错误态）与翻页失败（只在列表底部提示）必须分开，
+// 否则滚动撞上对方 10 秒 5 次的列目录限流时，已经加载好的条目会被整片清掉（决议 #278）
 const failReason = ref<ShareBrowseFailReason | null>(null)
+const moreFailReason = ref<ShareBrowseFailReason | null>(null)
 const picked = ref<Set<string>>(new Set())
 const downloading = ref(false)
 const downloadNote = ref('')
@@ -57,6 +60,9 @@ const crumbs = computed<Crumb[]>(() => {
 
 const hasMore = computed(() => entries.value.length < total.value)
 const failText = computed(() => (failReason.value ? SHARE_FAIL_TEXT[failReason.value] : ''))
+const moreFailText = computed(() =>
+  moreFailReason.value ? SHARE_FAIL_TEXT[moreFailReason.value] : ''
+)
 const pickedCount = computed(() => picked.value.size)
 const allPagePicked = computed(
   () => entries.value.length > 0 && entries.value.every((e) => picked.value.has(e.name))
@@ -98,6 +104,7 @@ function childPath(name: string): string {
 async function load(target: string, keepPick = false): Promise<void> {
   loading.value = true
   failReason.value = null
+  moreFailReason.value = null
   if (!keepPick) picked.value = new Set()
   const result = await window.pantry.browseShare(props.peerId, target, 0)
   loading.value = false
@@ -119,6 +126,7 @@ async function load(target: string, keepPick = false): Promise<void> {
 async function loadMore(): Promise<void> {
   if (loadingMore.value || loading.value || !hasMore.value) return
   loadingMore.value = true
+  moreFailReason.value = null
   const result = await window.pantry.browseShare(
     props.peerId,
     path.value,
@@ -131,7 +139,8 @@ async function loadMore(): Promise<void> {
       await load(path.value, true)
       return
     }
-    failReason.value = result.reason
+    // 已经取到的条目一律保留，失败只落在列表末尾
+    moreFailReason.value = result.reason
     return
   }
   entries.value = [...entries.value, ...result.entries]
@@ -140,6 +149,8 @@ async function loadMore(): Promise<void> {
 }
 
 function onScroll(event: Event): void {
+  // 上一页刚失败（多半是撞了限流）就停下等用户点重试，继续滚不再自动重发
+  if (moreFailReason.value) return
   const el = event.target as HTMLElement
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) void loadMore()
 }
@@ -331,6 +342,10 @@ onUnmounted(() => stopTransfer())
           </span>
         </div>
         <div v-if="loadingMore" class="hint small">正在加载更多…</div>
+        <div v-else-if="moreFailReason" class="hint small error inline">
+          <span>{{ moreFailText }}</span>
+          <button class="retry" @click="loadMore">重试</button>
+        </div>
         <div v-else-if="truncated" class="hint small">目录内容过多，仅显示前 5000 项</div>
       </div>
     </template>
@@ -562,6 +577,13 @@ onUnmounted(() => stopTransfer())
   gap: 6px;
   align-items: center;
   color: var(--text-2);
+}
+
+/* 翻页失败贴在列表末尾，横排更省纵向空间，也和上方条目区分开 */
+.hint.inline {
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
 }
 
 .retry,

@@ -425,6 +425,9 @@ watch(
   () => chatStore.activeConv?.peerId,
   (id) => {
     showMembers.value = false
+    // 文件柜面板跟着会话走：留着会直接挂到新对端身上，对方离线 / 不支持时
+    // 顶部按钮已经灰掉、面板却还开着报错，状态自相矛盾（决议 #278）
+    showCabinet.value = false
     showMentionPicker.value = false
     showHistorySearch.value = false
     closePeerProfile()
