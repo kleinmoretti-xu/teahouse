@@ -144,6 +144,17 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
    - **③ 上传 —— 已完成（v0.49.0）**：`ShareService.handlePut`（写权限 + 总量 + 共享根三项复核）、`FilesService.offerSharePut` / `onSharePutOffer`、`finish` 收口时的幂等系统提示、`share:upload` IPC（含 `measureUploadPaths` 实测与 2 GiB 门禁）、面板上传按钮与拖入上传。第 ② 步的两处临时收口（`perm` 钳为 read、`share-put` 一律 decline）已拆除。
    - **剩余未做（按需再排）**：双机真实联调仅做过单机自测；共享内容搜索、变更订阅推送、在线预览、群聊共享目录、远程删除改名等属 F-SHARE-8 明确的本期非目标。
    - 测试要求：`services/share.ts` 的权限判定与路径校验必须有纯函数单测（含 `..`、绝对路径、盘符、符号链接越界、深度超限、隐藏文件过滤、分页快照失效）；`share` 报文编解码进 `codec.test.ts`；浏览 → 下载 → 上传三段走回环集成测试，**绑定 `127.0.0.1` 且 `broadcastTargets: []`**。
+0.5. **v0.49.0 独立复审的剩余条目（2026-07-26）**：复审共提 12 条，**A 级 3 条已修完**——翻页失败清空列表 + 切会话不收面板（#278 / v0.49.1）、上传测算同步阻塞主进程（#279 / v0.49.2）。**以下 B / C 级已确认存在但尚未处理**，按需再排，每条都是独立小增量：
+   - **B1** 文件体积格式三份实现且精度不一致：`FileCabinetPanel.vue:70`（`Math.round`，显示「12 MB」）/ `SettingsApp.vue:793` / `stores/transfers.ts:60`（均 `toFixed(1)`，显示「12.3 MB」）。建议收进 `shared/` 一份。
+   - **B2** `FileCabinetPanel.vue` 截断提示把 `SHARE_DIR_MAX_ENTRIES` 硬编码成「5000」，改常量文案不同步。
+   - **B3** 面板「全选」实际只勾选**已加载**条目，旁边却显示 `total` 项，语义误导；建议改称「选择本页」或按 total 明示。
+   - **B4** 面板列表行文件名 `text-overflow: ellipsis` 但无 `:title`，长名无法查看全称（`FileCard` / `GroupPanel` 都有原生 tooltip，此处漏了）。
+   - **B5** `CaptureApp.vue:692/705/839/843` 硬编码 `#3d8b6b` / `#327b5e`；`tokens.css` 在 `main.ts:4` 全局加载、截图窗同样吃得到，应改 `var(--primary)`（AGENTS.md 要求颜色只用 token）。
+   - **B6** 面板 `@dragleave="dragActive = false"` 挂在根节点，拖过内部子元素会反复触发 leave 再被 dragover 点亮，虚线框抖动；需判 `relatedTarget` 或用进出计数。
+   - **C1** `files.ts` 的 `offerUpdatePackage`（:448）/ `offerSharePaths`（:494）/ `offerSharePut`（:536）三段约 40 行逐行重复，只差 `purpose` 与前置校验；抽 `offerInternal` 可省约 80 行，也避免以后改传输语义漏改一处。
+   - **C2** `share.ts` 的 `resolveWithinRoot` 每次都 `realpathSync(root)`，`listShareDirectory` 对每个符号链接条目再调一次，符号链接多的目录会重复解析共享根；把 realRoot 提出来传入即可。
+   - **C3** `listShareDirectory` 是**先截断后排序**：超 5000 项的目录展示的是 readdir 返回顺序的前 5000 条再排序，而非全局排序的前 5000 条，"目录在前"的承诺在截断边界上是破的。要严格需先排序再截断。
+   - **C4** `ShareDownloadGate.begin()`（`share.ts:442`）对同一 peerId 直接覆盖：先点「下载」、返回后再点「另存为」选别的目录，此时第一批 offer 才到达会消费掉第二次的 `saveDir`，文件落错位置。概率低（限 60s 授权窗口内）但后果是"文件找不到"。
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
 2. **代码优化状态（决议 #200/#210）**：[optimization-plan.md](optimization-plan.md) 的 18 项首批优化与 #210 第二批渲染性能优化均已完成；下一批开始前先按用户确认的范围新增决议与设计记录。
 3. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。
