@@ -19,7 +19,6 @@ import {
   constants as fsConstants,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -154,6 +153,7 @@ import { filterImagePickerPaths, IMAGE_PICKER_EXTENSIONS } from './util/image-pi
 import { isPathInsideAny, PathGrantStore } from './util/path-policy'
 import { resolveDevRendererUrl } from './util/renderer-url'
 import { canServeUpdates } from './util/release-format'
+import { measureUploadPaths } from './util/upload-measure'
 import { isWindows7 } from './util/windows-version'
 import { applyWindowZoom } from './util/window-zoom'
 import {
@@ -920,35 +920,6 @@ if (!gotLock) {
   }
 
   /** 上传前先在本机量一遍：递归统计文件数与总字节，读不到返回 null。 */
-  function measureUploadPaths(paths: string[]): { fileCount: number; totalSize: number } | null {
-    let fileCount = 0
-    let totalSize = 0
-    const walk = (target: string, depth: number): boolean => {
-      if (depth > 32) return false
-      let st: ReturnType<typeof statSync>
-      try {
-        st = statSync(target)
-      } catch {
-        return false
-      }
-      if (st.isDirectory()) {
-        let names: string[]
-        try {
-          names = readdirSync(target)
-        } catch {
-          return false
-        }
-        return names.every((name) => walk(join(target, name), depth + 1))
-      }
-      if (!st.isFile()) return true // 设备文件等非常规条目跳过，不计入
-      fileCount += 1
-      totalSize += st.size
-      return true
-    }
-    for (const p of paths) if (!walk(p, 0)) return null
-    return fileCount > 0 ? { fileCount, totalSize } : null
-  }
-
   function selfNodeId(): string {
     return appState?.nodeId ?? ''
   }
@@ -2200,7 +2171,8 @@ if (!gotLock) {
         }
       }
 
-      const measured = measureUploadPaths(paths)
+      // 异步测算：整棵目录树的遍历不能占住主进程事件循环（决议 #278）
+      const measured = await measureUploadPaths(paths)
       if (!measured) return { ok: false, reason: 'unreadable' }
       if (measured.totalSize > SHARE_PUT_MAX_BYTES) return { ok: false, reason: 'too-large' }
       const ok = await files?.offerSharePut(target, paths)
