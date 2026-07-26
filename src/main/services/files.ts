@@ -444,28 +444,30 @@ export class FilesService extends EventEmitter {
     return row ? msgRowToView(row) : null
   }
 
-  /** 自更新包：隐藏传输，不写聊天消息，不进入普通传输列表（决议 #170）。 */
-  async offerUpdatePackage(peerId: string, path: string): Promise<boolean> {
-    const peer = this.deps.registry.get(peerId)
-    if (!peer || !peer.online) return false
-    const prepared = this.prepareUpdatePackage(path)
-    if (!prepared) return false
+  /**
+   * 隐藏传输的共同收尾（决议 #282）：登记传输行与出站上下文、发 offer、失败回滚。
+   *
+   * 自更新包与文件柜的上下行三条链路都"不写聊天消息、不套领取期限"，
+   * 差别只在怎么准备文件、msgId 用什么前缀、blob 里写什么 purpose，
+   * 这后半段原先一字不差地各写了一遍。
+   */
+  private async offerHidden(
+    peerId: string,
+    prepared: PreparedOutgoing,
+    msgIdPrefix: 'update' | 'share',
+    blob: Omit<FilesBlob, 'name'>
+  ): Promise<boolean> {
     const transferId = randomUUID()
-    const msgId = `update:${transferId}`
-    const now = Date.now()
+    const msgId = `${msgIdPrefix}:${transferId}`
     this.deps.transferRepo.insert({
       transferId,
       msgId,
       peerId,
       direction: 'out',
-      files: JSON.stringify({
-        name: prepared.rootName,
-        savedPath: path,
-        purpose: 'update'
-      } satisfies FilesBlob),
+      files: JSON.stringify({ name: prepared.rootName, ...blob } satisfies FilesBlob),
       status: 'offering',
       total: prepared.totalSize,
-      ts: now,
+      ts: Date.now(),
       expiresAt: 0
     })
     this.outgoing.set(transferId, {
@@ -481,10 +483,20 @@ export class FilesService extends EventEmitter {
 
     const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
     if (ok) return true
+    // offer 发失败但对方已经接上了（ACK 与传输抢跑）就不当失败处理
     const row = this.deps.transferRepo.get(transferId)
     if (row && (row.status === 'accepted' || row.status === 'done')) return true
     this.finish(transferId, 'failed')
     return false
+  }
+
+  /** 自更新包：隐藏传输，不写聊天消息，不进入普通传输列表（决议 #170）。 */
+  async offerUpdatePackage(peerId: string, path: string): Promise<boolean> {
+    const peer = this.deps.registry.get(peerId)
+    if (!peer || !peer.online) return false
+    const prepared = this.prepareUpdatePackage(path)
+    if (!prepared) return false
+    return this.offerHidden(peerId, prepared, 'update', { savedPath: path, purpose: 'update' })
   }
 
   /**
@@ -497,36 +509,7 @@ export class FilesService extends EventEmitter {
     const prepared = this.prepareOutgoing(absPaths, 'file')
     if (!prepared) return false
     prepared.purpose = 'share-get'
-    const transferId = randomUUID()
-    const msgId = `share:${transferId}`
-    const now = Date.now()
-    this.deps.transferRepo.insert({
-      transferId,
-      msgId,
-      peerId,
-      direction: 'out',
-      files: JSON.stringify({ name: prepared.rootName, purpose: 'share-get' } satisfies FilesBlob),
-      status: 'offering',
-      total: prepared.totalSize,
-      ts: now,
-      expiresAt: 0
-    })
-    this.outgoing.set(transferId, {
-      peerId,
-      msgId,
-      files: new Map(prepared.outFiles),
-      totalSize: prepared.totalSize,
-      bytesDone: 0,
-      accepted: false,
-      expiresAt: 0,
-      acceptedAt: 0
-    })
-    const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
-    if (ok) return true
-    const row = this.deps.transferRepo.get(transferId)
-    if (row && (row.status === 'accepted' || row.status === 'done')) return true
-    this.finish(transferId, 'failed')
-    return false
+    return this.offerHidden(peerId, prepared, 'share', { purpose: 'share-get' })
   }
 
   /**
@@ -543,36 +526,7 @@ export class FilesService extends EventEmitter {
     if (!prepared) return false
     if (prepared.totalSize > SHARE_PUT_MAX_BYTES) return false
     prepared.purpose = 'share-put'
-    const transferId = randomUUID()
-    const msgId = `share:${transferId}`
-    const now = Date.now()
-    this.deps.transferRepo.insert({
-      transferId,
-      msgId,
-      peerId,
-      direction: 'out',
-      files: JSON.stringify({ name: prepared.rootName, purpose: 'share-put' } satisfies FilesBlob),
-      status: 'offering',
-      total: prepared.totalSize,
-      ts: now,
-      expiresAt: 0
-    })
-    this.outgoing.set(transferId, {
-      peerId,
-      msgId,
-      files: new Map(prepared.outFiles),
-      totalSize: prepared.totalSize,
-      bytesDone: 0,
-      accepted: false,
-      expiresAt: 0,
-      acceptedAt: 0
-    })
-    const ok = await this.sendOfferPackets(peerId, transferId, prepared, 0, undefined)
-    if (ok) return true
-    const row = this.deps.transferRepo.get(transferId)
-    if (row && (row.status === 'accepted' || row.status === 'done')) return true
-    this.finish(transferId, 'failed')
-    return false
+    return this.offerHidden(peerId, prepared, 'share', { purpose: 'share-put' })
   }
 
   /** 发送方在已有私聊文件卡片上请求直接发送；只升级当前 transfer，不重新建消息。 */
