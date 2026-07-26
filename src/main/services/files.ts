@@ -853,6 +853,37 @@ export class FilesService extends EventEmitter {
     }
   }
 
+  /**
+   * 「最近有人放进来」（决议 #283）：别人上传到我文件柜的已完成记录。
+   * 文件数取自落盘时写的那条汇总系统提示（`share:<id>:uploaded` 的 fileRef.count），
+   * 与私聊里显示的数字同源；purpose 在此复核，不信 SQL 的 LIKE 粗筛。
+   */
+  listShareUploads(
+    limit = 10
+  ): Array<{ transferId: string; peerId: string; fileCount: number; totalSize: number; ts: number }> {
+    return this.deps.transferRepo
+      .listSharePutIncoming(Math.max(1, Math.min(50, limit)))
+      .filter((row) => this.blobPurpose(row) === 'share-put')
+      .map((row) => {
+        const notice = this.deps.msgRepo.get(`share:${row.transfer_id}:uploaded`)
+        let fileCount = 0
+        if (notice?.file_ref) {
+          try {
+            fileCount = (JSON.parse(notice.file_ref) as FileRefView).count ?? 0
+          } catch {
+            fileCount = 0
+          }
+        }
+        return {
+          transferId: row.transfer_id,
+          peerId: row.peer_id,
+          fileCount,
+          totalSize: row.total,
+          ts: row.ts
+        }
+      })
+  }
+
   listTransfers(limit = 30): TransferView[] {
     return this.deps.transferRepo
       .list(Math.max(1, Math.min(100, limit)))

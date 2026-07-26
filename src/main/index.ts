@@ -55,6 +55,7 @@ import {
   type ShareBrowseResult,
   type ShareDownloadResult,
   type ShareGrantView,
+  type ShareRecentUploadView,
   type ShareRootPickResult,
   type ShareUploadResult,
   type TableTextMeta,
@@ -100,6 +101,7 @@ import {
   type AppState
 } from './store/app-state'
 import { setupTray, stopTrayUnreadFlash, updateTrayUnread } from './windows/tray'
+import { openCabinetWindow, syncCabinetWindowZoom } from './windows/cabinet-window'
 import { openSettingsWindow, syncSettingsWindowZoom } from './windows/settings-window'
 import {
   closeCaptureWindow,
@@ -608,10 +610,22 @@ if (!gotLock) {
     applyWindowZoom(mainWindow?.webContents, settingsView().fontScale)
   }
 
+  /**
+   * 多窗口共享的事件（决议 #283）：文件柜窗口同样要节点在线状态与传输进度，
+   * 否则它的同事列表与进度行只能靠轮询。未订阅的窗口收到即丢弃，成本可忽略。
+   */
+  function broadcastEvent(channel: string, payload: unknown): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+      win.webContents.send(channel, payload)
+    }
+  }
+
   function broadcastSettings(): SettingsView {
     const view = settingsView()
     syncMainWindowZoom()
     syncSettingsWindowZoom(view.fontScale)
+    syncCabinetWindowZoom(view.fontScale)
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(IpcEvents.settingsUpdated, view)
     }
@@ -1265,7 +1279,7 @@ if (!gotLock) {
       files.on('message', onMessage)
       files.on('status', onStatus)
       files.on('convs', onConvs)
-      files.on('transfer', (view) => mainWindow?.webContents.send(IpcEvents.transferUpdated, view))
+      files.on('transfer', (view) => broadcastEvent(IpcEvents.transferUpdated, view))
       try {
         await files.start() // TCP 数据端口
       } catch (err) {
@@ -1335,7 +1349,7 @@ if (!gotLock) {
       if (pushTimer) return
       pushTimer = setTimeout(() => {
         pushTimer = null
-        mainWindow?.webContents.send(IpcEvents.peersUpdated, peerViews())
+        broadcastEvent(IpcEvents.peersUpdated, peerViews())
         mainWindow?.webContents.send(IpcEvents.updateAvailable, currentUpdateAvailability())
         avatars?.ensureAll()
       }, 200)
@@ -2185,6 +2199,27 @@ if (!gotLock) {
     }
   )
 
+  // 「最近有人放进来」（决议 #283）：只汇总已有传输记录，落盘目录经既有 file:reveal 打开
+  ipcMain.handle(
+    IpcChannels.shareRecentUploads,
+    (_event, limit: unknown): ShareRecentUploadView[] => {
+      const lim = typeof limit === 'number' && Number.isInteger(limit) ? limit : 10
+      return (files?.listShareUploads(lim) ?? []).map((item) => {
+        const record = registry?.get(item.peerId)
+        return {
+          transferId: item.transferId,
+          nodeId: item.peerId,
+          name: resolvePeerDisplayName(item.peerId) || item.peerId.slice(0, 8),
+          avatar: record?.profile.avatar ?? -1,
+          avatarHash: record?.profile.avatarHash ?? '',
+          fileCount: item.fileCount,
+          totalSize: item.totalSize,
+          ts: item.ts
+        }
+      })
+    }
+  )
+
   ipcMain.handle(IpcChannels.filePick, async (event, directory: unknown): Promise<string[] | null> => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -2489,11 +2524,20 @@ if (!gotLock) {
     peersRepo?.setRemark(nodeId, trimmed)
     if (trimmed) remarks.set(nodeId, trimmed)
     else remarks.delete(nodeId)
-    mainWindow?.webContents.send(IpcEvents.peersUpdated, peerViews())
+    broadcastEvent(IpcEvents.peersUpdated, peerViews())
   })
 
   ipcMain.handle(IpcChannels.uiOpenSettings, () => {
     openSettingsWindow(mainWindow, settingsView().fontScale)
+  })
+
+  // 文件柜窗口（决议 #283）：单例；带 peerId 时直接定位到该同事的柜子
+  ipcMain.handle(IpcChannels.uiOpenCabinet, (_event, peerId: unknown) => {
+    const target =
+      typeof peerId === 'string' && peerId.length > 0 && peerId.length <= LIMITS.id
+        ? peerId
+        : undefined
+    openCabinetWindow(mainWindow, settingsView().fontScale, target)
   })
 
   ipcMain.handle(IpcChannels.imgOpenViewer, async (_event, transferId: unknown): Promise<boolean> => {

@@ -5,9 +5,10 @@ const settingsSource = readFileSync(new URL('../SettingsApp.vue', import.meta.ur
 const iconSource = readFileSync(new URL('../components/PantryIcon.vue', import.meta.url), 'utf8')
 
 describe('设置二选一偏好滑块', () => {
-  it('头像、主题、发送键与文件柜权限共享同一滑块结构', () => {
-    // 四处：头像样式（三段）、主题（两段）、发送键（两段）、文件柜默认权限（三段，决议 #271）
-    expect(settingsSource.match(/class="preference-segment/g)).toHaveLength(4)
+  it('头像、主题与发送键共享同一滑块结构', () => {
+    // 三处：头像样式（三段）、主题（两段）、发送键（两段）；
+    // 文件柜默认权限的三段滑块已随整组迁到文件柜窗口（决议 #283）
+    expect(settingsSource.match(/class="preference-segment/g)).toHaveLength(3)
     expect(settingsSource).not.toContain('NRadioGroup')
     expect(settingsSource).not.toContain('NRadioButton')
     expect(settingsSource).toContain("[data-second='true']::before")
@@ -43,6 +44,15 @@ describe('设置二选一偏好滑块', () => {
     expect(iconSource).toContain("name === 'key-command'")
     expect(iconSource).toContain("name === 'key-control'")
     expect(iconSource).toContain("name === 'key-enter'")
+  })
+
+  it('我的文件柜整组已迁出设置页，只留一行指路（决议 #283）', () => {
+    expect(settingsSource).not.toContain('listShareGrants')
+    expect(settingsSource).not.toContain('setShareRoot')
+    expect(settingsSource).not.toContain('setShareMode')
+    expect(settingsSource).not.toContain('setShareGrant')
+    expect(settingsSource).toContain('打开文件柜')
+    expect(settingsSource).toContain('window.pantry.openCabinet()')
   })
 
   it('关于页展示项目当前的 GPL v3 许可标识', () => {

@@ -57,6 +57,12 @@ function openSettings(event?: Event): void {
   void window.pantry.openSettings()
 }
 
+// 文件柜（决议 #283）：底部工具组最上一格，打开独立窗口；未设共享目录也可点（进去是引导态）
+function openCabinet(event?: Event): void {
+  releaseRailFocus(event)
+  void window.pantry.openCabinet()
+}
+
 // 局域网自更新提示（决议 #166/#172）：发现同平台更高版本的在线源时，导航栏出现升级入口；机制说明收进问号提示。
 const updateStore = useUpdateStore()
 const showUpdatePanel = ref(false)
@@ -427,6 +433,18 @@ onUnmounted(() => {
           />
         </svg>
         <span class="rail-dot" aria-hidden="true"></span>
+      </button>
+      <button
+        type="button"
+        class="rail-btn rail-hint"
+        :class="{ 'show-hint': activeRailHint === 'cabinet' }"
+        data-label="文件柜"
+        aria-label="文件柜"
+        @pointermove="scheduleRailHint('cabinet')"
+        @pointerleave="hideRailHint('cabinet')"
+        @click="openCabinet($event)"
+      >
+        <PantryIcon name="cabinet" :size="21" />
       </button>
       <button
         type="button"

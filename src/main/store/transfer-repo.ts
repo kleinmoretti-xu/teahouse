@@ -27,6 +27,7 @@ export class TransferRepo {
   private readonly clearExpiryStmt: DatabaseT.Statement
   private readonly getStmt: DatabaseT.Statement
   private readonly listStmt: DatabaseT.Statement
+  private readonly sharePutStmt: DatabaseT.Statement
   private readonly recoverableStmt: DatabaseT.Statement
   private readonly resetLegacyActiveStmt: DatabaseT.Statement
   private readonly saveManifestStmt: DatabaseT.Statement
@@ -47,6 +48,13 @@ export class TransferRepo {
     this.clearExpiryStmt = db.prepare('UPDATE transfers SET expires_at = 0 WHERE transfer_id = ?')
     this.getStmt = db.prepare('SELECT * FROM transfers WHERE transfer_id = ?')
     this.listStmt = db.prepare('SELECT * FROM transfers ORDER BY ts DESC LIMIT ?')
+    // 「最近有人放进来」（决议 #283）：LIKE 只做粗筛缩小范围，purpose 由调用方解析 JSON 复核，
+    // 不为此新增列（files 里已有 purpose，决议 #277）
+    this.sharePutStmt = db.prepare(`
+      SELECT * FROM transfers
+      WHERE direction = 'in' AND status = 'done' AND files LIKE '%"share-put"%'
+      ORDER BY ts DESC LIMIT ?
+    `)
     this.recoverableStmt = db.prepare(`
       SELECT * FROM transfers
       WHERE expires_at > 0 AND (
@@ -105,6 +113,11 @@ export class TransferRepo {
 
   list(limit: number): TransferRow[] {
     return this.listStmt.all(limit) as TransferRow[]
+  }
+
+  /** 别人上传到我文件柜的已完成记录，新的在前（决议 #283） */
+  listSharePutIncoming(limit: number): TransferRow[] {
+    return this.sharePutStmt.all(limit) as TransferRow[]
   }
 
   listRecoverable(): TransferRow[] {

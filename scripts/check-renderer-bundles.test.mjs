@@ -22,6 +22,7 @@ function createFixture(transform = (manifest) => manifest) {
       dynamicImports: [
         'src/App.vue',
         'src/SettingsApp.vue',
+        'src/CabinetApp.vue',
         'src/CaptureApp.vue',
         'src/ImageViewerApp.vue'
       ]
@@ -37,6 +38,12 @@ function createFixture(transform = (manifest) => manifest) {
     'src/SettingsApp.vue': {
       file: 'assets/SettingsApp.js',
       src: 'src/SettingsApp.vue',
+      isDynamicEntry: true,
+      imports: ['_shared.js']
+    },
+    'src/CabinetApp.vue': {
+      file: 'assets/CabinetApp.js',
+      src: 'src/CabinetApp.vue',
       isDynamicEntry: true,
       imports: ['_shared.js']
     },
@@ -64,7 +71,7 @@ function createFixture(transform = (manifest) => manifest) {
 }
 
 describe('checkRendererBundles', () => {
-  it('四个动态入口独立可达且公共启动闭包未超限时通过', () => {
+  it('五个动态入口独立可达且公共启动闭包未超限时通过', () => {
     const { outDir } = createFixture()
 
     expect(checkRendererBundles({ outDir, maxBootstrapBytes: 200 })).toEqual({
@@ -73,6 +80,7 @@ describe('checkRendererBundles', () => {
       roots: {
         'App.vue': { js: 140, css: 12 },
         'SettingsApp.vue': { js: 140, css: 7 },
+        'CabinetApp.vue': { js: 140, css: 7 },
         'CaptureApp.vue': { js: 120, css: 0 },
         'ImageViewerApp.vue': { js: 120, css: 0 }
       }

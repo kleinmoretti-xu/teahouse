@@ -69,11 +69,15 @@ export const IpcChannels = {
   shareBrowse: 'share:browse',
   shareDownload: 'share:download',
   shareUpload: 'share:upload',
+  /** 「最近有人放进来」（决议 #283）：读既有 transfers 里 purpose='share-put' 的入站完成记录 */
+  shareRecentUploads: 'share:recent-uploads',
   netAddPeer: 'net:add-peer',
   netScan: 'net:scan',
   netScanAllRanges: 'net:scan-all-ranges',
   peersSetRemark: 'peers:set-remark',
   uiOpenSettings: 'ui:open-settings',
+  /** 文件柜独立窗口（决议 #283）：懒创建 / 聚焦，可带 peerId 直接定位到某位同事 */
+  uiOpenCabinet: 'ui:open-cabinet',
   groupCreate: 'group:create',
   groupUpdate: 'group:update',
   groupLeave: 'group:leave',
@@ -136,7 +140,9 @@ export const IpcEvents = {
   /** 窗口最大化状态变化 → 自绘控制按钮切换图标（决议 #49） */
   winMaximizeChanged: 'win:maximized-changed',
   /** 局域网自更新：可用更新源变化（决议 #166） */
-  updateAvailable: 'update:available'
+  updateAvailable: 'update:available',
+  /** 文件柜窗口已开着时再次请求打开某位同事的柜子（决议 #283） */
+  cabinetFocusPeer: 'cabinet:focus-peer'
 } as const
 
 /** 全局快捷键出厂默认（决议 #57）：设置页"恢复默认"与主进程默认值的唯一来源 */
@@ -610,6 +616,24 @@ export type ShareDownloadResult =
   | { ok: true; canceled: true }
   | { ok: false; reason: ShareBrowseFailReason }
 
+/**
+ * 「最近有人放进来」的一行（决议 #283）：由既有 `transfers` 里 `purpose='share-put'` 的
+ * 入站完成记录汇总而来，不新增表也不新增列。
+ */
+export interface ShareRecentUploadView {
+  transferId: string
+  /** 上传者 nodeId */
+  nodeId: string
+  /** 上传者显示名：本地备注优先，其次昵称 */
+  name: string
+  avatar: number
+  avatarHash: string
+  fileCount: number
+  totalSize: number
+  /** 完成时间（毫秒） */
+  ts: number
+}
+
 export type ShareRootPickResult =
   | { ok: true; canceled: false; view: SettingsView }
   | { ok: true; canceled: true }
@@ -797,6 +821,8 @@ export interface PantryApi {
     localPaths?: string[],
     directory?: boolean
   ): Promise<ShareUploadResult>
+  /** 「最近有人放进来」（决议 #283）：最近若干条别人上传到我文件柜的记录，新的在前 */
+  listRecentShareUploads(limit?: number): Promise<ShareRecentUploadView[]>
   /** 手动添加节点（"ip" 或 "ip:port"）：持久化 + 立即探测 */
   addManualPeer(addr: string): Promise<boolean>
   /** 扫描一个 CIDR 网段；返回探测地址数，非法网段返回 -1 */
@@ -807,6 +833,8 @@ export interface PantryApi {
   setPeerRemark(nodeId: string, remark: string): Promise<void>
   /** 打开设置窗口 */
   openSettings(): Promise<void>
+  /** 打开文件柜窗口（决议 #283）；带 peerId 时直接定位到该同事的柜子 */
+  openCabinet(peerId?: string): Promise<void>
   /** 建讨论组（自动含自己，≥2 人）；adminPassword/adminHint 可空；返回 null 表示参数不足 */
   createGroup(
     name: string,
@@ -864,6 +892,8 @@ export interface PantryApi {
   onAvatarReady(listener: (hash: string) => void): () => void
   /** Windows / Linux 设置模态窗开关状态；主窗用来控制遮罩与交互层级 */
   onSettingsWindowState(listener: (open: boolean) => void): () => void
+  /** 文件柜窗口：已开着时被要求切到某位同事的柜子（决议 #283） */
+  onCabinetFocusPeer(listener: (peerId: string) => void): () => void
   /** 主界面全局网段刷新进度 */
   onScanProgress(listener: (progress: ScanProgressView) => void): () => void
   /** 主窗 Command/Ctrl+V 图片剪贴板兜底 */

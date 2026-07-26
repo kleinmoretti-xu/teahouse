@@ -266,6 +266,34 @@ withDefaults(
       <path d="M18.5 5.5 11 13" />
       <path d="M17.5 13.8V17a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 17V8A1.5 1.5 0 0 1 7 6.5h3.2" />
     </g>
+    <!-- 文件柜（决议 #283）：柜体 + 一道分层线 + 两个抽屉把手 -->
+    <g v-else-if="name === 'cabinet'">
+      <rect x="4" y="4.6" width="16" height="14.8" rx="2.2" />
+      <path d="M4 12h16" />
+      <path d="M10.2 8.4h3.6" />
+      <path d="M10.2 15.6h3.6" />
+    </g>
+    <g v-else-if="name === 'list'">
+      <path d="M4.6 7.4h14.8" />
+      <path d="M4.6 12h14.8" />
+      <path d="M4.6 16.6h14.8" />
+    </g>
+    <g v-else-if="name === 'grid'">
+      <rect x="4.6" y="4.6" width="6" height="6" rx="1.3" />
+      <rect x="13.4" y="4.6" width="6" height="6" rx="1.3" />
+      <rect x="4.6" y="13.4" width="6" height="6" rx="1.3" />
+      <rect x="13.4" y="13.4" width="6" height="6" rx="1.3" />
+    </g>
+    <g v-else-if="name === 'download'">
+      <path d="M12 4.4v10.2" />
+      <path d="M7.8 10.4 12 14.6l4.2-4.2" />
+      <path d="M5.2 18.8h13.6" />
+    </g>
+    <g v-else-if="name === 'upload'">
+      <path d="M12 14.6V4.4" />
+      <path d="M7.8 8.6 12 4.4l4.2 4.2" />
+      <path d="M5.2 18.8h13.6" />
+    </g>
     <g v-else-if="name === 'shield'">
       <path d="M12 3.5 18.5 6v5c0 4-2.7 7.3-6.5 8.5C8.2 18.3 5.5 15 5.5 11V6L12 3.5Z" />
       <path d="m9.2 11.7 2 2 3.6-3.8" />

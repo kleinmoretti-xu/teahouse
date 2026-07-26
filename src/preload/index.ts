@@ -33,6 +33,7 @@ import {
   type ShareBrowseResult,
   type ShareDownloadResult,
   type ShareGrantView,
+  type ShareRecentUploadView,
   type ShareRootPickResult,
   type ShareUploadResult,
   type StickerView,
@@ -196,6 +197,8 @@ const api: PantryApi = {
     directory?: boolean
   ): Promise<ShareUploadResult> =>
     ipcRenderer.invoke(IpcChannels.shareUpload, peerId, localPaths ?? null, directory === true),
+  listRecentShareUploads: (limit?: number): Promise<ShareRecentUploadView[]> =>
+    ipcRenderer.invoke(IpcChannels.shareRecentUploads, limit ?? 10),
   addManualPeer: (addr: string): Promise<boolean> =>
     ipcRenderer.invoke(IpcChannels.netAddPeer, addr),
   scanRange: (cidr: string): Promise<number> => ipcRenderer.invoke(IpcChannels.netScan, cidr),
@@ -204,6 +207,8 @@ const api: PantryApi = {
   setPeerRemark: (nodeId: string, remark: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.peersSetRemark, nodeId, remark),
   openSettings: (): Promise<void> => ipcRenderer.invoke(IpcChannels.uiOpenSettings),
+  openCabinet: (peerId?: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.uiOpenCabinet, peerId ?? null),
   createGroup: (
     name: string,
     memberIds: string[],
@@ -259,6 +264,7 @@ const api: PantryApi = {
   onAvatarReady: (listener) => subscribe<string>(IpcEvents.avatarReady, listener),
   onSettingsWindowState: (listener) =>
     subscribe<boolean>(IpcEvents.settingsWindowState, listener),
+  onCabinetFocusPeer: (listener) => subscribe<string>(IpcEvents.cabinetFocusPeer, listener),
   onScanProgress: (listener) => subscribe<ScanProgressView>(IpcEvents.netScanProgress, listener),
   onClipboardPasteImage: (listener): (() => void) =>
     subscribe<void>(IpcEvents.clipboardPasteImage, listener),

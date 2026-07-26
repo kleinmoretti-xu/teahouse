@@ -8,6 +8,8 @@ describe('resolveRendererEntry', () => {
     ['#/chat', 'main'],
     ['#/settings', 'settings'],
     ['#/settings/about', 'settings'],
+    ['#/cabinet', 'cabinet'],
+    ['#/cabinet?peer=node-1', 'cabinet'],
     ['#/capture', 'capture'],
     ['#/capture?peer=node-1', 'capture'],
     ['#/image-viewer', 'image-viewer'],

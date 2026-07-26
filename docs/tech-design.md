@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 状态 | v1.58；讨论组创建交互修复（决议 #269）；v0.45.6 开发中 |
-| 日期 | 2026-07-22 |
+| 状态 | v1.59；文件柜独立入口与文件柜窗口（决议 #283）；v0.50.0 开发中 |
+| 日期 | 2026-07-26 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -71,6 +71,7 @@ Naive UI 接入约束（决议 #215）：
  └─ 窗口管理
      ├─ 主窗口（三栏，960×640 起，关闭=隐藏到托盘，沉浸式无标题栏，决议 #49）
      ├─ 设置窗口（640×480，懒创建，单例，沉浸式无标题栏）
+     ├─ 文件柜窗口（1000×680 起，懒创建，单例，可缩放非模态，沉浸式无标题栏，决议 #283）
      └─ 截图窗口（每屏一个，frameless+透明+置顶，截完即毁）
 渲染进程（Chromium 108，sandbox）
  └─ Vue 3 应用（UI 全部状态经 IPC 同步）
@@ -100,7 +101,7 @@ src/
 │  └─ model.ts             # Peer / Message / Conversation / Transfer / Group / Sticker
 ├─ main/
 │  ├─ index.ts             # 启动时序：锁 → 配置 → DB 迁移 → 窗口 → 网络
-│  ├─ windows/             # main-window / settings-window / capture-window / tray
+│  ├─ windows/             # main-window / settings-window / cabinet-window / capture-window / tray
 │  ├─ net/
 │  │  ├─ udp.ts            # socket 收发、广播目标计算（多网卡枚举）、每源限速
 │  │  ├─ codec.ts          # 信封编解码 + 入站校验（字段白名单/长度，手写校验器）
@@ -128,9 +129,10 @@ src/
 ├─ preload/index.ts        # contextBridge 暴露 window.pantry（按 shared/ipc.ts 类型）
 └─ renderer/
    ├─ main.ts              # 公共轻量 bootstrap：解析 hash 后异步加载根组件
-   ├─ renderer-entry.ts    # main / settings / capture / image-viewer 动态入口映射
+   ├─ renderer-entry.ts    # main / settings / cabinet / capture / image-viewer 动态入口映射
    ├─ App.vue              # 主窗口三栏壳
    ├─ SettingsApp.vue      # 设置窗口根组件
+   ├─ CabinetApp.vue       # 文件柜窗口根组件（决议 #283）
    ├─ CaptureApp.vue       # 截图窗口根组件
    ├─ ImageViewerApp.vue   # 图片查看窗口根组件
    ├─ views/               # ChatView / ContactsView / SettingsView 等业务视图
@@ -169,6 +171,7 @@ src/
 | `file:grant-paths` / `file:offer` / `file:direct` / `group-file:offer` / `file:accept` / `file:cancel` / `file:reveal` | 文件传输四件套；`file:grant-paths` 只为拖拽 / 粘贴产生的本地路径登记一次性授权，`file:offer` / `group-file:offer` 仍必须消耗授权；`file:direct` 由发送方文件卡片触发，在已有私聊普通文件 transfer 上发送 `file-ctl {op:"direct"}`；群聊发送为多条点对点 transfer 的发送侧编排且不支持直接发送 |
 | `share:my-set-root` / `share:my-set-mode` / `share:my-reveal` / `share:grant-list` / `share:grant-set` | 我的文件柜（决议 #271/#277）：`set-root` 打开目录选择器并落 `config.fileCabinet.root`（拦截主目录根 / 系统盘根 / 应用数据目录及与其相互包含的路径，再复核目录存在可读；传 `clear=true` 表示停止共享），返回 `{ok,canceled,view}` 或 `{ok:false,reason}`；`set-mode` 切换默认档 `off\|read\|write`；`reveal` 在系统文件管理器打开共享根；`grant-list` / `grant-set` 读写按联系人例外（`share_grants`，传 `null` 即恢复跟随默认）。**当前配置不单设读取通道**，随 `settings:get` 的 `SettingsView.fileCabinet` 下发 |
 | `share:browse(peerId, path, offset, snapshotId?)` / `share:download(peerId, paths[], saveDirOverride?)` / `share:upload(peerId, localPaths[])` | 对方文件柜（决议 #273/#275）：`browse` 发 `share{op:list}` 并等待 `list-ok` / `deny`，`SHARE_REQ_TIMEOUT` 超时报错，返回 `{perm, entries, offset, total, truncated, snapshotId}`；`download` 发 `share{op:get}` 后由服务层登记一次性授权、自动 accept 随后到达的 `purpose:"share-get"` offer；`upload` 复用 `file:grant-paths` 的路径授权后直接发 `purpose:"share-put"` offer。三者进度与结果全部复用既有 `transfer:*` 事件，不新增传输事件 |
+| `ui:open-cabinet` / `share:recent-uploads` | 文件柜窗口（决议 #283）：`ui:open-cabinet` 懒创建 / 聚焦文件柜窗口（单例，可带 `peerId` 直接定位到某位同事，供私聊面板「在文件柜窗口打开」使用）；`share:recent-uploads(limit)` 读既有 `transfers` 里 `direction='in' AND status='done' AND purpose='share-put'` 的记录，按次汇总为 `{nodeId,name,avatar,avatarHash,fileCount,totalSize,ts,transferId}`，供「最近有人放进来」渲染，点击复用既有 `file:reveal` 打开落盘目录。**不新增表、不新增列** |
 | `img:send-bytes` / `group-img:send-bytes` | 粘贴 / 截图产生的图片 bytes 发送；表格粘贴增强可额外传入受限 `tableText/tableTextTruncated`，服务层仅在对端支持 `tbl1` 时把它写入图片 offer |
 | `group:create` / `group:update` | 讨论组 |
 | `search:query(q, scope)` | 全局搜索（联系人/组/记录/文件 四分类一次返回） |
@@ -345,6 +348,7 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 | v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回 | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
 | v0.32.x | 全局刷新二次确认、群成员上限 200 等（已发布 v0.32.3） | App.vue、protocol GROUP_MAX_MEMBERS |
 | v0.47 | 共享文件柜（分三步）：①我的文件柜（`config.fileCabinet` + SQLite v14 `share_grants` + 设置页共享目录 / 默认档 / 按人例外 + 共享根禁选校验）②浏览与下载（caps `shr1`、`share` 报文与 codec 白名单、分页快照、`realpath` 越界复核、私聊头部按钮 + 右侧覆盖面板、`purpose:"share-get"` 自动 accept）③上传（`purpose:"share-put"`、写权限复核、落 `root/上传者名/`、私聊系统提示） | shared/protocol、shared/ipc、net/codec（仅加白名单，transfer 不动）、store/migrations + share-grants-repo、services/share、settings、renderer FileCabinetPanel / stores/share / SettingsView |
+| v0.50 | 文件柜独立入口与窗口（决议 #283）：导航栏 cabinet 按钮 + `windows/cabinet-window.ts`（1000×680、单例、可缩放非模态）+ `CabinetApp.vue`（左栏我的柜子摘要 + `shr1` 同事列表，右栏浏览器 / 我的柜子管理页，列表与网格双视图、文件管理器式多选与键盘）+ 设置页「我的文件柜」整组迁出 + `FileCabinetPanel` 同步重画；**协议、库表、services/share 零改动** | main/windows/cabinet-window、main/index（2 个 IPC）、shared/ipc、preload、renderer renderer-entry / CabinetApp / App.vue rail / PantryIcon / SettingsApp / FileCabinetPanel |
 | 待办 · 暂缓 | 内网通兼容模式（#194–#196 设计；**#199 不排期**） | 见 nwt-compat-design.md；勿提前写 net/compat |
 | 待办 · 暂缓 | 内网通实验附件互通（依赖上项 + TCP GETFILEDATA 闭环） | 同上 |
 | v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
@@ -522,3 +526,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-26 v1.64 决议 #279：`share:upload` 的体量测算从主进程装配层的同步递归改为 `util/upload-measure.ts` 的异步实现——`fs/promises` 的 `stat`/`readdir`、显式待处理队列代替递归、每批 64 条并发（批内跑满 libuv 线程池，批间让出事件循环），深度上限 32 与"任一条目读不到即整体失败"的语义保持不变。`index.ts` 移除 `readdirSync` 依赖，调用点改 `await`。新增 `util/upload-measure.test.ts` 8 例（单文件 / 递归目录 / 多入口累加 / 空目录 / 缺失条目 / 空入口 / 跨批 200 条 / 超 32 层）。协议、库表、IPC 契约与依赖均不变，版本 **0.49.1 → 0.49.2**。
 - 2026-07-26 v1.65 决议 #280：`ShareDownloadGate` 从 `Map<peerId, grant>` 改为句柄化的在途授权数组——`begin()` 返回 token 并按登记顺序 FIFO 配对 offer，`cancel(token)` / `isPending(token)` 只作用于本次，在途上限 32；`index.ts` 的 `share:download` 超时分支相应从「consume 探测」改为「isPending + cancel」。新增内部 `resolveUnderRealRoot(realRoot, rel)`，共享根 realpath 由调用方解析一次后传入，`resolveWithinRoot` 对外签名不变。`listShareDirectory` 改用 `readdirSync(..., { withFileTypes: true })`，以 Dirent 类型为排序键先对全量条目排序再截断、随后按真实 `isDir` 复排一次，并省掉逐条 `lstatSync`。**遗留**：该函数仍全程同步且由对端浏览触发，5000 条目录会做 5000 次 `statSync`，异步化需连 `ShareService.handleList` 的返回契约一起改，记入 handoff §4。协议、库表与 IPC 契约不变，版本 **0.49.2 → 0.49.3**。
 - 2026-07-26 v1.66 决议 #281/#282：renderer 新增 `utils/format.ts`（统一 `formatBytes`），`stores/transfers.ts` 的 `fmtBytes` 撤销、`FileCard` / `SettingsApp` / `FileCabinetPanel` 三处旧实现删除；`CaptureApp` 的 canvas 标注色改为从 `--primary` 读一次缓存。`services/files.ts` 抽出私有 `offerHidden(peerId, prepared, msgIdPrefix, blob)`，`offerUpdatePackage` / `offerSharePaths` / `offerSharePut` 共约 120 行的重复收尾收敛到一处，净减 46 行、行为零变化。协议、库表与 IPC 契约不变，版本 **0.49.3 → 0.49.5**。
+- 2026-07-26 v1.59 决议 #283：文件柜提为一等入口。新增 `main/windows/cabinet-window.ts`（1000×680 / 最小 860×560、单例、**可缩放且非模态**——要能与主窗并排，故不复用设置窗的 modal + scrim 路径）与 `#/cabinet` 渲染入口 `CabinetApp.vue`；新增 `ui:open-cabinet`（可带 peerId 定位）与 `share:recent-uploads`（读既有 `transfers` 的 `purpose='share-put'` 入站完成记录汇总，不新增表列）两个 IPC。`SettingsApp` 移除「我的文件柜」整组（共享目录 / 默认档 / 按人例外的 5 个 `share:*` IPC 调用点整体搬到 `CabinetApp`），`App.vue` 导航栏底部工具组新增 cabinet 按钮，`FileCabinetPanel` 按同一套样式重画并新增「在文件柜窗口打开」。**协议 v0.50、SQLite v14、`services/share.ts`、`net/`、依赖清单一律未动**，纯前台入口与界面重组。版本 **0.49.5 → 0.50.0**。

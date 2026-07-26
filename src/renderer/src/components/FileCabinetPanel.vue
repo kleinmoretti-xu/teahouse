@@ -12,7 +12,8 @@ import { formatBytes } from '../utils/format'
 import PantryIcon from './PantryIcon.vue'
 import FileTypeIcon from './FileTypeIcon.vue'
 
-// 对方的文件柜面板（ui-design §5 / 决议 #273）：覆盖聊天右侧一整列，可边聊边浏览。
+// 对方的文件柜面板（ui-design §5 / 决议 #273，样式与手感按 #283 与文件柜窗口对齐）：
+// 覆盖聊天右侧一整列，可边聊边浏览；要认真翻时用头部的「在文件柜窗口打开」换到大视图。
 // 只做展示与请求编排，权限判定全部在对方本机（protocol §8.2）。
 
 const props = defineProps<{ peerId: string; peerName: string }>()
@@ -36,6 +37,7 @@ const loadingMore = ref(false)
 const failReason = ref<ShareBrowseFailReason | null>(null)
 const moreFailReason = ref<ShareBrowseFailReason | null>(null)
 const picked = ref<Set<string>>(new Set())
+const cursor = ref(-1)
 const downloading = ref(false)
 const downloadNote = ref('')
 const transfer = ref<TransferView | null>(null)
@@ -76,18 +78,6 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.round((t.bytesDone / t.totalSize) * 100))
 })
 
-function formatTime(ms: number): string {
-  if (!ms) return ''
-  const d = new Date(ms)
-  const now = new Date()
-  const sameYear = d.getFullYear() === now.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  return sameYear ? `${mm}-${dd} ${hh}:${mi}` : `${d.getFullYear()}-${mm}-${dd}`
-}
-
 function childPath(name: string): string {
   return path.value ? `${path.value}/${name}` : name
 }
@@ -96,7 +86,10 @@ async function load(target: string, keepPick = false): Promise<void> {
   loading.value = true
   failReason.value = null
   moreFailReason.value = null
-  if (!keepPick) picked.value = new Set()
+  if (!keepPick) {
+    picked.value = new Set()
+    cursor.value = -1
+  }
   const result = await window.pantry.browseShare(props.peerId, target, 0)
   loading.value = false
   if (!result.ok) {
@@ -146,9 +139,37 @@ function onScroll(event: Event): void {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) void loadMore()
 }
 
-function open(entry: ShareEntry): void {
+function goUp(): void {
+  if (crumbs.value.length < 2) return
+  void load(crumbs.value[crumbs.value.length - 2].path)
+}
+
+// 单击选中、双击进目录（决议 #283）：与文件柜窗口同一套手感，也才谈得上多选
+function onRowClick(index: number, event: MouseEvent): void {
+  const entry = entries.value[index]
+  if (!entry) return
+  if (event.shiftKey && cursor.value >= 0) {
+    const [a, b] = cursor.value <= index ? [cursor.value, index] : [index, cursor.value]
+    const next = new Set(picked.value)
+    for (let i = a; i <= b; i += 1) next.add(entries.value[i].name)
+    picked.value = next
+    cursor.value = index
+    return
+  }
+  if (event.ctrlKey || event.metaKey) {
+    togglePick(entry.name)
+    cursor.value = index
+    return
+  }
+  picked.value = new Set([entry.name])
+  cursor.value = index
+}
+
+function onRowOpen(index: number): void {
+  const entry = entries.value[index]
+  if (!entry) return
   if (entry.isDir) void load(childPath(entry.name))
-  else togglePick(entry.name)
+  else void download(false, [childPath(entry.name)])
 }
 
 function togglePick(name: string): void {
@@ -162,12 +183,12 @@ function toggleAll(): void {
   picked.value = allPagePicked.value ? new Set() : new Set(entries.value.map((e) => e.name))
 }
 
-async function download(saveAs: boolean): Promise<void> {
-  if (pickedCount.value === 0 || downloading.value) return
+async function download(saveAs: boolean, only?: string[]): Promise<void> {
+  const paths = only ?? [...picked.value].map((name) => childPath(name))
+  if (paths.length === 0 || downloading.value) return
   downloading.value = true
   downloadNote.value = ''
   transfer.value = null
-  const paths = [...picked.value].map((name) => childPath(name))
   const result = await window.pantry.downloadShare(props.peerId, paths, saveAs)
   downloading.value = false
   if (!result.ok) {
@@ -175,7 +196,7 @@ async function download(saveAs: boolean): Promise<void> {
     return
   }
   if (result.canceled) return
-  picked.value = new Set()
+  if (!only) picked.value = new Set()
   downloadNote.value = '已开始下载'
 }
 
@@ -229,6 +250,12 @@ function onDragLeave(event: DragEvent): void {
   dragActive.value = false
 }
 
+/** 换到大视图（决议 #283）：带着当前对端打开文件柜窗口，面板随即收起 */
+function openInWindow(): void {
+  void window.pantry.openCabinet(props.peerId)
+  emit('close')
+}
+
 // 文件柜传输不进聊天流，进度只在本面板就地显示（决议 #275）
 const stopTransfer = window.pantry.onTransferUpdated((view) => {
   if (view.peerId !== props.peerId || !view.msgId.startsWith('share:')) return
@@ -270,19 +297,18 @@ onUnmounted(() => stopTransfer())
     @drop.prevent="onDrop"
   >
     <header class="panel-head">
-      <span class="panel-title">{{ peerName }} 的文件柜</span>
+      <span class="panel-title" :title="`${peerName} 的文件柜`">{{ peerName }}的文件柜</span>
+      <span v-if="!failReason" class="perm" :class="perm">{{ canUpload ? '可上传' : '只读' }}</span>
+      <button class="icon-btn" title="在文件柜窗口打开" @click="openInWindow">
+        <PantryIcon name="external" :size="14" />
+      </button>
       <button class="icon-btn" title="关闭" @click="emit('close')">
         <PantryIcon name="x" :size="14" />
       </button>
     </header>
 
     <div class="crumbs">
-      <button
-        class="icon-btn"
-        title="返回上级"
-        :disabled="crumbs.length < 2 || loading"
-        @click="load(crumbs[crumbs.length - 2].path)"
-      >
+      <button class="icon-btn" title="返回上级" :disabled="crumbs.length < 2 || loading" @click="goUp">
         <PantryIcon name="chevron-left" :size="14" />
       </button>
       <div class="crumb-track">
@@ -319,26 +345,24 @@ onUnmounted(() => stopTransfer())
       </div>
       <div class="list" @scroll="onScroll">
         <div
-          v-for="entry in entries"
+          v-for="(entry, index) in entries"
           :key="entry.name"
           class="row"
           :class="{ picked: picked.has(entry.name) }"
-          @click="open(entry)"
+          @click="onRowClick(index, $event)"
+          @dblclick="onRowOpen(index)"
         >
           <input
             class="row-pick"
             type="checkbox"
             :checked="picked.has(entry.name)"
+            :aria-label="`勾选 ${entry.name}`"
             @click.stop
             @change="togglePick(entry.name)"
           />
-          <PantryIcon v-if="entry.isDir" class="row-icon" name="folder" :size="18" />
-          <FileTypeIcon v-else class="row-icon" :name="entry.name" :size="18" />
+          <FileTypeIcon class="row-icon" :name="entry.name" :dir="entry.isDir" :size="20" />
           <span class="row-name" :title="entry.name">{{ entry.name }}</span>
-          <span class="row-meta">
-            <span v-if="!entry.isDir">{{ formatBytes(entry.size) }}</span>
-            <span class="row-time">{{ formatTime(entry.mtime) }}</span>
-          </span>
+          <span class="row-size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
         </div>
         <div v-if="loadingMore" class="hint small">正在加载更多…</div>
         <div v-else-if="moreFailReason" class="hint small error inline">
@@ -374,7 +398,10 @@ onUnmounted(() => stopTransfer())
 
     <footer class="panel-foot">
       <div class="foot-row">
-        <span class="perm" :class="perm">{{ canUpload ? '可上传' : '只读' }}</span>
+        <span class="foot-sum">
+          <template v-if="pickedCount > 0">已选 <b>{{ pickedCount }}</b> 项</template>
+          <template v-else-if="!failReason">双击进文件夹</template>
+        </span>
         <div class="foot-actions">
           <template v-if="pickedCount > 0">
             <button class="ghost" :disabled="downloading" @click="download(true)">另存为</button>
@@ -385,10 +412,9 @@ onUnmounted(() => stopTransfer())
           <template v-else-if="canUpload">
             <button class="ghost" :disabled="uploading" @click="upload(true)">上传文件夹</button>
             <button class="primary" :disabled="uploading" @click="upload(false)">
-              上传到 TA 的文件柜
+              上传到 TA 的柜子
             </button>
           </template>
-          <span v-else class="foot-tip">勾选后可下载</span>
         </div>
       </div>
       <p v-if="canUpload" class="foot-note">{{ uploadHint }}</p>
@@ -416,8 +442,8 @@ onUnmounted(() => stopTransfer())
 .panel-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px 8px;
+  gap: 6px;
+  padding: 0 8px 8px 12px;
 }
 
 .panel-title {
@@ -429,6 +455,21 @@ onUnmounted(() => stopTransfer())
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 权限徽标从底栏上移到头部（决议 #283），底栏让位给选中摘要与按钮 */
+.perm {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--line);
+  color: var(--text-2);
+}
+
+.perm.write {
+  background: var(--primary-weak);
+  color: var(--primary);
 }
 
 .icon-btn {
@@ -513,29 +554,43 @@ onUnmounted(() => stopTransfer())
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding: 2px 6px;
 }
 
+/* 行高 36px（决议 #283）：与窗口版共用一套语义，面板窄一档更紧凑 */
 .row {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  padding: 0 12px;
+  height: 36px;
+  padding: 0 6px;
+  border-radius: 8px;
   cursor: pointer;
+  user-select: none;
 }
 
-.row:hover,
+.row:hover {
+  background: var(--surface-hover);
+}
+
 .row.picked {
-  background: var(--bg-list);
+  background: var(--surface-selected);
 }
 
+/* 未勾选时复选框只在 hover / 选中 / 聚焦时露出，平时让位给文件名 */
 .row-pick {
   flex-shrink: 0;
+  opacity: 0;
+}
+
+.row:hover .row-pick,
+.row.picked .row-pick,
+.row-pick:focus-visible {
+  opacity: 1;
 }
 
 .row-icon {
   flex-shrink: 0;
-  color: var(--text-2);
 }
 
 .row-name {
@@ -548,17 +603,13 @@ onUnmounted(() => stopTransfer())
   white-space: nowrap;
 }
 
-.row-meta {
+.row-size {
   flex-shrink: 0;
-  display: flex;
-  gap: 8px;
+  min-width: 58px;
+  text-align: right;
   font-size: 11px;
   color: var(--text-3);
-}
-
-.row-time {
-  min-width: 66px;
-  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .hint {
@@ -645,34 +696,26 @@ onUnmounted(() => stopTransfer())
   gap: 8px;
 }
 
-.foot-tip,
-.foot-note {
-  font-size: 11px;
+.foot-sum {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
   color: var(--text-3);
+}
+
+.foot-sum b {
+  color: var(--text-1);
 }
 
 .foot-note {
   margin: 0;
-  line-height: 1.5;
-}
-
-.perm {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
   font-size: 11px;
-  background: var(--line);
-  color: var(--text-2);
-}
-
-.perm.write {
-  background: var(--primary-weak);
-  color: var(--primary);
+  line-height: 1.5;
+  color: var(--text-3);
 }
 
 .foot-actions {
-  flex: 1;
-  min-width: 0;
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   gap: 6px;

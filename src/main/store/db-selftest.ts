@@ -382,6 +382,31 @@ try {
   transferRepo.clearExpiry('t-1')
   assert.equal(transferRepo.get('t-1')?.expires_at, 0, '终态传输应释放截止调度')
 
+  // 「最近有人放进来」（决议 #283）：只认入站已完成的 share-put，purpose 存在 files JSON 里，不新增列
+  transferRepo.insert({
+    transferId: 't-put',
+    msgId: 'share:t-put',
+    peerId: 'node-carol',
+    direction: 'in',
+    files: '{"name":"外发资料","purpose":"share-put"}',
+    status: 'done',
+    total: 4096,
+    ts: Date.now() + 1
+  })
+  transferRepo.insert({
+    transferId: 't-get',
+    msgId: 'share:t-get',
+    peerId: 'node-carol',
+    direction: 'in',
+    files: '{"name":"方案.pdf","purpose":"share-get"}',
+    status: 'done',
+    total: 512,
+    ts: Date.now() + 2
+  })
+  const sharePut = transferRepo.listSharePutIncoming(10)
+  assert.equal(sharePut.length, 1, '只有别人上传进来的那一条算「最近有人放进来」')
+  assert.equal(sharePut[0].transfer_id, 't-put')
+
   transferRepo.insert({
     transferId: 't-legacy',
     msgId: 'm-1',

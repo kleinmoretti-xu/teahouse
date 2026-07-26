@@ -182,6 +182,16 @@ class FakeTransferRepo {
     return [...this.rows.values()]
   }
 
+  listSharePutIncoming(limit: number): TransferRow[] {
+    return [...this.rows.values()]
+      .filter(
+        (row) =>
+          row.direction === 'in' && row.status === 'done' && row.files.includes('"share-put"')
+      )
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, limit)
+  }
+
   listRecoverable(): TransferRow[] {
     return [...this.rows.values()].filter(
       (row) =>
@@ -2270,6 +2280,92 @@ describe('FilesService 共享文件柜上传（决议 #272/#274）', () => {
     )
     expect(msgRepo.rows.size).toBe(0)
     await svc.stop()
+  })
+})
+
+describe('最近有人放进来（决议 #283）', () => {
+  function makeService(): {
+    svc: FilesService
+    msgRepo: FakeMsgRepo
+    transferRepo: FakeTransferRepo
+  } {
+    const dir = mkdtempSync(join(tmpdir(), 'pantry-share-recent-'))
+    tmpDirs.push(dir)
+    const msgRepo = new FakeMsgRepo()
+    const transferRepo = new FakeTransferRepo()
+    const svc = new FilesService({
+      selfId: 'node-self',
+      messenger: new FakeMessenger() as unknown as Messenger,
+      registry: new FakeRegistry(['node-bob']) as unknown as PeerRegistry,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      transferRepo: transferRepo as unknown as TransferRepo,
+      groupRepo: undefined,
+      tcpPort: 0,
+      getSaveDir: () => dir,
+      getImagesDir: () => dir,
+      getUpdateDir: () => dir,
+      bindAddress: '127.0.0.1'
+    })
+    return { svc, msgRepo, transferRepo }
+  }
+
+  it('只汇总别人上传到我柜子的已完成记录，文件数取自那条系统提示', () => {
+    const { svc, msgRepo, transferRepo } = makeService()
+    transferRepo.insert({
+      transferId: 't-put',
+      msgId: 'share:t-put',
+      peerId: 'node-bob',
+      direction: 'in',
+      files: JSON.stringify({ name: '设计稿', purpose: 'share-put' }),
+      status: 'done',
+      total: 2048,
+      ts: 3000
+    })
+    msgRepo.insert({
+      id: 'share:t-put:uploaded',
+      convId: 'c1',
+      senderId: 'node-bob',
+      isMine: false,
+      kind: 'system',
+      content: 'Bob 上传了 3 个文件到你的文件柜',
+      fileRef: JSON.stringify({ transferId: 't-put', name: '文件柜', size: 0, count: 3, dir: true }),
+      ts: 3000,
+      status: 'sent'
+    })
+    // 我从对方柜子里下载的（share-get）与普通文件都不该出现在这里
+    transferRepo.insert({
+      transferId: 't-get',
+      msgId: 'share:t-get',
+      peerId: 'node-bob',
+      direction: 'in',
+      files: JSON.stringify({ name: '方案.pdf', purpose: 'share-get' }),
+      status: 'done',
+      total: 999,
+      ts: 4000
+    })
+
+    expect(svc.listShareUploads(10)).toEqual([
+      { transferId: 't-put', peerId: 'node-bob', fileCount: 3, totalSize: 2048, ts: 3000 }
+    ])
+  })
+
+  it('系统提示缺失时文件数记 0，不因此丢掉这条记录', () => {
+    const { svc, transferRepo } = makeService()
+    transferRepo.insert({
+      transferId: 't-orphan',
+      msgId: 'share:t-orphan',
+      peerId: 'node-bob',
+      direction: 'in',
+      files: JSON.stringify({ name: '归档', purpose: 'share-put' }),
+      status: 'done',
+      total: 10,
+      ts: 1000
+    })
+
+    expect(svc.listShareUploads(10)).toEqual([
+      { transferId: 't-orphan', peerId: 'node-bob', fileCount: 0, totalSize: 10, ts: 1000 }
+    ])
   })
 })
 
