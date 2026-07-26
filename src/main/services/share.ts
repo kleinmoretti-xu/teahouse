@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs'
 import { isAbsolute, join, parse, resolve, sep } from 'node:path'
 import {
   effectiveShareMode,
@@ -107,18 +107,10 @@ export function sanitizeSharePath(input: unknown): string | null {
 }
 
 /**
- * 把相对路径解析到共享根下的真实绝对路径（决议 #276）。
- * 关键在于解析后再用 realpath 复核：共享根里可能有指向根外的符号链接，
- * 只做字符串拼接会把整块磁盘漏出去。目标不存在或越界一律返回 null。
+ * 同上，但共享根的 realpath 由调用方算好传入。
+ * 列目录时每个条目都要复核归属，逐条重解析共享根纯属浪费（决议 #280）。
  */
-export function resolveWithinRoot(root: string, rel: string): string | null {
-  if (root.trim().length === 0) return null
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
+function resolveUnderRealRoot(realRoot: string, rel: string): string | null {
   const target = rel.length === 0 ? realRoot : join(realRoot, ...rel.split('/'))
   let realTarget: string
   try {
@@ -132,6 +124,22 @@ export function resolveWithinRoot(root: string, rel: string): string | null {
   return realTarget
 }
 
+/**
+ * 把相对路径解析到共享根下的真实绝对路径（决议 #276）。
+ * 关键在于解析后再用 realpath 复核：共享根里可能有指向根外的符号链接，
+ * 只做字符串拼接会把整块磁盘漏出去。目标不存在或越界一律返回 null。
+ */
+export function resolveWithinRoot(root: string, rel: string): string | null {
+  if (root.trim().length === 0) return null
+  let realRoot: string
+  try {
+    realRoot = realpathSync(root)
+  } catch {
+    return null
+  }
+  return resolveUnderRealRoot(realRoot, rel)
+}
+
 export interface ShareListing {
   entries: ShareEntry[]
   truncated: boolean
@@ -143,32 +151,49 @@ export interface ShareListing {
  * 排序为"目录在前、再按名称"，用码点序保证两端一致（不依赖运行环境的 Intl 数据）。
  */
 export function listShareDirectory(root: string, rel: string): ShareListing | null {
-  const abs = resolveWithinRoot(root, rel)
-  if (!abs) return null
-  let names: string[]
+  if (root.trim().length === 0) return null
+  let realRoot: string
   try {
-    if (!statSync(abs).isDirectory()) return null
-    names = readdirSync(abs)
+    realRoot = realpathSync(root)
   } catch {
     return null
   }
+  const abs = resolveUnderRealRoot(realRoot, rel)
+  if (!abs) return null
+  let dirents: Dirent[]
+  try {
+    if (!statSync(abs).isDirectory()) return null
+    // withFileTypes 一次拿到类型，省掉逐条 lstat；符号链接的真实类型稍后复核
+    dirents = readdirSync(abs, { withFileTypes: true })
+  } catch {
+    return null
+  }
+
+  // 先对全量条目排序再截断（决议 #280）。早先是"读满 5000 条就 break、之后才排序"，
+  // 超大目录展示的其实是文件系统返回顺序的前 5000 条——同一个目录在不同机器上
+  // 甚至不同时刻看到的内容都可能不一样，"目录在前"的承诺也在截断边界上失效。
+  // 排序键用 Dirent 类型，落选条目一次 stat 都不用付。
+  const candidates = dirents.filter(
+    (d) => !d.name.startsWith('.') && d.name.length <= SHARE_NAME_MAX
+  ) // 不列 .ssh / .git 等，避免误共享
+  candidates.sort((a, b) => {
+    const aDir = a.isDirectory()
+    if (aDir !== b.isDirectory()) return aDir ? -1 : 1
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  })
+  const truncated = candidates.length > SHARE_DIR_MAX_ENTRIES
+  const picked = truncated ? candidates.slice(0, SHARE_DIR_MAX_ENTRIES) : candidates
+
   const entries: ShareEntry[] = []
-  let truncated = false
-  for (const name of names) {
-    if (name.startsWith('.')) continue // 不列 .ssh / .git 等，避免误共享
-    if (name.length > SHARE_NAME_MAX) continue
-    if (entries.length >= SHARE_DIR_MAX_ENTRIES) {
-      truncated = true
-      break
-    }
-    const child = join(abs, name)
+  for (const dirent of picked) {
+    const name = dirent.name
     try {
       // 符号链接必须按其真实目标判断归属，指向根外的直接跳过
-      if (lstatSync(child).isSymbolicLink()) {
+      if (dirent.isSymbolicLink()) {
         const rel2 = rel.length === 0 ? name : `${rel}/${name}`
-        if (!resolveWithinRoot(root, rel2)) continue
+        if (!resolveUnderRealRoot(realRoot, rel2)) continue
       }
-      const st = statSync(child)
+      const st = statSync(join(abs, name))
       entries.push({
         name,
         size: st.isDirectory() ? 0 : st.size,
@@ -179,6 +204,7 @@ export function listShareDirectory(root: string, rel: string): ShareListing | nu
       continue // 读不到的条目（权限、竞态删除）直接跳过，不让整页失败
     }
   }
+  // 符号链接指向目录还是文件，只有 stat 过才知道；末尾按真实 isDir 再排一次
   entries.sort((a, b) => {
     if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
@@ -432,26 +458,53 @@ export function shareUploadDirName(uploaderDisplayName: string): string {
   return cleanDirName(uploaderDisplayName)
 }
 
+interface PendingDownload {
+  token: string
+  peerId: string
+  saveDir: string
+  expiresAt: number
+}
+
+/** 同时在途的下载授权上限：正常只有 0–2 条，够用且防异常堆积 */
+const MAX_PENDING_DOWNLOADS = 32
+
 /**
  * 下载授权（决议 #275）：本机发出 get 之后，才接受来自该节点的一次 share-get offer。
  * 不绑文件名——请求时还不知道对方会展开出什么，故以"来源 + 时限 + 一次性"为边界。
  */
 export class ShareDownloadGate {
-  private readonly pending = new Map<string, { saveDir: string; expiresAt: number }>()
+  private pending: PendingDownload[] = []
 
-  begin(peerId: string, saveDir: string, ttl: number, now = Date.now()): void {
-    this.pending.set(peerId, { saveDir, expiresAt: now + ttl })
+  /**
+   * 登记一次性授权，返回撤销 / 探测用的句柄。
+   *
+   * 同一对端允许多条在途并按登记顺序先进先出配对（决议 #280）：
+   * 早先按 peerId 直接覆盖，用户先点「下载」、返回后再点「另存为」选了别的目录时，
+   * 第一批 offer 到货会消费掉第二次的落点，先发出的文件就落进了后选的目录。
+   */
+  begin(peerId: string, saveDir: string, ttl: number, now = Date.now()): string {
+    this.pending = this.pending.filter((one) => now < one.expiresAt)
+    const token = randomUUID()
+    this.pending.push({ token, peerId, saveDir, expiresAt: now + ttl })
+    if (this.pending.length > MAX_PENDING_DOWNLOADS) this.pending.shift()
+    return token
   }
 
-  cancel(peerId: string): void {
-    this.pending.delete(peerId)
+  /** 撤销指定句柄（对方拒绝 / 等不到 offer）；已被消费则无事发生。 */
+  cancel(token: string): void {
+    this.pending = this.pending.filter((one) => one.token !== token)
   }
 
-  /** 命中返回落盘目录并消费授权；未授权 / 过期返回 null。 */
+  /** 该句柄是否还没被消费：用来区分"传输已经开始"与"对方根本没回应"。 */
+  isPending(token: string, now = Date.now()): boolean {
+    return this.pending.some((one) => one.token === token && now < one.expiresAt)
+  }
+
+  /** offer 到货：消费该对端最早一条仍有效的授权并返回落盘目录，没有则 null。 */
   consume(peerId: string, now = Date.now()): string | null {
-    const entry = this.pending.get(peerId)
-    if (!entry) return null
-    this.pending.delete(peerId)
-    return now >= entry.expiresAt ? null : entry.saveDir
+    const index = this.pending.findIndex((one) => one.peerId === peerId && now < one.expiresAt)
+    if (index < 0) return null
+    const [entry] = this.pending.splice(index, 1)
+    return entry.saveDir
   }
 }

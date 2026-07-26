@@ -22,6 +22,7 @@ import {
   type ShareGrantsStore
 } from './share'
 import {
+  SHARE_DIR_MAX_ENTRIES,
   SHARE_GET_MAX_PATHS,
   SHARE_LIST_PAGE,
   SHARE_LIST_RATE_MAX,
@@ -278,6 +279,22 @@ describe('目录列举与越界防护（决议 #276）', () => {
     expect(listShareDirectory(root, 'f.txt')).toBeNull()
     expect(listShareDirectory('', '')).toBeNull()
   })
+
+  // 决议 #280：早先是"读满 5000 条就 break、之后才排序"，
+  // 入选的是文件系统返回顺序的前 5000 条，换台机器看到的内容都可能不同
+  it('超过上限的目录先按全量排序再截断，入选的是排序意义上的前 5000 条', () => {
+    const root = makeRoot()
+    const total = SHARE_DIR_MAX_ENTRIES + 1
+    for (let i = 1; i <= total; i++) {
+      writeFileSync(join(root, `f${String(i).padStart(5, '0')}.txt`), '')
+    }
+    const listing = listShareDirectory(root, '')
+    expect(listing?.truncated).toBe(true)
+    expect(listing?.entries.length).toBe(SHARE_DIR_MAX_ENTRIES)
+    expect(listing?.entries[0].name).toBe('f00001.txt')
+    expect(listing?.entries[SHARE_DIR_MAX_ENTRIES - 1].name).toBe('f05000.txt')
+    expect(listing?.entries.some((e) => e.name === 'f05001.txt')).toBe(false)
+  })
 })
 
 describe('fitSharePage（分页，§8.2）', () => {
@@ -439,9 +456,37 @@ describe('ShareDownloadGate（下载一次性授权，决议 #275）', () => {
 
   it('撤销后立即失效', () => {
     const gate = new ShareDownloadGate()
-    gate.begin('bob', '/tmp/down', 60_000, 1000)
-    gate.cancel('bob')
+    const grant = gate.begin('bob', '/tmp/down', 60_000, 1000)
+    gate.cancel(grant)
     expect(gate.consume('bob', 1000)).toBeNull()
+  })
+
+  // 决议 #280：早先按 peerId 覆盖，第二次登记会把第一次的落点顶掉
+  it('同一对端的多次下载按登记顺序先进先出，落点不互相顶掉', () => {
+    const gate = new ShareDownloadGate()
+    gate.begin('bob', '/tmp/first', 60_000, 1000)
+    gate.begin('bob', '/tmp/second', 60_000, 1200)
+    expect(gate.consume('bob', 1300)).toBe('/tmp/first')
+    expect(gate.consume('bob', 1300)).toBe('/tmp/second')
+    expect(gate.consume('bob', 1300)).toBeNull()
+  })
+
+  it('撤销只影响本次句柄，不动同一对端的其他在途授权', () => {
+    const gate = new ShareDownloadGate()
+    gate.begin('bob', '/tmp/first', 60_000, 1000)
+    const second = gate.begin('bob', '/tmp/second', 60_000, 1200)
+    gate.cancel(second)
+    expect(gate.consume('bob', 1300)).toBe('/tmp/first')
+    expect(gate.consume('bob', 1300)).toBeNull()
+  })
+
+  it('isPending 只认本次句柄，被消费后即为假', () => {
+    const gate = new ShareDownloadGate()
+    const grant = gate.begin('bob', '/tmp/down', 60_000, 1000)
+    expect(gate.isPending(grant, 1000)).toBe(true)
+    expect(gate.isPending(grant, 61_001)).toBe(false) // 过期
+    expect(gate.consume('bob', 1000)).toBe('/tmp/down')
+    expect(gate.isPending(grant, 1000)).toBe(false)
   })
 })
 

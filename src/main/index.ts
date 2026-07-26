@@ -2116,19 +2116,21 @@ if (!gotLock) {
         saveDir = picked.filePaths[0]
       }
 
-      // 先登记一次性授权再发请求：offer 可能在 sendReliable 的 ACK 之前就到（决议 #275）
-      shareDownloadGate.begin(target, saveDir, SHARE_GET_AUTH_TTL)
+      // 先登记一次性授权再发请求：offer 可能在 sendReliable 的 ACK 之前就到（决议 #275）。
+      // 句柄化后每次下载各管各的，连点两次不会互相顶掉落点（决议 #280）。
+      const grant = shareDownloadGate.begin(target, saveDir, SHARE_GET_AUTH_TTL)
       const reqId = randomUUID()
       shareGetReq.set(target, reqId)
       const reply = await requestShare(target, { op: 'get', reqId, paths: clean })
       shareGetReq.delete(target)
       if (reply && reply.op === 'deny') {
-        shareDownloadGate.cancel(target)
+        shareDownloadGate.cancel(grant)
         return { ok: false, reason: reply.reason }
       }
       // reply 为 null 有两种情况：传输已开始（授权被消费时提前唤醒）或对方没回应；
-      // 授权还在说明确实没等到 offer。
-      if (!reply && shareDownloadGate.consume(target) !== null) {
+      // 本次授权还在说明确实没等到 offer。
+      if (!reply && shareDownloadGate.isPending(grant)) {
+        shareDownloadGate.cancel(grant)
         return { ok: false, reason: 'timeout' }
       }
       return { ok: true }
