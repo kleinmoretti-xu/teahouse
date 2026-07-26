@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import type { MessageView, TransferView } from '../../../shared/ipc'
-import { fmtBytes, useTransfersStore } from '../stores/transfers'
+import { useTransfersStore } from '../stores/transfers'
+import { formatBytes } from '../utils/format'
 import { usePeersStore } from '../stores/peers'
 import FileTypeIcon from './FileTypeIcon.vue'
 import PantryIcon from './PantryIcon.vue'
@@ -89,17 +90,17 @@ const metaText = computed(() => {
   const t = transfer.value
   if (inProgress.value && t) {
     // 排队中（决议 #211）：发送方并发预算已满，显示真实状态而不是假 0 速度
-    if (t.queued) return `${fmtBytes(t.bytesDone)} / ${fmtBytes(t.totalSize)} · 排队等待发送方`
-    return `${fmtBytes(t.bytesDone)} / ${fmtBytes(t.totalSize)} · ${fmtBytes(speed.value)}/s`
+    if (t.queued) return `${formatBytes(t.bytesDone)} / ${formatBytes(t.totalSize)} · 排队等待发送方`
+    return `${formatBytes(t.bytesDone)} / ${formatBytes(t.totalSize)} · ${formatBytes(speed.value)}/s`
   }
   if (directFile.value && t?.direction === 'in' && t.status === 'done') {
     return '已保存本地'
   }
   const r = ref_.value
   if (!r) return ''
-  const base = r.count > 1 ? `${fmtBytes(r.size)} · ${r.count} 个文件` : fmtBytes(r.size)
+  const base = r.count > 1 ? `${formatBytes(r.size)} · ${r.count} 个文件` : formatBytes(r.size)
   // 群发传输中：大小后附整体速率（群聊用「已接收 x/x」计数代替进度条，决议 #75）
-  if (multiActive.value && speed.value > 0) return `${base} · ${fmtBytes(speed.value)}/s`
+  if (multiActive.value && speed.value > 0) return `${base} · ${formatBytes(speed.value)}/s`
   return base
 })
 

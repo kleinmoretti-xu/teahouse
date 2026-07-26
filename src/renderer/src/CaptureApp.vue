@@ -377,12 +377,26 @@ function arrowStyle(ann: Annotation): Record<string, string> {
   }
 }
 
+/**
+ * 标注色取自 tokens.css 的茶青主色（决议 #281），读一次即缓存。
+ * 截图窗不调 `applyAppearance`，`--primary` 恒为浅色档的值，
+ * 导出的 PNG 因此和屏幕上的预览描边始终同色，也不随应用主题漂移。
+ */
+let annotationColor = ''
+function accent(): string {
+  if (!annotationColor) {
+    annotationColor =
+      getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#3d8b6b'
+  }
+  return annotationColor
+}
+
 function drawAnnotations(ctx: CanvasRenderingContext2D, scaleX: number, scaleY: number): void {
   const strokeScale = (scaleX + scaleY) / 2
   ctx.save()
   ctx.lineWidth = Math.max(2, 3 * strokeScale)
-  ctx.strokeStyle = '#3d8b6b'
-  ctx.fillStyle = '#3d8b6b'
+  ctx.strokeStyle = accent()
+  ctx.fillStyle = accent()
   ctx.textBaseline = 'top'
   for (const ann of annotations.value) {
     if (ann.type === 'rect') {
@@ -669,7 +683,7 @@ function drawMosaic(
 }
 .sel {
   position: absolute;
-  border: 2px solid #3d8b6b;
+  border: 2px solid var(--primary);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
   pointer-events: none;
   overflow: hidden;
@@ -679,7 +693,7 @@ function drawMosaic(
   pointer-events: none;
 }
 .ann.rect {
-  border: 3px solid #3d8b6b;
+  border: 3px solid var(--primary);
 }
 .ann.mosaic {
   background:
@@ -689,7 +703,7 @@ function drawMosaic(
 }
 .ann.arrow {
   height: 3px;
-  background: #3d8b6b;
+  background: var(--primary);
   transform-origin: 0 50%;
 }
 .ann.arrow::after {
@@ -697,12 +711,12 @@ function drawMosaic(
   position: absolute;
   right: -1px;
   top: -5px;
-  border-left: 12px solid #3d8b6b;
+  border-left: 12px solid var(--primary);
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
 }
 .ann.text {
-  color: #3d8b6b;
+  color: var(--primary);
   font-size: 18px;
   font-weight: 700;
   line-height: 1.2;
@@ -836,13 +850,15 @@ function drawMosaic(
   outline-offset: 2px;
 }
 .btn.primary {
-  background: #3d8b6b;
+  background: var(--primary);
   color: #fff;
 }
 .btn.primary:hover {
-  background: #327b5e;
+  /* 主色的按下态沿用项目里 ConvList / App 的做法，不再另写一个茶青字面量 */
+  filter: brightness(0.9);
 }
 .btn.tool.on {
+  /* 主色 85% 作选中底，tokens 里没有等价档位（--primary-weak 仅 12%），保留字面量 */
   background: rgba(61, 139, 107, 0.85);
   color: #fff;
 }

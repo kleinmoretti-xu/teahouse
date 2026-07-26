@@ -77,3 +77,27 @@ describe('截图框选软渲染约束（决议 #221）', () => {
     }
   })
 })
+
+describe('截图窗主色统一走 token（决议 #281）', () => {
+  it('样式里不再散落茶青字面量', () => {
+    const style = source.slice(source.indexOf('<style'))
+    expect(style).not.toContain('#3d8b6b')
+    expect(style).not.toContain('#327b5e')
+    // 描边、箭头、文字标注与主按钮统一引用 --primary
+    expect(style).toContain('border: 2px solid var(--primary)')
+    expect(style).toContain('border: 3px solid var(--primary)')
+    expect(style).toContain('background: var(--primary)')
+  })
+
+  it('主按钮按下态沿用项目既有的 brightness 惯例', () => {
+    expect(source).toMatch(/\.btn\.primary:hover\s*\{[^}]*filter: brightness\(/)
+  })
+
+  it('canvas 标注色从 --primary 读取并缓存，导出与预览同色', () => {
+    expect(source).toContain("getPropertyValue('--primary')")
+    expect(source).toContain('ctx.strokeStyle = accent()')
+    expect(source).toContain('ctx.fillStyle = accent()')
+    // 读不到时仍要有确定的颜色兜底
+    expect(source).toContain("|| '#3d8b6b'")
+  })
+})

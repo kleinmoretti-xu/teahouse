@@ -6,8 +6,9 @@ import {
   type ShareBrowseFailReason,
   type TransferView
 } from '../../../shared/ipc'
-import type { ShareEntry } from '../../../shared/protocol'
+import { SHARE_DIR_MAX_ENTRIES, type ShareEntry } from '../../../shared/protocol'
 import { useChatStore } from '../stores/chat'
+import { formatBytes } from '../utils/format'
 import PantryIcon from './PantryIcon.vue'
 import FileTypeIcon from './FileTypeIcon.vue'
 
@@ -67,23 +68,13 @@ const pickedCount = computed(() => picked.value.size)
 const allPagePicked = computed(
   () => entries.value.length > 0 && entries.value.every((e) => picked.value.has(e.name))
 )
+// 勾选只覆盖已经取回的条目，还有下一页时说「全选」会让人以为把 total 项都选上了
+const pickAllLabel = computed(() => (hasMore.value ? '选择已加载' : '全选'))
 const progressPercent = computed(() => {
   const t = transfer.value
   if (!t || t.totalSize <= 0) return 0
   return Math.min(100, Math.round((t.bytesDone / t.totalSize) * 100))
 })
-
-function formatSize(bytes: number): string {
-  if (bytes <= 0) return ''
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
-}
 
 function formatTime(ms: number): string {
   if (!ms) return ''
@@ -230,6 +221,14 @@ function onDragOver(event: DragEvent): void {
   dragActive.value = true
 }
 
+// 拖过面板内部的子元素时，根节点上也会收到 dragleave 并让高亮闪一下；
+// 只有真正离开面板边界（relatedTarget 已不在面板内，或拖出窗口为 null）才熄灭
+function onDragLeave(event: DragEvent): void {
+  const next = event.relatedTarget as Node | null
+  if (next && (event.currentTarget as HTMLElement).contains(next)) return
+  dragActive.value = false
+}
+
 // 文件柜传输不进聊天流，进度只在本面板就地显示（决议 #275）
 const stopTransfer = window.pantry.onTransferUpdated((view) => {
   if (view.peerId !== props.peerId || !view.msgId.startsWith('share:')) return
@@ -267,7 +266,7 @@ onUnmounted(() => stopTransfer())
     :class="{ 'drag-active': dragActive }"
     aria-label="对方的文件柜"
     @dragover="onDragOver"
-    @dragleave="dragActive = false"
+    @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
     <header class="panel-head">
@@ -314,7 +313,7 @@ onUnmounted(() => stopTransfer())
       <div class="list-head">
         <label class="pick-all">
           <input type="checkbox" :checked="allPagePicked" @change="toggleAll" />
-          <span>全选</span>
+          <span>{{ pickAllLabel }}</span>
         </label>
         <span class="count">{{ total }} 项</span>
       </div>
@@ -335,9 +334,9 @@ onUnmounted(() => stopTransfer())
           />
           <PantryIcon v-if="entry.isDir" class="row-icon" name="folder" :size="18" />
           <FileTypeIcon v-else class="row-icon" :name="entry.name" :size="18" />
-          <span class="row-name">{{ entry.name }}</span>
+          <span class="row-name" :title="entry.name">{{ entry.name }}</span>
           <span class="row-meta">
-            <span v-if="!entry.isDir">{{ formatSize(entry.size) }}</span>
+            <span v-if="!entry.isDir">{{ formatBytes(entry.size) }}</span>
             <span class="row-time">{{ formatTime(entry.mtime) }}</span>
           </span>
         </div>
@@ -346,7 +345,9 @@ onUnmounted(() => stopTransfer())
           <span>{{ moreFailText }}</span>
           <button class="retry" @click="loadMore">重试</button>
         </div>
-        <div v-else-if="truncated" class="hint small">目录内容过多，仅显示前 5000 项</div>
+        <div v-else-if="truncated" class="hint small">
+          目录内容过多，仅显示前 {{ SHARE_DIR_MAX_ENTRIES }} 项
+        </div>
       </div>
     </template>
 

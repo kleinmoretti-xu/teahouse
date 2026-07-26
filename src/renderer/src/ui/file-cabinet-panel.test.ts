@@ -64,3 +64,34 @@ describe('切换会话重置文件柜面板（决议 #278）', () => {
     expect(watchBody).toContain('showCabinet.value = false')
   })
 })
+
+describe('文件柜面板细节一致性（决议 #281）', () => {
+  it('体积走统一的 formatBytes，不再自带一份实现', () => {
+    expect(panelSource).toContain("import { formatBytes } from '../utils/format'")
+    expect(panelSource).toContain('{{ formatBytes(entry.size) }}')
+    expect(panelSource).not.toContain('function formatSize(')
+  })
+
+  it('截断提示用常量插值，改常量文案不会说谎', () => {
+    expect(panelSource).toContain('import { SHARE_DIR_MAX_ENTRIES')
+    expect(panelSource).toContain('仅显示前 {{ SHARE_DIR_MAX_ENTRIES }} 项')
+    expect(panelSource).not.toContain('仅显示前 5000 项')
+  })
+
+  it('还有下一页时不说「全选」，避免让人以为选中了 total 项', () => {
+    expect(panelSource).toContain(
+      "const pickAllLabel = computed(() => (hasMore.value ? '选择已加载' : '全选'))"
+    )
+    expect(panelSource).toContain('{{ pickAllLabel }}')
+  })
+
+  it('长文件名截断后可用原生提示看到全称', () => {
+    expect(panelSource).toContain('class="row-name" :title="entry.name"')
+  })
+
+  it('拖拽高亮只在真正离开面板时熄灭', () => {
+    expect(panelSource).toContain('@dragleave="onDragLeave"')
+    expect(panelSource).toContain('function onDragLeave(')
+    expect(panelSource).toContain('.contains(next)) return')
+  })
+})

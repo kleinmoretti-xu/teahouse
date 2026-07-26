@@ -27,6 +27,7 @@ import {
 } from '../../shared/ipc'
 import { DEFAULT_TCP_PORT, DEFAULT_UDP_PORT, type ShareMode } from '../../shared/protocol'
 import { applyAppearance } from './utils/appearance'
+import { formatBytes } from './utils/format'
 import { applyPerformanceProfile } from './utils/performance-profile'
 import {
   AVATAR_COLORS,
@@ -788,14 +789,6 @@ function transferMeta(view: TransferView): string {
   const size = formatBytes(view.totalSize)
   const done = formatBytes(view.bytesDone)
   return view.status === 'accepted' ? `${done} / ${size}` : size
-}
-
-function formatBytes(value: number): string {
-  if (value <= 0) return '0 B'
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`
-  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
 function scanRangeSourceLabel(item: ScanRangeItemView): string {
