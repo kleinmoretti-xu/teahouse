@@ -63,7 +63,7 @@
 > 当前补充：2026-07-21（**v0.45.4 开发中，决议 #267 截图按钮提示**）：截图工具条八个按钮统一增加自定义中文提示，鼠标悬停延迟显示、键盘聚焦立即显示，靠近视口顶部时自动翻到按钮下方；移除重复的原生 `title`，保留 `aria-label` / `aria-pressed`。协议 v0.49、SQLite v13、IPC、依赖与网络保持。
 > 当前补充：2026-07-21（**v0.45.5 开发中，决议 #268 macOS 输入法候选确认保护**）：Issue #17 定位到聊天键盘分流只在 Win7 检查 composition，macOS 候选确认 Enter 会提前发送候选开始前的旧草稿。普通 textarea 与 Win7 contenteditable 现统一上报 composition 状态，活动 composition、`isComposing` 与 `keyCode 229` 均在 @ 提及、发送和换行之前退出，把第一次 Enter 留给原生输入法确认候选。协议 v0.49、SQLite v13、IPC、依赖与网络保持。
 > 当前补充：2026-07-22（**v0.45.6 开发中，决议 #269 建群创建与弹窗手势修复**）：Issue #18 定位到 Vue 响应式成员数组无法经 Electron IPC 克隆，提交改传普通数组并以异常收尾恢复按钮、显示行内错误；建群遮罩只接受从遮罩自身开始并结束的点击，输入框拖选移出不再误关弹窗，提交期间锁定关闭入口。协议 v0.49、SQLite v13、IPC 契约、依赖与网络保持。
-> 当前补充：2026-07-26（**v0.50.0，决议 #283 文件柜独立入口与文件柜窗口**）：文件共享从设置窗第三组提到导航栏底部工具组，新增可缩放非模态的文件柜窗口（左栏我的柜子 + 支持文件柜的同事列表，右栏文件浏览器 / 我的柜子管理页，含「最近有人放进来」汇总），浏览手感对齐系统文件管理器（单击选中、双击进目录、多选与键盘、列表与网格双视图），私聊内 320px 面板保留并同步重画。协议、库表与 `services/share.ts` 零改动。
+> 当前补充：2026-07-27（**v0.51.0，决议 #283/#284 文件柜成为主窗第三个页签**）：文件共享从设置窗第三组提到导航栏底部工具组；#283 首版做成独立窗口，用户要求「不要新弹窗」后由 #284 改为**主界面内的第三个页签**——列表栏放我的柜子摘要与同事列表，内容区放文件浏览器 / 我的柜子管理页（含「最近有人放进来」汇总）。浏览手感对齐系统文件管理器（单击选中、双击进目录、多选与键盘、列表与网格双视图），私聊内 320px 面板保留并同步重画。协议、库表与 `services/share.ts` 零改动。
 
 ## 0. 必读顺序（15 分钟上手）
 
@@ -129,10 +129,10 @@ main/
   store/   db(WAL) migrations(只追加·当前版本见 migrations.ts) peers/conv/msg/queue/dedup/group/transfer/sticker-repo
            fts(中文按字) app-state(identity/config) db-selftest(test:db 入口)
   services/ chat groups files search —— 用例编排层；业务禁入 ipc 层（AI 接口预留，决议#21）
-  windows/ tray settings-window cabinet-window(文件柜窗口·决议#283) capture-window tray-icon(base64内嵌)
+  windows/ tray settings-window capture-window tray-icon(base64内嵌)
   index.ts 装配+IPC handlers+通知+截图编排+pantry-img/pantry-sticker 协议
 preload/   contextBridge 唯一入口（window.pantry，类型=shared/ipc.ts 的 PantryApi）
-renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 App/#settings/#cabinet/#capture/#image-viewer；stores(pinia=主进程投影)；components
+renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 App/#settings/#capture/#image-viewer；stores(pinia=主进程投影)；components
 ```
 
 关键不变量：net/ 与 services/ **零 Electron 依赖**（vitest 可直接实例化）；renderer 一切经 `window.pantry`；消息 id=信封 id=去重锚点；群消息同一信封 id 发全员。
@@ -150,7 +150,8 @@ renderer/  main.ts 公共 bootstrap；renderer-entry.ts 按 hash 动态加载 Ap
    - **B 级（细节与一致性，6 条）**：字节格式三份实现且精度不一、截断提示硬编码 5000、「全选」名不副实、长文件名无 tooltip、截图窗 8 处茶青字面量、拖拽高亮抖动 —— 全部收在 #281 / **v0.49.4**。
    - **C 级（结构与性能，4 条）**：下载授权按 peerId 覆盖致文件落错目录、`realpath` 重复解析、先截断后排序（#280 / **v0.49.3**）；三个 offer 方法约 120 行重复收尾抽 `offerHidden`（#282 / **v0.49.5**）。
    - **复审中新发现、尚未处理**：`listShareDirectory` 全程同步，5000 条目录 = 5000 次 `statSync`，而且**由对端浏览触发**——别人翻我的文件柜就能让我的主进程卡一下。异步化要连 `ShareService.handleList` 的返回契约一起改（现在是同步返回 `SharePayload`），改动面比 #279 大，单独排一轮再做。
-0.6. **文件柜独立入口与窗口（决议 #283）—— 已完成（v0.50.0）**：文件共享提为一等入口。新增 `main/windows/cabinet-window.ts`（1000×680 / 最小 860×560、单例、**可缩放非模态**，故不走设置窗的 modal + scrim 路径）、`#/cabinet` 入口 `CabinetApp.vue`（左栏我的柜子摘要卡 + 声明 `shr1` 的同事列表，右栏浏览器 / 我的柜子管理页；列表与网格双视图、单击选中 + 双击进目录 + Ctrl/Shift 多选 + 键盘与右键菜单）、`ui:open-cabinet`（可带 peerId 定位）与 `share:recent-uploads`（「最近有人放进来」，读既有 `transfers` 的 `purpose='share-put'` 入站完成记录，不新增表列）两个 IPC；`SettingsApp` 的「我的文件柜」整组迁出、原位只留指路行；`App.vue` 导航栏底部工具组新增 cabinet 按钮；`FileCabinetPanel` 按同一套样式重画并新增「在文件柜窗口打开」。**协议 v0.50、SQLite v14、`services/share.ts`、`net/` 一律未动**——纯前台重组。设计稿经用户过稿后落档，界面细则见 ui-design §8.2。
+0.6. **文件柜一等入口（决议 #283/#284）—— 已完成（v0.51.0）**：文件共享提为一等入口，**形态是主窗第三个页签，不是独立窗口**（#283 首版做成独立窗口，用户实际用下来要求「不要新弹窗」，#284 改为主界面内实现）。导航栏底部工具组最上一格新增 cabinet 按钮切页签；列表栏 = 我的柜子摘要卡 + 声明 `shr1` 的同事列表，内容区 = 文件浏览器（列表与网格双视图、单击选中 + 双击进目录 + Ctrl/Shift 多选 + 键盘与右键菜单）或我的柜子管理页（共享目录 / 默认权限 / 按人例外 / **最近有人放进来**）。代码：`stores/cabinet.ts` 持状态，`components/CabinetList.vue` + `components/CabinetPane.vue` 分居三栏两格；`ui:open-cabinet`（显示主窗 + 切页签，可带 peerId）与 `share:recent-uploads`（读既有 `transfers` 的 `purpose='share-put'`，不新增表列）两个 IPC；`SettingsApp` 的「我的文件柜」整组迁出、原位留指路行；`FileCabinetPanel` 同步重画并新增「在文件柜里打开」。**协议 v0.50、SQLite v14、`services/share.ts`、`net/` 一律未动**——纯前台重组。注意：`App.vue` 静态闭包预算已抬到 800/116 KiB（文件柜带来的 NSelect 等），**不要改用 App 内动态 import**——会让 manifest 丢掉 `src/App.vue` 动态入口、四入口门禁失效。
+
 1. **本地五连验证**：后续代码改动仍需按 `npm test` → `npm run test:db` → `npm run typecheck` → `npm run build` → `PANTRY_UDP_PORT=47878 PANTRY_TCP_PORT=47879 npm run smoke` 重跑，任何失败先修复再交付。
 2. **代码优化状态（决议 #200/#210）**：[optimization-plan.md](optimization-plan.md) 的 18 项首批优化与 #210 第二批渲染性能优化均已完成；下一批开始前先按用户确认的范围新增决议与设计记录。
 3. **目标平台打包测试**：GitHub Actions 已产出多平台包；真实启动、收发、托盘、通知、防火墙/权限仍交给对应目标环境按 [packaging-test.md](packaging-test.md) 冒烟。

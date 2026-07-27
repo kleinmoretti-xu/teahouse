@@ -13,7 +13,7 @@ import PantryIcon from './PantryIcon.vue'
 import FileTypeIcon from './FileTypeIcon.vue'
 
 // 对方的文件柜面板（ui-design §5 / 决议 #273，样式与手感按 #283 与文件柜窗口对齐）：
-// 覆盖聊天右侧一整列，可边聊边浏览；要认真翻时用头部的「在文件柜窗口打开」换到大视图。
+// 覆盖聊天右侧一整列，可边聊边浏览；要认真翻时用头部的「在文件柜里打开」换到左侧文件柜页签。
 // 只做展示与请求编排，权限判定全部在对方本机（protocol §8.2）。
 
 const props = defineProps<{ peerId: string; peerName: string }>()
@@ -250,8 +250,8 @@ function onDragLeave(event: DragEvent): void {
   dragActive.value = false
 }
 
-/** 换到大视图（决议 #283）：带着当前对端打开文件柜窗口，面板随即收起 */
-function openInWindow(): void {
+/** 换到大视图（决议 #283/#284）：带着当前对端切到文件柜页签，面板随即收起 */
+function openInCabinet(): void {
   void window.pantry.openCabinet(props.peerId)
   emit('close')
 }
@@ -299,7 +299,7 @@ onUnmounted(() => stopTransfer())
     <header class="panel-head">
       <span class="panel-title" :title="`${peerName} 的文件柜`">{{ peerName }}的文件柜</span>
       <span v-if="!failReason" class="perm" :class="perm">{{ canUpload ? '可上传' : '只读' }}</span>
-      <button class="icon-btn" title="在文件柜窗口打开" @click="openInWindow">
+      <button class="icon-btn" title="在文件柜里打开" @click="openInCabinet">
         <PantryIcon name="external" :size="14" />
       </button>
       <button class="icon-btn" title="关闭" @click="emit('close')">

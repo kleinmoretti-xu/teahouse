@@ -23,13 +23,16 @@ import type { PeerView } from '../../shared/ipc'
 import { applyAppearance } from './utils/appearance'
 import { applyPerformanceProfile } from './utils/performance-profile'
 import AvatarMark from './components/AvatarMark.vue'
+import CabinetList from './components/CabinetList.vue'
+import CabinetPane from './components/CabinetPane.vue'
+import { useCabinetStore } from './stores/cabinet'
 import { randomQuote } from './utils/quotes'
 import {
   teahouseDarkThemeOverrides,
   teahouseLightThemeOverrides
 } from './ui/naive-theme'
 
-type Tab = 'chat' | 'contacts'
+type Tab = 'chat' | 'contacts' | 'cabinet'
 
 const tab = ref<Tab>('chat')
 const searchQuery = ref('')
@@ -37,6 +40,13 @@ const selectedPeerId = ref<string | null>(null)
 const showGroupCreator = ref(false)
 // const showMassSender = ref(false) // 群发已停用（决议 #62）
 const groupsStore = useGroupsStore()
+const cabinetStore = useCabinetStore()
+
+/** 设置窗「打开文件柜」与私聊面板「在文件柜里打开」都走这里（决议 #284） */
+function showCabinet(peerId: string): void {
+  tab.value = 'cabinet'
+  if (peerId) cabinetStore.selectPeer(peerId)
+}
 
 const selectedPeer = computed<PeerView | null>(() =>
   selectedPeerId.value ? (peersStore.byId(selectedPeerId.value) ?? null) : null
@@ -57,10 +67,12 @@ function openSettings(event?: Event): void {
   void window.pantry.openSettings()
 }
 
-// 文件柜（决议 #283）：底部工具组最上一格，打开独立窗口；未设共享目录也可点（进去是引导态）
+// 文件柜（决议 #283，形态改为主窗页签见 #284）：底部工具组最上一格，切到文件柜页签；
+// 未设共享目录也可点——进去就是引导设置的空态
 function openCabinet(event?: Event): void {
+  hideRailHint()
   releaseRailFocus(event)
-  void window.pantry.openCabinet()
+  tab.value = 'cabinet'
 }
 
 // 局域网自更新提示（决议 #166/#172）：发现同平台更高版本的在线源时，导航栏出现升级入口；机制说明收进问号提示。
@@ -105,6 +117,7 @@ const peersStore = usePeersStore()
 const chatStore = useChatStore()
 let stopSettings: (() => void) | null = null
 let stopSettingsWindowState: (() => void) | null = null
+let stopCabinetOpen: (() => void) | null = null
 let stopScanProgress: (() => void) | null = null
 let scanProgressHideTimer: ReturnType<typeof setTimeout> | null = null
 let railHintTimer: ReturnType<typeof setTimeout> | null = null
@@ -294,6 +307,7 @@ onMounted(async () => {
   stopSettingsWindowState = window.pantry.onSettingsWindowState((open) => {
     settingsWindowOpen.value = open
   })
+  stopCabinetOpen = window.pantry.onCabinetFocusPeer((peerId) => showCabinet(peerId))
   void peersStore.init()
   void chatStore.init()
   void groupsStore.init()
@@ -320,6 +334,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onScanConfirmKeydown)
   stopSettings?.()
   stopSettingsWindowState?.()
+  stopCabinetOpen?.()
   stopScanProgress?.()
   clearScanProgressHideTimer()
   hideRailHint()
@@ -437,7 +452,7 @@ onUnmounted(() => {
       <button
         type="button"
         class="rail-btn rail-hint"
-        :class="{ 'show-hint': activeRailHint === 'cabinet' }"
+        :class="{ active: tab === 'cabinet', 'show-hint': activeRailHint === 'cabinet' }"
         data-label="文件柜"
         aria-label="文件柜"
         @pointermove="scheduleRailHint('cabinet')"
@@ -513,7 +528,7 @@ onUnmounted(() => {
     </div>
 
     <aside class="list">
-      <div class="search-box">
+      <div v-if="tab !== 'cabinet'" class="search-box">
         <NInput
           v-model:value="searchQuery"
           class="search"
@@ -544,17 +559,19 @@ onUnmounted(() => {
       <GroupCreator v-if="showGroupCreator" @close="showGroupCreator = false" />
       <!-- <MassSender v-if="showMassSender" @close="showMassSender = false" /> 群发已停用（决议 #62） -->
       <SearchPanel
-        v-if="searchQuery.trim()"
+        v-if="searchQuery.trim() && tab !== 'cabinet'"
         :query="searchQuery.trim()"
         @navigate="((searchQuery = ''), (tab = 'chat'))"
       />
+      <CabinetList v-else-if="tab === 'cabinet'" />
       <ConvList v-else-if="tab === 'chat'" />
       <PeerList v-else @select="onSelectPeer" @chat="chatWith" />
     </aside>
 
     <main class="content">
+      <CabinetPane v-if="tab === 'cabinet'" />
       <ProfileCard
-        v-if="tab === 'contacts' && selectedPeer"
+        v-else-if="tab === 'contacts' && selectedPeer"
         :peer="selectedPeer"
         @chat="chatWith"
       />

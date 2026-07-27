@@ -101,7 +101,6 @@ import {
   type AppState
 } from './store/app-state'
 import { setupTray, stopTrayUnreadFlash, updateTrayUnread } from './windows/tray'
-import { openCabinetWindow, syncCabinetWindowZoom } from './windows/cabinet-window'
 import { openSettingsWindow, syncSettingsWindowZoom } from './windows/settings-window'
 import {
   closeCaptureWindow,
@@ -625,7 +624,6 @@ if (!gotLock) {
     const view = settingsView()
     syncMainWindowZoom()
     syncSettingsWindowZoom(view.fontScale)
-    syncCabinetWindowZoom(view.fontScale)
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(IpcEvents.settingsUpdated, view)
     }
@@ -2531,13 +2529,13 @@ if (!gotLock) {
     openSettingsWindow(mainWindow, settingsView().fontScale)
   })
 
-  // 文件柜窗口（决议 #283）：单例；带 peerId 时直接定位到该同事的柜子
+  // 文件柜（决议 #283，形态改为主窗页签见 #284）：把主窗切到文件柜页签，
+  // 带 peerId 时直接定位到该同事的柜子。设置窗与托盘等非主窗调用方都走这里。
   ipcMain.handle(IpcChannels.uiOpenCabinet, (_event, peerId: unknown) => {
     const target =
-      typeof peerId === 'string' && peerId.length > 0 && peerId.length <= LIMITS.id
-        ? peerId
-        : undefined
-    openCabinetWindow(mainWindow, settingsView().fontScale, target)
+      typeof peerId === 'string' && peerId.length > 0 && peerId.length <= LIMITS.id ? peerId : ''
+    showMainWindow()
+    mainWindow?.webContents.send(IpcEvents.cabinetFocusPeer, target)
   })
 
   ipcMain.handle(IpcChannels.imgOpenViewer, async (_event, transferId: unknown): Promise<boolean> => {

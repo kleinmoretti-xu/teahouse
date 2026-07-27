@@ -96,9 +96,9 @@ describe('文件柜面板细节一致性（决议 #281）', () => {
   })
 })
 
-describe('面板与文件柜窗口对齐（决议 #283）', () => {
-  it('头部有权限徽标与「在文件柜窗口打开」，后者带上当前对端', () => {
-    expect(panelSource).toContain('title="在文件柜窗口打开"')
+describe('面板与文件柜页签对齐（决议 #283/#284）', () => {
+  it('头部有权限徽标与「在文件柜里打开」，后者带上当前对端', () => {
+    expect(panelSource).toContain('title="在文件柜里打开"')
     expect(panelSource).toContain('window.pantry.openCabinet(props.peerId)')
     // 徽标上移到头部后，底栏留给选中摘要与按钮
     expect(panelSource).toMatch(/class="panel-head"[\s\S]{0,400}class="perm"/)
@@ -118,10 +118,22 @@ describe('面板与文件柜窗口对齐（决议 #283）', () => {
     expect(panelSource).not.toContain('class="row-time"')
   })
 
-  it('导航栏入口与设置页指路都走同一个 openCabinet 通道', () => {
+  it('导航栏入口切页签而不是开新窗口（决议 #284）', () => {
     const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
     expect(appSource).toContain('data-label="文件柜"')
-    expect(appSource).toContain('window.pantry.openCabinet()')
     expect(appSource).toContain('name="cabinet"')
+    // 文件柜是主窗第三个页签：列表栏与内容区各占一格，不再有独立窗口
+    expect(appSource).toContain("type Tab = 'chat' | 'contacts' | 'cabinet'")
+    expect(appSource).toContain("tab.value = 'cabinet'")
+    expect(appSource).toContain('<CabinetList v-else-if="tab === \'cabinet\'" />')
+    expect(appSource).toContain('<CabinetPane v-if="tab === \'cabinet\'" />')
+    // 设置窗等非主窗调用方仍走 IPC，由主进程把主窗切过去
+    expect(appSource).toContain('window.pantry.onCabinetFocusPeer')
+  })
+
+  it('文件柜不再有独立窗口与第五个渲染入口', () => {
+    const entrySource = readFileSync(new URL('../renderer-entry.ts', import.meta.url), 'utf8')
+    expect(entrySource).not.toContain('CabinetApp')
+    expect(entrySource).not.toContain("'#/cabinet'")
   })
 })

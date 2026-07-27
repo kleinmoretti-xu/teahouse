@@ -1085,7 +1085,7 @@ async function confirmRemove(cidr: string): Promise<void> {
               <div>
                 <strong>我的文件柜</strong>
                 <small>
-                  共享目录、默认权限、按联系人例外都在「文件柜」窗口里设置——主界面左下角的文件柜按钮即可打开。
+                  共享目录、默认权限、按联系人例外都在主界面的「文件柜」里设置——左侧导航栏的文件柜按钮即可进入。
                 </small>
               </div>
               <NButton secondary size="small" @click="openCabinet">打开文件柜</NButton>
