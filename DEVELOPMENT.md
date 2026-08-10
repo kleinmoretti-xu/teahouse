@@ -1,5 +1,7 @@
 # 二次开发指南
 
+> [简体中文](DEVELOPMENT.md) · [English](DEVELOPMENT.en.md)
+
 这份文档讲茶话间的**代码长什么样、怎么组织、想改造从哪下手**，写给打算读源码、改功能或做二次开发的人。
 
 - 产品是什么、怎么装怎么用 → 看 [README.md](README.md)
@@ -19,7 +21,7 @@
 | 构建 | **electron-vite 2** + **Vite 5** | 三套产物：main / preload / renderer |
 | 测试 | **vitest 2** | 网络/存储/纯函数单测 + 回环集成 |
 | 打包 | **electron-builder 24** | NSIS / 便携版 / deb / AppImage / dmg / zip |
-| 本地 OCR | **tesseract.js 6** | 语言包本地打包，绝不联网下载 |
+| 本地 OCR | **PaddleOCR PP-OCRv6 tiny** + **onnxruntime-web 1.20.1** | 模型与 WASM 本地打包，运行时不联网 |
 
 ## 运行时基线（写代码前必懂）
 

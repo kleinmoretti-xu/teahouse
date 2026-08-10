@@ -1,7 +1,7 @@
 {
   "name": "pantry",
   "productName": "茶话间",
-  "version": "0.51.0",
+  "version": "0.51.1",
   "description": "茶话间（Teahouse）—— 纯内网、基于 IP 的局域网即时通讯与文件传输工具",
   "license": "GPL-3.0-only",
   "private": true,
@@ -26,7 +26,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test": "vitest run",
+    "test": "node scripts/check-doc-locales.mjs && vitest run",
+    "check:docs": "node scripts/check-doc-locales.mjs",
     "check:version": "node scripts/check-version-consistency.mjs",
     "check:renderer-bundles": "node scripts/check-renderer-bundles.mjs",
     "test:db": "esbuild src/main/store/db-selftest.ts --bundle --platform=node --target=node16 --external:better-sqlite3 --outfile=out/db-selftest.cjs --log-level=warning && cross-env ELECTRON_RUN_AS_NODE=1 electron out/db-selftest.cjs",

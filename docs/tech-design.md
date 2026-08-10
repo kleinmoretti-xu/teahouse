@@ -1,9 +1,11 @@
 # 茶话间（Teahouse）技术设计文档
 
+> [简体中文](tech-design.md) · [English](en/tech-design.md)
+
 | | |
 |---|---|
-| 状态 | v1.60；文件柜成为主窗第三个页签（决议 #283/#284）；v0.51.0 开发中 |
-| 日期 | 2026-07-27 |
+| 状态 | v1.61；文件柜为主窗第三个页签；中英文文档同步校验（决议 #283/#284/#285）；v0.51.1 |
+| 日期 | 2026-08-10 |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -526,3 +528,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-07-26 v1.66 决议 #281/#282：renderer 新增 `utils/format.ts`（统一 `formatBytes`），`stores/transfers.ts` 的 `fmtBytes` 撤销、`FileCard` / `SettingsApp` / `FileCabinetPanel` 三处旧实现删除；`CaptureApp` 的 canvas 标注色改为从 `--primary` 读一次缓存。`services/files.ts` 抽出私有 `offerHidden(peerId, prepared, msgIdPrefix, blob)`，`offerUpdatePackage` / `offerSharePaths` / `offerSharePut` 共约 120 行的重复收尾收敛到一处，净减 46 行、行为零变化。协议、库表与 IPC 契约不变，版本 **0.49.3 → 0.49.5**。
 - 2026-07-26 v1.59 决议 #283：文件柜提为一等入口。新增 `main/windows/cabinet-window.ts`（1000×680 / 最小 860×560、单例、**可缩放且非模态**——要能与主窗并排，故不复用设置窗的 modal + scrim 路径）与 `#/cabinet` 渲染入口 `CabinetApp.vue`；新增 `ui:open-cabinet`（可带 peerId 定位）与 `share:recent-uploads`（读既有 `transfers` 的 `purpose='share-put'` 入站完成记录汇总，不新增表列）两个 IPC。`SettingsApp` 移除「我的文件柜」整组（共享目录 / 默认档 / 按人例外的 5 个 `share:*` IPC 调用点整体搬到 `CabinetApp`），`App.vue` 导航栏底部工具组新增 cabinet 按钮，`FileCabinetPanel` 按同一套样式重画并新增「在文件柜窗口打开」。**协议 v0.50、SQLite v14、`services/share.ts`、`net/`、依赖清单一律未动**，纯前台入口与界面重组。版本 **0.49.5 → 0.50.0**。
 - 2026-07-27 v1.60 决议 #284：文件柜由独立窗口改为主窗第三个页签。删除 `windows/cabinet-window.ts` 与 `#/cabinet` 渲染入口（回到四入口契约，决议 #210），界面拆为 `components/CabinetList.vue`（列表栏）+ `components/CabinetPane.vue`（内容区），共享状态收进 `stores/cabinet.ts`；`ui:open-cabinet` 改为「`showMainWindow()` + 向主窗发 `cabinet:focus-peer`」。**不用 App 内动态 import 来省闭包**——那会让 Rollup 把 App 的 facade 并进匿名共享块、manifest 丢掉 `src/App.vue` 动态入口，四入口门禁随之失效；改为把 `App.vue` 的静态闭包预算由 640/96 KiB 抬到 800/116 KiB（NSelect 等表单控件随文件柜进主窗），公共启动闭包仍为 80 KiB 未受影响。协议 v0.50、SQLite v14、`services/share.ts` 与依赖不变，版本 **0.50.0 → 0.51.0**。
+- 2026-08-10 v1.61 决议 #285：新增英文 README、贡献/开发/第三方说明及 `docs/en/` 当前规范，`scripts/check-doc-locales.mjs` 校验文档对与双向链接，Release 说明增加双语标题和下载指引；同时修正公开开发指南的 OCR 选型漂移为 PaddleOCR PP-OCRv6 tiny + onnxruntime-web。运行时架构、协议 v0.50、SQLite v14、IPC、依赖与网络保持，版本 **0.51.0 → 0.51.1**。

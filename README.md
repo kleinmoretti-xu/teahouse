@@ -1,5 +1,7 @@
 <div align="center">
 
+<p><b>简体中文</b> · <a href="README.en.md">English</a></p>
+
 <img src="build/icons/pantry-logo-icon.png" alt="茶话间 Logo" width="120" height="120" />
 
 <h1>茶话间 &nbsp;·&nbsp; Teahouse</h1>
@@ -128,6 +130,8 @@ xattr -dr com.apple.quarantine /Applications/Teahouse.app
 想自己编译、改代码，或在本机多开几个实例联调，都看 **[CONTRIBUTING.md](CONTRIBUTING.md)**——源码构建、开发红线、调试方法都在里面。
 
 想读懂代码结构、各模块职责、二次开发从哪下手，看 **[DEVELOPMENT.md](DEVELOPMENT.md)**——项目架构与扩展点都在里面。
+
+完整文档导航与英文版本见 **[docs/README.md](docs/README.md)**。
 
 如遇问题或有功能建议，请在 [Issues](https://github.com/skyjt/teahouse/issues) 提交。
 

@@ -1,5 +1,7 @@
 # 第三方资源声明
 
+> [简体中文](THIRD_PARTY_NOTICES.md) · [English](THIRD_PARTY_NOTICES.en.md)
+
 ## Naive UI
 
 茶话间渲染层使用 Naive UI 的标准表单、搜索与常规操作组件，代码随 renderer 本地构建，运行时不访问外网。

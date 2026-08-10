@@ -471,32 +471,38 @@ jobs:
           COMMITS=$(git log "${RANGE}" --reverse --pretty=format:'- `%h` %s' 2>/dev/null || true)
 
           {
-            echo "## 更新内容"
+            echo "## 更新内容 / What's changed"
             echo ""
             if [ -n "$PREV_TAG" ]; then
               echo "本次发布说明覆盖 \`${PREV_TAG}\` 到 \`${CURRENT_TAG}\` 的所有提交。"
+              echo ""
+              echo "This release covers every commit from \`${PREV_TAG}\` through \`${CURRENT_TAG}\`."
             else
               echo "本次发布说明覆盖 \`${CURRENT_TAG}\` 可追溯的所有提交。"
+              echo ""
+              echo "This release covers all commits reachable from \`${CURRENT_TAG}\`."
             fi
             echo ""
+            echo "> English documentation: [README](https://github.com/${GITHUB_REPOSITORY}/blob/${CURRENT_TAG}/README.en.md) · [Documentation index](https://github.com/${GITHUB_REPOSITORY}/blob/${CURRENT_TAG}/docs/en/README.md)"
+            echo ""
             if [ -n "$FEATURES" ]; then
-              echo "### ✨ 新功能"
+              echo "### ✨ 新功能 / Features"
               echo "$FEATURES"
               echo ""
             fi
             if [ -n "$FIXES" ]; then
-              echo "### 🐛 问题修复"
+              echo "### 🐛 问题修复 / Fixes"
               echo "$FIXES"
               echo ""
             fi
             if [ -n "$OTHERS" ]; then
-              echo "### 🔧 其他变更"
+              echo "### 🔧 其他变更 / Other changes"
               echo "$OTHERS"
               echo ""
             fi
-            echo "## 提交明细"
+            echo "## 提交明细 / Commits"
             echo ""
-            echo "范围：\`${RANGE}\`"
+            echo "范围 / Range: \`${RANGE}\`"
             echo ""
             if [ -n "$COMMITS" ]; then
               echo "$COMMITS"
@@ -506,23 +512,26 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            echo "## 可用安装包"
+            echo "## 可用安装包 / Downloads"
             echo ""
-            echo "| 平台 | 文件 | 说明 |"
+            echo "| 平台 / Platform | 文件 / File | 说明 / Description |"
             echo "|---|---|---|"
-            echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-setup.exe\` | NSIS 安装包 |"
-            echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-portable.exe\` | 便携版（免安装） |"
-            echo "| Windows 7 SP1+ 32 位 | \`Teahouse-${VERSION}-win-ia32-setup.exe\` | NSIS 安装包 |"
-            echo "| Windows 7 SP1+ 32 位 | \`Teahouse-${VERSION}-win-ia32-portable.exe\` | 便携版（免安装） |"
-            echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-amd64.deb\` | dpkg 安装包（含信创） |"
-            echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-x86_64.AppImage\` | 通用 AppImage |"
-            echo "| Debian 10 / UOS 20 arm64 | \`Teahouse-${VERSION}-linux-arm64.deb\` | dpkg 安装包（含信创） |"
-            echo "| Debian 10 / UOS 20 arm64 | \`Teahouse-${VERSION}-linux-arm64.AppImage\` | 通用 AppImage |"
-            echo "| macOS arm64（M 系列） | \`Teahouse-${VERSION}-mac-arm64.dmg\` | 磁盘映像 |"
-            echo "| macOS arm64（M 系列） | \`Teahouse-${VERSION}-mac-arm64.zip\` | 压缩包 |"
+            echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-setup.exe\` | NSIS 安装包 / installer |"
+            echo "| Windows 7 SP1+ x64 | \`Teahouse-${VERSION}-win-x64-portable.exe\` | 便携版 / portable |"
+            echo "| Windows 7 SP1+ 32 位 / 32-bit | \`Teahouse-${VERSION}-win-ia32-setup.exe\` | NSIS 安装包 / installer |"
+            echo "| Windows 7 SP1+ 32 位 / 32-bit | \`Teahouse-${VERSION}-win-ia32-portable.exe\` | 便携版 / portable |"
+            echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-amd64.deb\` | dpkg 安装包 / package |"
+            echo "| Debian 10 / UOS 20 x64 | \`Teahouse-${VERSION}-linux-x86_64.AppImage\` | 通用 AppImage / portable AppImage |"
+            echo "| Debian 10 / UOS 20 arm64 | \`Teahouse-${VERSION}-linux-arm64.deb\` | dpkg 安装包 / package |"
+            echo "| Debian 10 / UOS 20 arm64 | \`Teahouse-${VERSION}-linux-arm64.AppImage\` | 通用 AppImage / portable AppImage |"
+            echo "| macOS arm64（M 系列 / Apple Silicon） | \`Teahouse-${VERSION}-mac-arm64.dmg\` | 磁盘映像 / disk image |"
+            echo "| macOS arm64（M 系列 / Apple Silicon） | \`Teahouse-${VERSION}-mac-arm64.zip\` | 压缩包 / archive |"
             echo ""
             echo "> 每个平台产物附 SHA-256 校验清单（\`SHA256SUMS-*.txt\`）。"
-            echo "> macOS 未签名构建，首次打开需在「系统设置 → 隐私与安全性」中允许，或执行 \`xattr -dr com.apple.quarantine /Applications/Teahouse.app\`。"
+            echo "> Each platform includes a SHA-256 checksum manifest."
+            echo ""
+            echo "> macOS 构建未签名；首次打开需在「系统设置 → 隐私与安全性」中允许，或执行 \`xattr -dr com.apple.quarantine /Applications/Teahouse.app\`。"
+            echo "> The macOS build is unsigned; approve it under System Settings → Privacy & Security on first launch, or run the command above."
           } > release-notes.md
 
           echo "=== release-notes.md ==="
