@@ -1893,7 +1893,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         <span ref="emojiScope" class="emoji-scope">
           <EmojiPanel
             v-if="showEmoji"
-            :sticker-enabled="!isGroup && peerOnline"
+            :sticker-enabled="canSendMedia"
             @select="insertEmoji"
             @sticker="sendStickerById"
           />
