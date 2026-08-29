@@ -140,6 +140,28 @@ const historySearchInput = ref<HTMLInputElement | null>(null)
 const inputScrollTop = ref(0)
 const msgMenu = ref<{ x: number; y: number; msg: MessageView } | null>(null)
 const forwardMsg = ref<MessageView | null>(null)
+const replyToId = ref<string | null>(null)
+const replyToMeta = ref({id: '', senderName: '', text: ''})
+
+watch(replyToId,
+    async (newId) => {
+      if (!newId) {
+        replyToMeta.value = {id: '', senderName: '', text: ''}
+        return
+      }
+      /** 用 ID 解析引用展示元数据；查不到时降级为"原消息不可用" */
+      const msg = await chatStore.getMessageById(newId)
+      if (!msg) {
+        replyToMeta.value = {id: newId, senderName: '原消息不可用', text: ''}
+        return
+      }
+      // 直接读取源消息自身的发送者 ID 和文本；原消息是普通消息时 replyTo 字段为空
+      const senderName = peersStore.nameOf(msg.senderId) || '未知成员'
+      replyToMeta.value = {id: newId, senderName, text: String(msg.text ?? '')}
+    },
+    {immediate: true}
+)
+
 const settings = ref<SettingsView | null>(null)
 let stopSettings: (() => void) | null = null
 let stopClipboardPaste: (() => void) | null = null
@@ -435,6 +457,7 @@ watch(
     nudgeFeedback.value = null
     clearTablePasteHint()
     resetHistorySearch()
+    replyToId.value = null
     if (isGroup.value && id) void groupsStore.ensure(id)
   },
   { immediate: true }
@@ -958,10 +981,12 @@ async function send(): Promise<void> {
   const mentions = isGroup.value
     ? [...new Set(mentionIds.value)].filter((id) => text.includes(`@${peersStore.nameOf(id)}`))
     : []
+  const id = replyToId.value ? replyToId.value : undefined
   draft.value = ''
   mentionIds.value = []
   showMentionPicker.value = false
-  await chatStore.send(text, mentions)
+  replyToId.value = null
+  await chatStore.send(text, mentions, id)
 }
 
 async function sendClipboardImageFallback(event?: Event): Promise<boolean> {
@@ -1213,11 +1238,23 @@ function canForwardMessage(msg: MessageView): boolean {
   return msg.status !== 'recalled' && msg.kind !== 'system' && msg.kind !== 'pk'
 }
 
+function canQuoteMessage(msg: MessageView): boolean {
+  return msg.kind === 'text' && msg.status !== 'recalled'
+}
+
+function quoteSelectedMessage(): void {
+  const msg = msgMenu.value?.msg
+  msgMenu.value = null
+  if (!msg || !canQuoteMessage(msg)) return
+  replyToId.value = String(msg.id)
+}
+
 function messageMenuItemCount(msg: MessageView): number {
   return (
     Number(canCopyMessage(msg)) +
     Number(canForwardMessage(msg)) +
-    Number(isRecallableKind(msg))
+    Number(isRecallableKind(msg)) +
+    Number(canQuoteMessage(msg) && isGroup.value)
   )
 }
 
@@ -1272,6 +1309,10 @@ function forwardSelectedMessage(): void {
   msgMenu.value = null
   if (!msg || !canForwardMessage(msg)) return
   forwardMsg.value = msg
+}
+
+async function jumpToReplyTarget(msgId: string): Promise<void> {
+  await chatStore.jumpToMessageById(msgId)
 }
 
 function isImagePath(path: string): boolean {
@@ -1839,6 +1880,7 @@ async function onDrop(event: DragEvent): Promise<void> {
         @contextmenu="openMessageMenu"
         @forward="forwardMsg = $event"
         @recall="recallMessage"
+        @reply-to="jumpToReplyTarget"
         @participate-pk="sendPk"
         @resend="chatStore.resend"
       />
@@ -1865,6 +1907,7 @@ async function onDrop(event: DragEvent): Promise<void> {
     >
       <button v-if="canCopyMessage(msgMenu.msg)" @click="copySelectedMessage">复制</button>
       <button v-if="canForwardMessage(msgMenu.msg)" @click="forwardSelectedMessage">转发</button>
+      <button v-if="canQuoteMessage(msgMenu.msg) && isGroup && !msgMenu.msg.isMine" @click="quoteSelectedMessage">引用回复</button>
       <button
         v-if="isRecallableKind(msgMenu.msg)"
         class="danger recall-action"
@@ -2049,6 +2092,19 @@ async function onDrop(event: DragEvent): Promise<void> {
           @click="clearTablePasteHint"
         >
           <PantryIcon name="x" :size="14" />
+        </button>
+      </div>
+      <div v-if="replyToId" class="reply-preview">
+        <span class="reply-preview-label">引用回复</span>
+        <span class="reply-preview-sender">{{ replyToMeta?.senderName ?? '原消息不可用' }}</span>
+        <span class="reply-preview-text">{{ replyToMeta?.text ?? '' }}</span>
+        <button
+          class="reply-preview-close"
+          type="button"
+          aria-label="取消引用"
+          @click="replyToId = null"
+        >
+          <PantryIcon name="x" :size="12" />
         </button>
       </div>
       <div
@@ -2325,6 +2381,58 @@ async function onDrop(event: DragEvent): Promise<void> {
   .table-paste-hint {
     animation: none;
   }
+}
+.reply-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 0 6px;
+  padding: 0 6px 0 10px;
+  background: rgba(61, 139, 107, 0.08);
+  border: 1px solid rgba(61, 139, 107, 0.22);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 12px;
+  overflow: hidden;
+}
+.reply-preview-label {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.reply-preview-sender {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.reply-preview-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.reply-preview-close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  margin-left: 2px;
+}
+.reply-preview-close:hover {
+  background: var(--line);
+  color: var(--text-1);
 }
 /* "回到最新"悬浮圆按钮（决议 #134）：贴消息区右下角，白底 + 茶青箭头 + 柔和阴影 */
 .jump-latest {

@@ -2,10 +2,10 @@
 
 > [简体中文](tech-design.md) · [English](en/tech-design.md)
 
-| | |
-|---|---|
-| 状态 | v1.63；表情包导入、网格与群聊传输（决议 #287）；v0.52.0 |
-| 日期 | 2026-08-27 |
+| |                                                                                                                                                                                                              |
+|---|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 状态 | v1.64；群聊引用回复（决议 #288）；v0.53.0                                                                                                                                                                    |
+| 日期 | 2026-08-29                                                                                                                                                                                                   |
 | 关系 | 上游：[requirements.md](requirements.md)（功能）、[protocol.md](protocol.md)（协议）、[ui-design.md](ui-design.md)（界面）；硬约束：根 README「开发红线」（Electron 22.3.27 / Chrome 108 / Node 16.17 焊死） |
 
 ## 1. 选型决策总表
@@ -336,23 +336,24 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 
 ## 12. 里程碑与模块映射
 
-| 版本 | 交付 | 涉及模块 |
-|---|---|---|
-| v0.1 | 脚手架、发现/在线/探活、单聊文本、补发、托盘通知、三栏壳 | net 全套（除 transfer）、store、chat、主窗 |
-| v0.2 | 文件/文件夹传输、图片消息、emoji、历史+全局搜索 | transfer、fts、file-card、emoji-panel |
-| v0.3 | 讨论组、截图、表情包、跨网段（扫描+gossip）、三级树 | groups、capture、stickers、discovery 扩展、contacts |
-| v0.4 | 撤回、断点续传、导出/导入、深色主题 | messenger、transfer、porter、tokens |
-| v0.5 | P1 交付补齐：转发、群内 @、长文本 TCP、截图标注、核心设置、备份包媒体迁移 | services、settings、porter、renderer |
-| v0.27 | 局域网 P2P 自更新（分三步）：①发现与提示（caps `upd1` / 运行形态自检 / `ver` 投影 / 同平台版本比对 / 「内网有新版」提示）②拉包（`update` 可靠请求 / 按请求架构匹配已有本地包并隐藏回传 / nsis 自留包·deb `dpkg-deb` 自重打包 / 拉临时目录 + SHA-256 + 版本核对）③应用更新（nsis 静默装·deb pkexec / 替换重启 / 保留包接力成源）；mac 暂缓 | services/updater、transfer 复用、discovery（caps/ver）、util/self-package·apply-update、提示 UI |
-| v0.28 | 私聊文件直接发送：发送端文件卡片「直接发送」入口、caps `fd1`、`file-ctl {op:"direct"}`、接收端自动 accept；默认文件接收统一到 `文件保存位置/联系人名称/`，另存为除外；群聊文件不支持直接发送 | shared/protocol、net/codec、services/files、settings、renderer FileCard |
-| v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回 | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
-| v0.32.x | 全局刷新二次确认、群成员上限 200 等（已发布 v0.32.3） | App.vue、protocol GROUP_MAX_MEMBERS |
+| 版本 | 交付                                                                                                                                                                                                                                                                                                                                                                           | 涉及模块 |
+|---|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---|
+| v0.1 | 脚手架、发现/在线/探活、单聊文本、补发、托盘通知、三栏壳                                                                                                                                                                                                                                                                                                                       | net 全套（除 transfer）、store、chat、主窗 |
+| v0.2 | 文件/文件夹传输、图片消息、emoji、历史+全局搜索                                                                                                                                                                                                                                                                                                                                | transfer、fts、file-card、emoji-panel |
+| v0.3 | 讨论组、截图、表情包、跨网段（扫描+gossip）、三级树                                                                                                                                                                                                                                                                                                                            | groups、capture、stickers、discovery 扩展、contacts |
+| v0.4 | 撤回、断点续传、导出/导入、深色主题                                                                                                                                                                                                                                                                                                                                            | messenger、transfer、porter、tokens |
+| v0.5 | P1 交付补齐：转发、群内 @、长文本 TCP、截图标注、核心设置、备份包媒体迁移                                                                                                                                                                                                                                                                                                      | services、settings、porter、renderer |
+| v0.27 | 局域网 P2P 自更新（分三步）：①发现与提示（caps `upd1` / 运行形态自检 / `ver` 投影 / 同平台版本比对 / 「内网有新版」提示）②拉包（`update` 可靠请求 / 按请求架构匹配已有本地包并隐藏回传 / nsis 自留包·deb `dpkg-deb` 自重打包 / 拉临时目录 + SHA-256 + 版本核对）③应用更新（nsis 静默装·deb pkexec / 替换重启 / 保留包接力成源）；mac 暂缓                                      | services/updater、transfer 复用、discovery（caps/ver）、util/self-package·apply-update、提示 UI |
+| v0.28 | 私聊文件直接发送：发送端文件卡片「直接发送」入口、caps `fd1`、`file-ctl {op:"direct"}`、接收端自动 accept；默认文件接收统一到 `文件保存位置/联系人名称/`，另存为除外；群聊文件不支持直接发送                                                                                                                                                                                   | shared/protocol、net/codec、services/files、settings、renderer FileCard |
+| v0.30 | 媒体撤回：`file-ctl offer.msgId`、caps `mrec1`、图片撤回、未完成文件撤回、群文件全员未完成才可撤回；已接收完成文件不可撤回                                                                                                                                                                                                                                                     | shared/protocol、net/codec、services/chat、services/files、renderer ImageBubble/FileCard |
+| v0.32.x | 全局刷新二次确认、群成员上限 200 等（已发布 v0.32.3）                                                                                                                                                                                                                                                                                                                          | App.vue、protocol GROUP_MAX_MEMBERS |
 | v0.47 | 共享文件柜（分三步）：①我的文件柜（`config.fileCabinet` + SQLite v14 `share_grants` + 设置页共享目录 / 默认档 / 按人例外 + 共享根禁选校验）②浏览与下载（caps `shr1`、`share` 报文与 codec 白名单、分页快照、`realpath` 越界复核、私聊头部按钮 + 右侧覆盖面板、`purpose:"share-get"` 自动 accept）③上传（`purpose:"share-put"`、写权限复核、落 `root/上传者名/`、私聊系统提示） | shared/protocol、shared/ipc、net/codec（仅加白名单，transfer 不动）、store/migrations + share-grants-repo、services/share、settings、renderer FileCabinetPanel / stores/share / SettingsView |
-| v0.50 → v0.51 | 文件柜一等入口（决议 #283，形态改为主窗第三个页签见 #284）：导航栏 cabinet 按钮切页签 + `stores/cabinet.ts` + `CabinetList`（列表栏：我的柜子摘要 + `shr1` 同事列表）+ `CabinetPane`（内容区：浏览器 / 我的柜子管理页，列表与网格双视图、文件管理器式多选与键盘）+ 设置页「我的文件柜」整组迁出 + `FileCabinetPanel` 同步重画；**协议、库表、services/share 零改动** | main/index（2 个 IPC）、shared/ipc、preload、renderer App.vue / stores/cabinet / CabinetList / CabinetPane / PantryIcon / SettingsApp / FileCabinetPanel |
-| v0.52 | 表情包本地多选导入、四列网格稳定滚动、群聊表情在线成员投递；协议与库表不变 | shared/ipc、main/index、preload、renderer EmojiPanel / stores/stickers / stores/chat、FilesService 既有群媒体路径 |
-| 待办 · 暂缓 | 内网通兼容模式（#194–#196 设计；**#199 不排期**） | 见 nwt-compat-design.md；勿提前写 net/compat |
-| 待办 · 暂缓 | 内网通实验附件互通（依赖上项 + TCP GETFILEDATA 闭环） | 同上 |
-| v1.0 | 三平台安装包打磨、冒烟全过、文档定稿 | CI/builder |
+| v0.50 → v0.51 | 文件柜一等入口（决议 #283，形态改为主窗第三个页签见 #284）：导航栏 cabinet 按钮切页签 + `stores/cabinet.ts` + `CabinetList`（列表栏：我的柜子摘要 + `shr1` 同事列表）+ `CabinetPane`（内容区：浏览器 / 我的柜子管理页，列表与网格双视图、文件管理器式多选与键盘）+ 设置页「我的文件柜」整组迁出 + `FileCabinetPanel` 同步重画；**协议、库表、services/share 零改动**           | main/index（2 个 IPC）、shared/ipc、preload、renderer App.vue / stores/cabinet / CabinetList / CabinetPane / PantryIcon / SettingsApp / FileCabinetPanel |
+| v0.52 | 表情包本地多选导入、四列网格稳定滚动、群聊表情在线成员投递；协议与库表不变                                                                                                                                                                                                                                                                                                     | shared/ipc、main/index、preload、renderer EmojiPanel / stores/stickers / stores/chat、FilesService 既有群媒体路径 |
+| v0.53 | 群聊引用回复（决议 #288）：`group-text` 新增可选 `replyTo` 源消息 ID；codec 入站校验只允许受限字符串，拒绝非法参数；接收侧按 ID 查群会话内源消息生成 `ReplyMeta`，本地 `messages.reply_to` 存源 ID 字符串；目标不存在时接收正常、跳转提示由渲染层处理。协议升 v0.51，SQLite升 v15                                                                                    | shared/protocol、shared/ipc、net/codec、main/index、main/services/groups、main/store/msg-repo、preload、renderer ChatPane / stores/chat / MessageRow |
+| 待办 · 暂缓 | 内网通兼容模式（#194–#196 设计；**#199 不排期**）                                                                                                                                                                                                                                                                                                                              | 见 nwt-compat-design.md；勿提前写 net/compat |
+| 待办 · 暂缓 | 内网通实验附件互通（依赖上项 + TCP GETFILEDATA 闭环）                                                                                                                                                                                                                                                                                                                          | 同上 |
+| v1.0 | 三平台安装包打磨、冒烟全过、文档定稿                                                                                                                                                                                                                                                                                                                                           | CI/builder |
 
 ## 13. 变更记录
 
@@ -532,3 +533,4 @@ media/avatars/...   # 本机、联系人或群引用的受管 192×192 WebP 头�
 - 2026-08-10 v1.61 决议 #285：新增英文 README、贡献/开发/第三方说明及 `docs/en/` 当前规范，`scripts/check-doc-locales.mjs` 校验文档对与双向链接，Release 说明增加双语标题和下载指引；同时修正公开开发指南的 OCR 选型漂移为 PaddleOCR PP-OCRv6 tiny + onnxruntime-web。运行时架构、协议 v0.50、SQLite v14、IPC、依赖与网络保持，版本 **0.51.0 → 0.51.1**。
 - 2026-08-26 v1.62 决议 #286：Wayland 会话启动时合并启用 `WebRTCPipeWireCapturer`，但截图仍以 `desktopCapturer` 实际能力为准，不再按会话类型提前返回；主窗口隐藏抽为等待 `hide` 信号、合成器退场与最终可见性复核。新增 `capture:failed` main→renderer 事件，空源、空图和异常走应用内提示或系统通知。协议 v0.50、SQLite v14、依赖与网络保持，版本 **0.51.1 → 0.51.2**。
 - 2026-08-27 v1.63 决议 #287：表情导入复用现有压缩入库动作，主进程增加独立选择授权与受限源图读取；网格仅增加原生 CSS 隐式行尺寸；群聊发送复用 `FilesService.offerGroupPaths(..., 'sticker')`。协议 v0.50、SQLite v14、依赖与端口保持，版本 **0.51.2 → 0.52.0**。
+- 2026-08-29 v1.64 决议 #288：群聊引用回复。`group-text` 载荷新增可选 `replyTo`（源消息 ID 字符串）；codec 入站只允许受限非空字符串，拒绝空串与含 `senderName/text` 的对象；接收侧在本地群会话内按 ID 查询源消息，生成 `MessageView.replyTo.id/senderName/text`，本地 `messages.reply_to` 列存源 ID；目标消息不存在时接收正常，跳转与不可用提示由渲染层处理。协议升 v0.51，SQLite v14 不变。版本 **0.52.0 → 0.53.0**。
