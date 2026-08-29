@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { MessageView } from '../../../shared/ipc'
+import {computed} from 'vue'
+import {MessageView, ReplyMeta} from '../../../shared/ipc'
 import type { PkGame } from '../../../shared/pk'
 import { splitEmojiText } from '../utils/compat-emoji'
 import { messageStatusHint, shouldShowSeparator, textParts } from '../utils/message-row'
@@ -11,6 +11,8 @@ import FileCard from './FileCard.vue'
 import ImageBubble from './ImageBubble.vue'
 import PantryIcon from './PantryIcon.vue'
 import PkBubble from './PkBubble.vue'
+import {usePeersStore} from "../stores/peers";
+import {useChatStore} from "../stores/chat";
 
 const props = defineProps<{
   msg: MessageView
@@ -32,6 +34,7 @@ const emit = defineEmits<{
   recall: [msg: MessageView]
   'participate-pk': [game: PkGame]
   resend: [msgId: string]
+  'reply-to': [msgId: string]
 }>()
 
 const showSeparator = computed(() => shouldShowSeparator(props.msg.ts, props.prevTs))
@@ -58,6 +61,25 @@ function revealSystemTarget(): void {
   const transferId = props.msg.fileRef?.transferId
   if (transferId) void window.pantry.revealTransfer(transferId)
 }
+
+const peersStore = usePeersStore()
+const chatStore = useChatStore()
+const replyMeta = computed((): ReplyMeta => {
+  const replyTo = props.msg.replyTo
+  if (!replyTo) return {id: "", senderName: "", text: ""}
+  const replyMsg = chatStore.activeMessages.find((m) => m.id === replyTo)
+  if (!replyMsg) return {id: "", senderName: "", text: ""}
+  let senderName = ''
+  let text = replyMsg.text
+  if (replyMsg.status === 'recalled') {
+    text = '消息已被撤回'
+  } else if (replyMsg.isMine) {
+    senderName = '我'
+  } else {
+    senderName = peersStore.nameOf(replyMsg.senderId) || '未知成员'
+  }
+  return {id: replyTo, senderName, text}
+})
 </script>
 
 <template>
@@ -136,6 +158,11 @@ function revealSystemTarget(): void {
             </template>
           </span>
         </template>
+      </div>
+      <div v-if="props.msg.replyTo" class="reply-quote" @click.stop="$emit('reply-to', props.msg.replyTo)">
+        <span class="reply-quote-label">引用</span>
+        <span class="reply-quote-sender" v-if="replyMeta.senderName">{{ replyMeta.senderName }}：</span>
+        <span class="reply-quote-text">{{ replyMeta.text }}</span>
       </div>
     </span>
     <span v-if="props.msg.isMine" class="status">
@@ -246,6 +273,49 @@ function revealSystemTarget(): void {
 }
 .message-surface {
   flex-shrink: 0;
+}
+.reply-quote {
+  max-width: 100%;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border-left: 2px solid var(--primary);
+  background: rgb(0 0 0 / 6%);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-2);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  display: flex;  /* 使用 flex 布局 */
+  align-items: baseline;  /* 基线对齐 */
+  gap: 4px;  /* 元素间距 */
+}
+.reply-quote:hover {
+  background: rgba(61, 139, 107, 0.12);
+  border-left-color: rgba(61, 139, 107, 0.7);
+}
+.row.mine .reply-quote {
+  border-left-color: rgba(61, 139, 107, 0.5);
+}
+.row.mine .reply-quote:hover {
+  border-left-color: rgba(61, 139, 107, 0.8);
+}
+.reply-quote-label {
+  display: none;
+}
+.reply-quote-sender {
+  font-weight: 600;
+  color: var(--primary);
+  flex-shrink: 0;  /* 不收缩，保持完整 */
+  white-space: nowrap;  /* 强制不换行 */
+}
+.reply-quote-text {
+  flex: 1;  /* 占据剩余空间 */
+  min-width: 0;  /* 关键：允许收缩 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
 }
 .bubble {
   max-width: 100%;

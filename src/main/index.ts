@@ -2808,14 +2808,19 @@ if (!gotLock) {
 
   ipcMain.handle(IpcChannels.groupList, () => groups?.list() ?? [])
 
-  ipcMain.handle(IpcChannels.groupSend, (_event, groupId: unknown, text: unknown, mentions: unknown) => {
+  ipcMain.handle(IpcChannels.groupSend, (_event, groupId: unknown, text: unknown, mentions: unknown, replyTo: unknown) => {
     if (typeof groupId !== 'string' || groupId.length > 64) return null
     if (typeof text !== 'string' || text.length === 0 || text.length > 4096) return null
     const cleanMentions =
       Array.isArray(mentions) && mentions.every((m) => typeof m === 'string' && m.length <= 64)
         ? (mentions as string[]).slice(0, GROUP_MAX_MEMBERS)
         : []
-    return groups?.sendText(groupId, text, cleanMentions) ?? null
+    // IPC 只允许携带源消息 ID；senderName/text 由主进程在当前群会话内查询生成
+    const replyMeta: string | undefined =
+        replyTo && typeof replyTo === 'string' && replyTo.length > 0 && replyTo.length <= LIMITS.id
+        ? replyTo
+        : undefined
+    return groups?.sendText(groupId, text, cleanMentions, replyMeta) ?? null
   })
 
   ipcMain.handle(IpcChannels.captureStart, () => startCapture())
@@ -2953,6 +2958,13 @@ if (!gotLock) {
     if (typeof convId !== 'string' || convId.length > 128 || !msgRepoRef) return []
     if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) return []
     return msgRepoRef.around(convId, seq, 25).map(msgRowToView)
+  })
+
+  ipcMain.handle(IpcChannels.msgGet, (_event, msgId: unknown) => {
+    if (typeof msgId !== 'string' || msgId.length === 0 || msgId.length > LIMITS.id || !msgRepoRef) return null
+    const row = msgRepoRef.get(msgId)
+    if (!row) return null
+    return msgRowToView(row)
   })
 
   ipcMain.handle(IpcChannels.imgSaveAs, async (event, transferId: unknown): Promise<boolean> => {
