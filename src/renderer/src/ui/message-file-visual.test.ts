@@ -44,6 +44,12 @@ describe('消息与文件视觉统一', () => {
     expect(ruleBody(messageSource, '.status .canceled')).toContain('color: var(--text-3)')
   })
 
+  it('历史引用按消息 ID 补载，缺失时显示可见提示', () => {
+    expect(messageSource).toContain('await chatStore.getMessageById(replyTo)')
+    expect(messageSource).toContain("message?.convId === convId ? message : null")
+    expect(messageSource).toContain("'原消息不可用'")
+  })
+
   it('普通文件到期按收发方向显示独立提示', () => {
     expect(fileCardSource).toContain("t.direction === 'out' ? '发送已到期' : '文件已过期'")
     expect(fileCardSource).toContain("if (expired > 0 && !active) return '发送已到期'")
