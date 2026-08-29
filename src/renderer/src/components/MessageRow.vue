@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import {computed} from 'vue'
-import {MessageView, ReplyMeta} from '../../../shared/ipc'
+import { computed, ref, watch } from 'vue'
+import type { MessageView, ReplyMeta } from '../../../shared/ipc'
 import type { PkGame } from '../../../shared/pk'
 import { splitEmojiText } from '../utils/compat-emoji'
 import { messageStatusHint, shouldShowSeparator, textParts } from '../utils/message-row'
@@ -11,8 +11,8 @@ import FileCard from './FileCard.vue'
 import ImageBubble from './ImageBubble.vue'
 import PantryIcon from './PantryIcon.vue'
 import PkBubble from './PkBubble.vue'
-import {usePeersStore} from "../stores/peers";
-import {useChatStore} from "../stores/chat";
+import { useChatStore } from '../stores/chat'
+import { usePeersStore } from '../stores/peers'
 
 const props = defineProps<{
   msg: MessageView
@@ -64,11 +64,40 @@ function revealSystemTarget(): void {
 
 const peersStore = usePeersStore()
 const chatStore = useChatStore()
+const historicalReply = ref<MessageView | null>()
+
+watch(
+  [() => props.msg.replyTo, () => props.msg.convId],
+  async ([replyTo, convId], _previous, onCleanup) => {
+    historicalReply.value = undefined
+    if (!replyTo) return
+    const activeReply = chatStore.activeMessages.find((message) => message.id === replyTo)
+    if (activeReply) {
+      historicalReply.value = activeReply
+      return
+    }
+    let canceled = false
+    onCleanup(() => {
+      canceled = true
+    })
+    const message = await chatStore.getMessageById(replyTo)
+    if (!canceled) historicalReply.value = message?.convId === convId ? message : null
+  },
+  { immediate: true }
+)
+
 const replyMeta = computed((): ReplyMeta => {
   const replyTo = props.msg.replyTo
-  if (!replyTo) return {id: "", senderName: "", text: ""}
-  const replyMsg = chatStore.activeMessages.find((m) => m.id === replyTo)
-  if (!replyMsg) return {id: "", senderName: "", text: ""}
+  if (!replyTo) return { id: '', senderName: '', text: '' }
+  const replyMsg =
+    chatStore.activeMessages.find((message) => message.id === replyTo) ?? historicalReply.value
+  if (!replyMsg) {
+    return {
+      id: replyTo,
+      senderName: '',
+      text: historicalReply.value === undefined ? '正在加载原消息…' : '原消息不可用'
+    }
+  }
   let senderName = ''
   let text = replyMsg.text
   if (replyMsg.status === 'recalled') {
@@ -78,7 +107,7 @@ const replyMeta = computed((): ReplyMeta => {
   } else {
     senderName = peersStore.nameOf(replyMsg.senderId) || '未知成员'
   }
-  return {id: replyTo, senderName, text}
+  return { id: replyTo, senderName, text }
 })
 </script>
 
