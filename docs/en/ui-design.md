@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Current design | v1.77 for v0.52.0 |
+| Current design | v1.78 for v0.53.1 |
 | Main-window model | Three columns with Chat, Contacts, and File Cabinet tabs |
 | Authority | [ui-design.md](../ui-design.md) is the canonical UI and interaction record |
 
@@ -115,6 +115,8 @@ The message area preserves a conversation's scroll position. Entry from notifica
 The composer provides emoji, capture, image, file, and folder actions. It supports paste/drag/drop, draft persistence, Enter or Ctrl/Cmd+Enter sending, IME composition protection, dynamic height, and disabled/offline feedback.
 
 Capture startup failures are never silent. When the main window was visible, it returns with a dismissible seven-second top-center status containing a warning icon, an explicit reason/fallback, `role=status`, and `aria-live=assertive`. A shortcut invoked from an already hidden window uses a system notification when available and reveals the app only as a fallback. Empty sources/images, hide failures, and exceptions all direct users to system capture plus chat-box `Ctrl+V` when built-in capture remains unavailable.
+
+On ARM64 Wayland, Electron 22 screen enumeration is bypassed before the main window hides, so capture immediately uses that visible system-capture + `Ctrl+V` fallback instead of risking a native process crash. x64 Wayland, ARM64 X11, and other platforms retain the existing flow.
 
 Table paste inserts text into the draft and shows a compact hint with Send as image and Ignore. Pressing the configured send key sends plain text. The hint disappears after draft or conversation changes. Oversized drafts keep a persistent explanatory error.
 
@@ -235,3 +237,4 @@ Circular avatars, local line icons, file-type artwork, tray graphics, and brand 
 - **2026-08-10, v1.75, decision #285:** added the maintained English current-state UI and interaction reference plus bidirectional language navigation. Product UI language and runtime behavior remain unchanged. Repository version 0.51.0 → 0.51.1.
 - **2026-08-26, v1.76, decision #286:** made capture startup failures visible through a dismissible, accessible in-app status or a system notification when the app was already hidden; Linux capture now waits for window hiding and compositor settling to avoid including the app. Repository version 0.51.1 → 0.51.2.
 - **2026-08-27, v1.77, decision #287:** added an accessible sticker-import action with progress/result feedback, sized four-column sticker rows to their square items inside the fixed 200px scrolling region, and enabled saved stickers in groups when another member is online. Repository version 0.51.2 → 0.52.0.
+- **2026-08-29, v1.78, decision #289:** ARM64 Wayland capture now uses the existing visible system-capture paste fallback before Electron 22 native screen enumeration and before hiding the main window. Other platform flows are unchanged. Repository version 0.53.0 → 0.53.1.

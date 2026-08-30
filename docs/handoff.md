@@ -69,19 +69,20 @@
 > 当前补充：2026-08-10（**v0.51.1，决议 #285 中英文文档体系**）：根 README、贡献/开发/第三方说明与设计文档均已有英文当前规范和双向语言入口；`docs/README.md` 统一导航，`npm run check:docs` 校验文档覆盖与链接，GitHub Release 说明增加双语标题与下载指引。中文既有路径继续作为主事实源，应用界面语言、协议 v0.50、SQLite v14、IPC、依赖与网络保持。
 > 当前补充：2026-08-26（**v0.51.2，决议 #286 Linux / Wayland 截图兼容**）：Issue #29/#31 的 Wayland 提前返回已移除，Electron 22 启用 PipeWire capturer 后仍实际探测屏幕源；Linux 隐藏主窗口等待 `hide` 信号和合成器退场并复核不可见；空源、空图和异常通过应用内提示或系统通知给出系统截图 + `Ctrl+V` 退路。协议 v0.50、SQLite v14、依赖与网络保持，需在报告所列 Kylin/UOS 真机完成最终验收。
 > 当前补充：2026-08-27（**v0.52.0，决议 #287 Issue #30 表情包改进**）：表情面板支持系统图片多选导入并复用既有压缩收藏管线；四列网格按正方形实际高度生成行，固定内容区溢出滚动；群聊表情复用在线成员群媒体传输。协议 v0.50、SQLite v14、依赖与端口保持。
-> 当前补充：2026-08-29（**v0.53.0，决议 #288 群聊引用回复**）：群聊输入框点击消息气泡可设定引用目标，发送时 `group-text` 载荷携带源消息 ID（`replyTo`）；codec 入站只允许受限字符串，拒绝非法参数；接收侧在本地群会话内查询源消息生成 `ReplyMeta`（senderName + 首行文本摘要），渲染层显示引用缩略信息栏，点击跳转定位到源消息所在会话；目标不存在时接收成功、提示由渲染层负责。协议升 v0.51，SQLite v14 不变。仓库版本 **0.52.0 → 0.53.0**。
+> 当前补充：2026-08-29（**v0.53.0，决议 #288 群聊引用回复**）：群聊输入框点击消息气泡可设定引用目标，发送时 `group-text` 载荷携带源消息 ID（`replyTo`）；codec 入站只允许受限字符串，拒绝非法参数；接收侧在本地群会话内查询源消息生成 `ReplyMeta`（senderName + 首行文本摘要），渲染层显示引用缩略信息栏，点击跳转定位到源消息所在会话；目标不存在时接收成功、提示由渲染层负责。协议升 v0.51，SQLite 升 v15。仓库版本 **0.52.0 → 0.53.0**。
+> 当前补充：2026-08-29（**v0.53.1，决议 #289 ARM64 Wayland 截图防崩溃**）：Issue #34 的麒麟 ARM64 Wayland 日志与 Electron 上游同类问题均指向 `desktopCapturer` 屏幕枚举的原生崩溃；统一截图入口在调用原生枚举前安全返回既有系统截图 + `Ctrl+V` 提示。x64 Wayland、ARM64 X11 与其他平台保持原能力探测。协议 v0.51、SQLite v15、依赖与网络不变，待报告机器复测确认。
 
 ## 0. 必读顺序（15 分钟上手）
 
 1. **[AGENTS.md](../AGENTS.md)** —— 9 条硬性红线（Electron 22.3.27 焊死、纯内网、分层铁律等），违反即错误；
 2. 本文 —— 状态、工作流、下一步；
-3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #287）→ [protocol.md](protocol.md)（主协议 v0.50）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；英文当前规范从 [docs/en/README.md](en/README.md) 进入；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
+3. 设计四件套（按需细读）：[requirements.md](requirements.md)（功能与决议，已至 #289）→ [protocol.md](protocol.md)（主协议 v0.51）→ [ui-design.md](ui-design.md)（界面）→ [tech-design.md](tech-design.md)（选型/分层/库表）；英文当前规范从 [docs/en/README.md](en/README.md) 进入；内网通兼容专项见 [nwt-compat-design.md](nwt-compat-design.md)（**决议 #199：暂缓实现，仅设计待办**）；
 4. `git log --oneline` —— 提交历史就是完整开发史，每条 commit message 都是一份增量说明。
 
 ## 1. 项目状态一览
 
 纯内网、无服务器、基于 IP 的局域网 IM + 文件传输（Electron 22 / Vue 3 / better-sqlite3）。
-**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.52.0**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
+**v0.1–v0.4/P1 主链路已完成，当前代码版本 v0.53.1**。**内网通兼容：仅设计落档，代码未写，决议 #199 暂缓、不排近期**（对照 tech-design §12）。Windows / Debian / UOS 真实打包运行测试留给目标平台执行：
 
 | 已交付 | 说明 |
 |---|---|
