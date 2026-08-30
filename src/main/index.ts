@@ -1459,6 +1459,11 @@ if (!gotLock) {
     const hide = appState?.config.hideOnCapture !== false
     const captureMainWindow = mainWindow
     const wasVisible = captureMainWindow?.isVisible() ?? false
+    // Electron 22 在 ARM64 Wayland 枚举屏幕时可能触发原生 SIGSEGV，JS 无法捕获；保留系统截图粘贴退路。
+    if (WAYLAND_SESSION && process.arch === 'arm64') {
+      reportCaptureFailure('screen-unavailable', wasVisible)
+      return
+    }
     try {
       if (hide && wasVisible && captureMainWindow) {
         const hidden = await hideWindowForCapture(captureMainWindow)

@@ -4,7 +4,7 @@
 
 This is the English current-state handoff for developers and coding agents. Read it together with the [Contributing guide](../../CONTRIBUTING.en.md) and any local automation policy included in your development checkout. The Chinese handoff keeps the complete chronological release notes; `git log` remains authoritative for current implementation history.
 
-Last updated: 2026-08-29 for **v0.53.0** (decision #288, group-text reply-to). The application remains pinned to Electron 22.3.27, Node 16.17 main/preload, Chrome 108 renderer, and LAN-only runtime behavior.
+Last updated: 2026-08-29 for **v0.53.1** (decision #289, ARM64 Wayland capture crash prevention). The application remains pinned to Electron 22.3.27, Node 16.17 main/preload, Chrome 108 renderer, and LAN-only runtime behavior.
 
 ## 0. Reading order
 
@@ -20,8 +20,8 @@ Last updated: 2026-08-29 for **v0.53.0** (decision #288, group-text reply-to). T
 
 | Area | State |
 |---|---|
-| Version | 0.52.0 sticker import, grid, and group-send improvements |
-| Branch/release base | `main`, previous release tag `v0.51.2` |
+| Version | 0.53.1 ARM64 Wayland capture crash prevention |
+| Branch/release base | `main`, previous release tag `v0.53.0` |
 | Core messaging | Private/group text, images, files, stickers, recall, forwarding, mentions, nudge, PK, offline retry |
 | Discovery | Same-subnet broadcast, manual IP/CIDR, gossip, scan-range sharing, confirmed global refresh |
 | Storage | SQLite WAL, append-only migrations, local history/search/transfers/settings |
@@ -34,7 +34,9 @@ Last updated: 2026-08-29 for **v0.53.0** (decision #288, group-text reply-to). T
 
 Decision #287 resolves Issue #30: the sticker panel imports multiple local images through a dedicated one-time path grant, reuses the existing WebP/GIF collection pipeline, keeps square grid rows non-overlapping with vertical overflow, and enables saved stickers in groups through the existing online-member media path. Protocol v0.50 and SQLite v14 remain unchanged.
 
-Decision #288 implements group-text quoted replies. The `group-text` payload gains an optional `replyTo` source-message-ID string. The codec accepts only bounded non-empty strings and rejects empty strings or objects with `senderName`/`text`. Senders carry only the ID; receivers look up the source in the local group conversation, populate `ReplyMeta` with sender name and first-line text summary, and render a quoted-context bar above the bubble. If the target is absent locally, receipt succeeds and the renderer shows an unavailable-target hint. Protocol advances to v0.51; SQLite remains v14. Repository version 0.52.0 → **0.53.0**.
+Decision #288 implements group-text quoted replies. The `group-text` payload gains an optional `replyTo` source-message-ID string. The codec accepts only bounded non-empty strings and rejects empty strings or objects with `senderName`/`text`. Senders carry only the ID; receivers look up the source in the local group conversation, populate `ReplyMeta` with sender name and first-line text summary, and render a quoted-context bar above the bubble. If the target is absent locally, receipt succeeds and the renderer shows an unavailable-target hint. Protocol advances to v0.51; SQLite advances to v15. Repository version 0.52.0 → **0.53.0**.
+
+Decision #289 prevents Issue #34's Kylin ARM64 Wayland capture crash. Electron 22 may terminate natively while enumerating screen sources, before JavaScript error handling can recover. The shared capture entry now skips `desktopCapturer` only for ARM64 Wayland and reuses the visible system-capture + `Ctrl+V` fallback; x64 Wayland, ARM64 X11, and other platforms keep the existing capture path. Protocol v0.51, SQLite v15, dependencies, and network behavior are unchanged. Repository version 0.53.0 → **0.53.1**; the reporter's target machine still requires hands-on validation.
 
 Decision #286 fixes Linux capture startup: Wayland merge-enables Electron 22's PipeWire capturer but still probes actual sources, Linux waits for the main-window hide signal and compositor settling, and all empty-source/image/error paths provide visible in-app or system-notification fallback guidance. The protocol remains v0.50 and SQLite remains v14; reported Kylin/UOS target machines still require final hands-on validation.
 

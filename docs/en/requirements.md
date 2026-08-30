@@ -4,8 +4,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Current for v0.53.0 group-text reply-to; sticker import completed in v0.52.0; Neiwangtong compatibility remains paused by decision #199 |
-| Updated | 2026-08-27 |
+| Status | Current for v0.53.1 ARM64 Wayland capture crash prevention; Neiwangtong compatibility remains paused by decision #199 |
+| Updated | 2026-08-29 |
 | Authority | The [Chinese requirements document](../requirements.md) is the canonical feature and decision record. This document translates the current effective requirements. |
 
 ## 1. Product goals
@@ -156,6 +156,7 @@ The complete append-only ledger is maintained in [requirements.md §9](../requir
 | #286 | Kylin and UOS/Huawei systems can ignore capture clicks or retain the main window in screenshots (#29 / #31) | Enable Electron 22's PipeWire capturer on Wayland but still probe `desktopCapturer`; wait for the hide signal and compositor settling, verify invisibility, and surface every empty-source/image/error outcome in-app or through a system notification with a system-capture + `Ctrl+V` fallback. Ship as v0.51.2 without protocol, database, dependency, or network changes.                                                                                                            |
 | #287 | Issue #30: stickers require a chat-image workaround, multi-row grids overlap, and saved stickers cannot be sent to groups | Add native multi-image import with a separate window-scoped one-time path grant, reuse the existing WebP/GIF collection pipeline, size implicit grid rows to their square items with vertical overflow, and route group stickers through the existing online-member `purpose:"sticker"` media path. Ship as v0.52.0 without protocol, database, dependency, or port changes.                                                                                                             |
 | #288 | Implement group-text quoted replies | Add optional `replyTo` source-message-ID to the `group-text` payload. The codec accepts only bounded non-empty strings and rejects empty strings and objects with `senderName`/`text`. Senders carry only the ID; receivers look up the source in the local group conversation, populate `ReplyMeta`, and store the raw ID in `messages.reply_to`. Missing targets are handled gracefully by the renderer. Advance protocol to v0.51, SQLite advances to v15. Ship as v0.53.0. |
+| #289 | Issue #34: Kylin ARM64 Wayland exits when capture enumerates screens | Electron 22 can crash natively before JavaScript can recover. At the shared capture entry, skip `desktopCapturer` only on ARM64 Wayland and reuse the visible system-capture + `Ctrl+V` fallback. Keep x64 Wayland, ARM64 X11, other platforms, protocol v0.51, SQLite v15, dependencies, and network behavior unchanged. Ship as v0.53.1. |
 
 ## 9. Open items
 
