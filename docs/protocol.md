@@ -207,7 +207,7 @@ UI 概念，协议上不存在：对每个收件人各发一条独立 `msg`，�
 
 ### 7.4 讨论组（群聊）
 
-- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, ownerId?, adminIds?, avatarHash?, adminSecretHash, adminHint}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 保留建群者身份；`ownerId` 表示当前群主，`adminIds` 表示管理员 nodeId 列表，三者为可兼容缺省字段。`avatarHash` 为 64 位小写 SHA-256，空串表示恢复默认群头像；旧报文缺该字段时新端保留本地已知头像。旧报文缺角色字段时，新端优先保留本地已知角色；首次接收旧群时按仍在群内的 `creatorId`、`updatedBy`、首位成员依次推导群主，管理员为空。
+- 群元数据：`{groupId, name, members[nodeId…], rev, updatedBy, updatedTs, creatorIp, creatorId, ownerId?, adminIds?, avatarHash?, adminSecretHash, adminHint, description, announce}`，**rev 单调递增，冲突按 (rev, updatedTs) 取大者**（LWW，尽力而为一致性，需求 F-MSG-4）。`creatorId` 保留建群者身份；`ownerId` 表示当前群主，`adminIds` 表示管理员 nodeId 列表，三者为可兼容缺省字段。`avatarHash` 为 64 位小写 SHA-256，空串表示恢复默认群头像；旧报文缺该字段时新端保留本地已知头像。旧报文缺角色字段时，新端优先保留本地已知角色；首次接收旧群时按仍在群内的 `creatorId`、`updatedBy`、首位成员依次推导群主，管理员为空。`description` 为群简介（≤ 200 字符），`announce` 为群公告（≤ 1024 字符），仅群主或管理员可修改；空串表示未设置。
 - 群文本 = 向 members 逐个单播 `msg(kind:"group-text", groupId, groupRev)`，离线成员走 §7.2 补发。群 PK = 向当前在线 members 逐个单播 `msg(kind:"pk", groupId, groupRev)`，离线成员不入队、不补发。
 - 群图片/文件 = 向在线 members 逐个单播 `file-ctl{op:"offer", msgId, groupId, groupRev}`，每个收件人一条独立 transfer，但同一条群媒体消息复用同一 `msgId`；离线成员不入队（决议 #4/#32/#188）。发送端本地只插一条群消息，`fileRef.transferIds[]` 汇总各成员 transfer；收端按 `groupId` 插入群会话，若不认识该 groupId 或 rev 落后，复用 `group{op:"need"}` 向发送者索要元数据。群图片只有单图 ≤10MB 时允许携带 `purpose:"image"`，超限图片不带 purpose，按普通文件卡片展示与手动接收（决议 #33）。
 - 收端不认识该 groupId 或本地 rev 落后 → 向发送者发 `group{op:"need", groupId}`，对方回 `group{op:"info", …全量元数据}`。
@@ -371,6 +371,8 @@ sequenceDiagram
 | GROUP_MAX_MEMBERS | 200 | 决议 #198，原 50 |
 | GROUP_ADMIN_PASSWORD | ≤ 64 字符 | 可空；只生成摘要，不传明文 |
 | GROUP_ADMIN_HINT | ≤ 40 字符 | 可空；仅在有管理密码时展示，不作为鉴权依据 |
+| GROUP_DESCRIPTION | ≤ 200 字符 | 可空；仅群主/管理员可修改，通过 group.info 全网同步 |
+| GROUP_ANNOUNCE | ≤ 1024 字符 | 可空；仅群主/管理员可修改，通过 group.info 全网同步 |
 | AVATAR_SOURCE_MAX | 20971520 B（20 MiB） | 本地头像源文件读取上限 |
 | AVATAR_MAX_DIMENSION | 8192 px | 本地头像源图单边上限 |
 | AVATAR_ENCODED_MAX | 32768 B（32 KiB） | 192×192 静态 WebP 与局域网响应上限 |

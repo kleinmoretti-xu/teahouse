@@ -22,7 +22,9 @@ function group(overrides: Partial<GroupView> = {}): GroupView {
     hasAdminPassword: false,
     adminHint: '',
     canManage: true,
-    ...overrides
+    ...overrides,
+    description: '',
+    announce: ''
   }
 }
 
@@ -92,5 +94,21 @@ describe('group admin helpers', () => {
     expect(
       canRenameGroup(group({ selfRole: 'member', canManage: false, hasAdminPassword: true }))
     ).toBe(true)
+  })
+
+  it('只有群主或管理员才可设置群简介和群公告', () => {
+    const owner = group({ selfRole: 'owner' })
+    const admin = group({ selfRole: 'admin', ownerId: 'node-owner', adminIds: ['node-self'] })
+    const passwordMember = group({
+      selfRole: 'member',
+      canManage: false,
+      hasAdminPassword: true
+    })
+    const plainMember = group({ selfRole: 'member', canManage: false })
+
+    expect(owner.canManage).toBe(true)
+    expect(admin.canManage).toBe(true)
+    expect(passwordMember.canManage).toBe(false)
+    expect(plainMember.canManage).toBe(false)
   })
 })

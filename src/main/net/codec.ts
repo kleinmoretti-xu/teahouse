@@ -230,6 +230,9 @@ function validatePayload(type: string, payload: unknown, textLimit = TEXT_UDP_LI
       ) {
         return false
       }
+      if (typeof meta.description !== 'string' || typeof meta.announce !== 'string') return false
+      if (meta.description.length > LIMITS.groupDescription) return false
+      if (meta.announce.length > LIMITS.groupAnnounce) return false
       return true
     }
     case MSG_TYPES.avatar: {

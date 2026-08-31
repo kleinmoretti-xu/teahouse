@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
-import { MSG_TYPES, type Envelope, type GroupMeta, type GroupPayload, type MsgPayload } from '../../shared/protocol'
+import { MSG_TYPES, LIMITS, type Envelope, type GroupMeta, type GroupPayload, type MsgPayload } from '../../shared/protocol'
 import type { ConversationView, GroupPatch } from '../../shared/ipc'
 import { decode, encode, makeEnvelope } from '../net/codec'
 import type { Messenger, SendOutcome } from '../net/messenger'
@@ -317,7 +317,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-owner',
       adminIds: [],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     })
     const mixed = {
       kind: 'invite',
@@ -389,7 +391,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-self',
       adminIds: [],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -430,7 +434,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-a',
       adminIds: [],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -458,7 +464,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-owner',
       adminIds: ['node-admin'],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -501,7 +509,9 @@ describe('GroupsService 群管理权限', () => {
       adminIds: ['node-admin'],
       avatarHash: '',
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -572,7 +582,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-owner',
       adminIds: ['node-admin'],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -628,7 +640,9 @@ describe('GroupsService 群管理权限', () => {
       ownerId: 'node-owner',
       adminIds: [],
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     repo.save(local)
 
@@ -1022,5 +1036,193 @@ describe('GroupsService 群变更系统提示（决议 #87/#241/#242/#243）', (
     // 目标 ID 不在 B 的仓库中，但本条消息本身仍入库
     expect(b.msgRepo.get(received.id)).toBeDefined()
     expect(b.msgRepo.get('nonexistent-msg-id')).toBeUndefined()
+  })
+})
+
+describe('GroupsService 群简介与群公告', () => {
+  it('群主可直接设置群简介和群公告', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('项目组', ['node-bob'])!
+    const updated = owner.updateGroup(group.groupId, {
+      kind: 'set-description',
+      description: '我们是一个前端团队'
+    })
+    expect(updated?.description).toBe('我们是一个前端团队')
+    expect(updated?.rev).toBe(2)
+    const updated2 = owner.updateGroup(group.groupId, {
+      kind: 'set-announce',
+      announce: '欢迎大家加入'
+    })
+    expect(updated2?.announce).toBe('欢迎大家加入')
+    expect(updated2?.rev).toBe(3)
+  })
+
+  it('管理员可设置群简介和群公告', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('项目组', ['node-admin', 'node-member'])!
+    owner.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-admin', enabled: true })
+
+    const admin = service({ selfId: 'node-admin', selfIp: '10.0.0.2', groupRepo: repo })
+    const desc = admin.updateGroup(group.groupId, {
+      kind: 'set-description',
+      description: '管理员设置的简介'
+    })
+    expect(desc?.description).toBe('管理员设置的简介')
+
+    const announce = admin.updateGroup(group.groupId, {
+      kind: 'set-announce',
+      announce: '管理员公告'
+    })
+    expect(announce?.announce).toBe('管理员公告')
+  })
+
+  it('普通成员（无密码）不能设置群简介和群公告', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('项目组', ['node-member'])!
+
+    const member = service({ selfId: 'node-member', selfIp: '10.0.0.2', groupRepo: repo })
+    expect(
+      member.updateGroup(group.groupId, { kind: 'set-description', description: '不应生效' })
+    ).toBeNull()
+    expect(
+      member.updateGroup(group.groupId, { kind: 'set-announce', announce: '不应生效' })
+    ).toBeNull()
+  })
+
+  it('有管理密码的普通成员输入正确密码可设置简介和公告', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('加密组', ['node-member'], 's3cret')!
+
+    const member = service({ selfId: 'node-member', selfIp: '10.0.0.2', groupRepo: repo })
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'set-description',
+        description: '密码成员简介',
+        adminPassword: 's3cret'
+      })?.description
+    ).toBe('密码成员简介')
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'set-announce',
+        announce: '密码成员公告',
+        adminPassword: 's3cret'
+      })?.announce
+    ).toBe('密码成员公告')
+
+    expect(
+      member.updateGroup(group.groupId, {
+        kind: 'set-description',
+        description: '错误密码',
+        adminPassword: 'wrong'
+      })
+    ).toBeNull()
+  })
+
+  it('群简介截断到 200 字符，群公告截断到 1024 字符', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('长度组', ['node-bob'])!
+
+    // 服务层：patch 校验要求 description.length <= LIMITS.groupDescription（200）
+    // 发送合法长度值，验证往返正常
+    const withinLimit = '界'.repeat(LIMITS.groupDescription)
+    const updated = owner.updateGroup(group.groupId, { kind: 'set-description', description: withinLimit })
+    expect(updated?.description).toBe(withinLimit)
+
+    const withinAnnounce = '告'.repeat(LIMITS.groupAnnounce)
+    const updated2 = owner.updateGroup(group.groupId, { kind: 'set-announce', announce: withinAnnounce })
+    expect(updated2?.announce).toBe(withinAnnounce)
+
+    // 超长 patch 被 isSingleOperationPatch 拒绝
+    const tooLongDesc = '界'.repeat(LIMITS.groupDescription + 1)
+    expect(
+      owner.updateGroup(group.groupId, { kind: 'set-description', description: tooLongDesc })
+    ).toBeNull()
+    const tooLongAnnounce = '告'.repeat(LIMITS.groupAnnounce + 1)
+    expect(
+      owner.updateGroup(group.groupId, { kind: 'set-announce', announce: tooLongAnnounce })
+    ).toBeNull()
+  })
+
+  it('混合 patch（夹带 description/announce 到其他操作）被拒绝', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfIp: '10.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('混合组', ['node-bob'])!
+
+    const mixed = {
+      kind: 'rename',
+      name: '夹带改名',
+      description: '同时设置简介'
+    } as unknown as GroupPatch
+    expect(owner.updateGroup(group.groupId, mixed)).toBeNull()
+  })
+
+  it('更新群简介/公告生成系统提示并幂等', () => {
+    const messenger = new FakeMessenger()
+    const msgRepo = new FakeMsgRepo()
+    const groupRepo = new FakeGroupRepo()
+    const owner = new GroupsService({
+      selfId: 'node-a',
+      messenger: messenger as unknown as Messenger,
+      convRepo: new FakeConvRepo() as unknown as ConvRepo,
+      msgRepo: msgRepo as unknown as MsgRepo,
+      groupRepo: groupRepo as unknown as GroupRepo,
+      getSelfIp: () => '10.0.0.1'
+    })
+    const g = owner.createGroup('提示组', ['node-b'])!
+
+    owner.updateGroup(g.groupId, { kind: 'set-description', description: '新简介' })
+    owner.updateGroup(g.groupId, { kind: 'set-description', description: '新简介' })
+    owner.updateGroup(g.groupId, { kind: 'set-announce', announce: '新公告' })
+
+    const systemMsgs = msgRepo.inserted.filter((m) => m.kind === 'system')
+    expect(systemMsgs.map((m) => m.content)).toEqual([
+      '你修改了群简介',
+      '你修改了群公告'
+    ])
+  })
+
+  it('远端 group.info 携带 description/announce 被正确同步', () => {
+    const repo = new FakeGroupRepo()
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-b', selfIp: '10.0.0.2', groupRepo: repo, messenger })
+    const local: GroupMeta = {
+      groupId: 'g-sync',
+      name: '同步组',
+      members: ['node-a', 'node-b'],
+      rev: 1,
+      updatedBy: 'node-a',
+      updatedTs: 1000,
+      creatorIp: '10.0.0.1',
+      creatorId: 'node-a',
+      ownerId: 'node-a',
+      adminIds: [],
+      adminSecretHash: '',
+      adminHint: '',
+      description: '',
+      announce: ''
+    }
+    repo.save(local)
+
+    messenger.emit(
+      'incoming',
+      makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-a', {
+        op: 'info',
+        group: {
+          ...local,
+          description: '远端简介',
+          announce: '远端公告',
+          rev: 2,
+          updatedTs: 2000
+        }
+      }),
+      { address: '10.0.0.1' }
+    )
+    expect(repo.get('g-sync')?.description).toBe('远端简介')
+    expect(repo.get('g-sync')?.announce).toBe('远端公告')
   })
 })

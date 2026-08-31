@@ -4,6 +4,7 @@ import {
   AVATAR_MAX_BYTES,
   GROUP_IMG_AUTO_ACCEPT,
   GROUP_MAX_MEMBERS,
+  LIMITS,
   MSG_TYPES,
   TABLE_TEXT_LIMIT_BYTES,
   UDP_MAX_INBOUND,
@@ -340,7 +341,9 @@ describe('codec', () => {
       adminIds: ['node-bbbb'],
       avatarHash: 'c'.repeat(64),
       adminSecretHash: '',
-      adminHint: ''
+      adminHint: '',
+      description: '',
+      announce: ''
     }
     const ok = makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-aaaa', {
       op: 'info',
@@ -386,6 +389,32 @@ describe('codec', () => {
         reason: 'bad-payload:group'
       })
     }
+
+    // 群简介/群公告字段长度校验
+    const tooLongDesc = makeEnvelope(MSG_TYPES.group, 'node-0', {
+      op: 'info',
+      group: { ...group, description: '界'.repeat(LIMITS.groupDescription + 1) }
+    })
+    expect(decodeTcpEnvelopeObject(tooLongDesc)).toEqual({
+      ok: false,
+      reason: 'bad-payload:group'
+    })
+
+    const tooLongAnnounce = makeEnvelope(MSG_TYPES.group, 'node-0', {
+      op: 'info',
+      group: { ...group, announce: '告'.repeat(LIMITS.groupAnnounce + 1) }
+    })
+    expect(decodeTcpEnvelopeObject(tooLongAnnounce)).toEqual({
+      ok: false,
+      reason: 'bad-payload:group'
+    })
+
+    // description / announce 为空字符串仍合法（旧端兼容）
+    const emptyStrings = makeEnvelope(MSG_TYPES.group, 'node-0', {
+      op: 'info',
+      group: { ...group, description: '', announce: '' }
+    })
+    expect(decodeTcpEnvelopeObject(emptyStrings)).toMatchObject({ ok: true, known: true })
 
     const members = Array.from({ length: GROUP_MAX_MEMBERS }, (_item, i) => `node-${i}`)
     const maxGroup = makeEnvelope(MSG_TYPES.group, 'node-0', {

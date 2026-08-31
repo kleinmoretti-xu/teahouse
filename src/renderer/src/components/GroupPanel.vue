@@ -17,6 +17,8 @@ import AvatarMark from './AvatarMark.vue'
 import AvatarCropDialog from './AvatarCropDialog.vue'
 import GroupAvatar from './GroupAvatar.vue'
 import GroupInviteDialog from './GroupInviteDialog.vue'
+import GroupDescDialog from './GroupDescDialog.vue'
+import GroupAnnounceDialog from './GroupAnnounceDialog.vue'
 
 // 群成员面板（ui-design §5）：角色徽标 / 任免管理员 / 移除 / 开放邀请 / 改名 / 退出。
 // 角色权限与管理密码兼容规则统一遵循决议 #241。
@@ -30,6 +32,8 @@ const groupsStore = useGroupsStore()
 const renaming = ref(false)
 const newName = ref('')
 const showInviteDialog = ref(false)
+const showDescDialog = ref(false)
+const showAnnounceDialog = ref(false)
 const adminPassword = ref('')
 const adminFeedback = ref('')
 const adminBusy = ref(false)
@@ -250,7 +254,16 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       </button>
     </div>
     <div v-if="avatarFeedback" class="admin-feedback">{{ avatarFeedback }}</div>
-
+    <div v-if="group.description || group.announce" class="group-meta-list">
+      <div v-if="group.description" class="meta-item">
+        <span class="meta-label">群简介</span>
+        <span class="meta-value description-text">{{ group.description }}</span>
+      </div>
+      <div v-if="group.announce" class="meta-item">
+        <span class="meta-label">群公告</span>
+        <span class="meta-value announce-text">{{ group.announce }}</span>
+      </div>
+    </div>
     <div class="count">成员 {{ group.members.length }} / {{ GROUP_MAX_MEMBERS }}</div>
     <div v-if="adminTip" class="admin-tip">{{ adminTip }}</div>
     <div v-if="hasLegacyMembers" class="compat-tip">群内有旧版本成员，角色或邀请可能无法完整同步，请提醒升级</div>
@@ -308,6 +321,22 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       >
         <PantryIcon name="plus" :size="14" />{{ atMemberCap ? '已满员' : '添加成员' }}
       </button>
+      <button
+        v-if="canShowAdmin"
+        class="add"
+        title="设置群简介"
+        @click="showDescDialog = true"
+      >
+        <PantryIcon name="edit" :size="14" />群简介
+      </button>
+      <button
+        v-if="canShowAdmin"
+        class="add"
+        title="设置群公告"
+        @click="showAnnounceDialog = true"
+      >
+        <PantryIcon name="bullhorn" :size="14" />群公告
+      </button>
       <button class="leave" @click="leave">退出讨论组</button>
     </template>
     <p v-else class="left-tip">你已不在该讨论组（历史保留，无法发言）</p>
@@ -316,6 +345,16 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       v-if="showInviteDialog && group.amMember"
       :group="group"
       @close="showInviteDialog = false"
+    />
+    <GroupDescDialog
+      v-if="showDescDialog"
+      :group="group"
+      @close="showDescDialog = false"
+    />
+    <GroupAnnounceDialog
+      v-if="showAnnounceDialog"
+      :group="group"
+      @close="showAnnounceDialog = false"
     />
     <AvatarCropDialog
       v-if="avatarSource"
@@ -564,5 +603,62 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
   font-size: 12px;
   color: var(--text-3);
   margin-top: auto;
+}
+.group-meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-list);
+  border: 1px solid var(--line);
+}
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.meta-label {
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.meta-value {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  overflow-y: auto; /* 垂直滚动 */
+}
+/* 群简介：最大 3 行 */
+.description-text {
+  max-height: calc(1.5em * 3); /* 假设行高 1.5em，3行 */
+  line-height: 1.5;
+  user-select: text;
+}
+
+/* 群公告：最大 8 行 */
+.announce-text {
+  max-height: calc(1.5em * 6); /* 假设行高 1.5em，8行 */
+  line-height: 1.5;
+  user-select: text;
+}
+/* 滚动条美化 */
+.meta-value::-webkit-scrollbar {
+  width: 4px;
+}
+
+.meta-value::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
+}
+
+.meta-value::-webkit-scrollbar-track {
+  background: transparent;
 }
 </style>

@@ -70,7 +70,9 @@ export class GroupsService extends EventEmitter {
       selfRole,
       hasAdminPassword: meta.adminSecretHash.length > 0,
       adminHint: meta.adminHint,
-      canManage: selfRole === 'owner' || selfRole === 'admin'
+      canManage: selfRole === 'owner' || selfRole === 'admin',
+      description: meta.description ?? '',
+      announce: meta.announce ?? ''
     }
   }
 
@@ -96,6 +98,8 @@ export class GroupsService extends EventEmitter {
     const groupId = randomUUID()
     const secret = normalizeAdminPassword(adminPassword)
     const meta: GroupMeta = {
+      announce: "",
+      description: "",
       groupId,
       name: name.trim().slice(0, 32) || '讨论组',
       members,
@@ -128,6 +132,8 @@ export class GroupsService extends EventEmitter {
     let members = [...meta.members]
     let adminIds = [...meta.adminIds]
     let avatarHash = meta.avatarHash ?? ''
+    let description = meta.description ?? ''
+    let announce = meta.announce ?? ''
 
     if (patch.kind === 'invite') {
       for (const id of patch.memberIds) {
@@ -152,14 +158,26 @@ export class GroupsService extends EventEmitter {
     } else if (patch.kind === 'set-avatar') {
       if (!this.canManage(meta, patch.adminPassword)) return null
       avatarHash = patch.avatarHash
+    } else if (patch.kind === 'set-description') {
+      if (!this.canManage(meta, patch.adminPassword)) return null
+      description = patch.description.trim().slice(0, 200)
+    } else if (patch.kind === 'set-announce') {
+      if (!this.canManage(meta, patch.adminPassword)) return null
+      announce = patch.announce.trim().slice(0, 1024)
     }
 
     if (members.length === 0) return null
+    const rawDesc = patch.kind === 'set-description' ? patch.description : undefined
+    const rawAnnounce = patch.kind === 'set-announce' ? patch.announce : undefined
+    const descChanged = rawDesc !== undefined && (rawDesc.trim() !== (meta.description ?? ''))
+    const announceChanged = rawAnnounce !== undefined && (rawAnnounce.trim() !== (meta.announce ?? ''))
     const changed =
       name !== meta.name ||
       !sameStringArray(members, meta.members) ||
       !sameStringArray(adminIds, meta.adminIds) ||
-      avatarHash !== (meta.avatarHash ?? '')
+      avatarHash !== (meta.avatarHash ?? '') ||
+      descChanged ||
+      announceChanged
     if (!changed) return this.toView(meta)
 
     const next: GroupMeta = {
@@ -168,6 +186,8 @@ export class GroupsService extends EventEmitter {
       members,
       adminIds,
       avatarHash,
+      description,
+      announce,
       rev: meta.rev + 1,
       updatedBy: this.deps.selfId,
       updatedTs: Date.now()
@@ -464,6 +484,12 @@ export class GroupsService extends EventEmitter {
     if ((previous.avatarHash ?? '') !== (next.avatarHash ?? '')) {
       return next.avatarHash ? `${actor}修改了群头像` : `${actor}恢复了默认群头像`
     }
+    if ((previous.description ?? '') !== (next.description ?? '')) {
+      return `${actor}修改了群简介`
+    }
+    if ((previous.announce ?? '') !== (next.announce ?? '')) {
+      return `${actor}修改了群公告`
+    }
     const promoted = next.adminIds.filter((id) => !previous.adminIds.includes(id))
     if (promoted.length > 0) return `${actor}将${this.memberListLabel(promoted)}设为管理员`
     const demoted = previous.adminIds.filter((id) => !next.adminIds.includes(id))
@@ -745,6 +771,22 @@ function isSingleOperationPatch(patch: GroupPatch): boolean {
     return (
       hasOnly(['kind', 'avatarHash', 'adminPassword']) &&
       (value.avatarHash === '' || isAvatarHash(value.avatarHash)) &&
+      validPassword
+    )
+  }
+  if (value.kind === 'set-description') {
+    return (
+      hasOnly(['kind', 'description', 'adminPassword']) &&
+      typeof value.description === 'string' &&
+      value.description.length <= LIMITS.groupDescription &&
+      validPassword
+    )
+  }
+  if (value.kind === 'set-announce') {
+    return (
+      hasOnly(['kind', 'announce', 'adminPassword']) &&
+      typeof value.announce === 'string' &&
+      value.announce.length <= LIMITS.groupAnnounce &&
       validPassword
     )
   }

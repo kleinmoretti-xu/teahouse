@@ -195,7 +195,7 @@ Received envelope IDs remain in a persistent 24-hour deduplication set. Duplicat
 
 ### 7.3 Discussion groups
 
-Group metadata includes group ID, name, member IDs, monotonic revision, update timestamp/author, creator, owner, administrator IDs, optional avatar hash, and optional management-password hash/hint. Conflicts use last-writer-wins ordering by `(rev, updatedTs)` as a best-effort peer-to-peer rule.
+Group metadata includes group ID, name, member IDs, monotonic revision, update timestamp/author, creator, owner, administrator IDs, optional avatar hash, optional management-password hash/hint, optional description (≤ 200 characters), and optional announce (≤ 1024 characters). Conflicts use last-writer-wins ordering by `(rev, updatedTs)` as a best-effort peer-to-peer rule. Only the owner, admin, or a member who knows the management password may modify `description` and `announce`; empty string means not set.
 
 `group{op:"info"}` distributes complete metadata. `group{op:"need"}` requests it when a message references an unknown or newer revision. Group text and media are sent separately to each member with one logical message ID. Membership is capped at 200.
 
@@ -285,6 +285,8 @@ Per-peer list rate is five requests per ten seconds. Requests time out after eig
 | Recall window | 5 minutes |
 | Private/group inline image | 20 MiB / 10 MiB |
 | Group members | 200 |
+| Group description | ≤ 200 characters |
+| Group announce | ≤ 1,024 characters |
 | Avatar source/output | 20 MiB, 8,192px / 32 KiB WebP |
 | Active transfer streams | 3 |
 | Pull wait/idle | 20s / 60s |
@@ -312,3 +314,4 @@ Per-peer list rate is five requests per ten seconds. Requests time out after eig
 - **2026-08-27, decision #287:** local sticker import and grid sizing do not affect the wire. Group stickers reuse the existing `file-ctl offer` fields `purpose:"sticker"`, `groupId/groupRev`, and per-online-member transfer behavior; no field, capability, or port was added. Wire protocol remains v0.50. Repository version 0.51.2 → 0.52.0.
 - **2026-08-29, decision #288:** group-text reply-to. The `group-text` payload gains an optional `replyTo` source-message-ID string. The codec accepts only bounded non-empty strings and rejects empty strings or objects with `senderName`/`text`. Receivers look up the source ID in the local group conversation, populate `ReplyMeta` with sender name and first-line text summary, and store the raw ID in `messages.reply_to`. If the target is absent locally, receipt succeeds and the renderer handles the unavailable-target prompt. Protocol advances to v0.51; SQLite advances to v15. Repository version 0.52.0 → **0.53.0**.
 - **2026-08-29, decision #289:** the ARM64 Wayland capture crash prevention changes only local `desktopCapturer` gating and existing failure feedback. Wire protocol v0.51, capabilities, ports, and transfer behavior are unchanged. Repository version 0.53.0 → **0.53.1**.
+- **2026-08-29, decision #290:** group description and group announce. `GroupMeta` gains `description` (≤ 200 characters) and `announce` (≤ 1024 characters). `GroupPatch` gains `set-description` and `set-announce` operations, executable only by owner/admin or a password-holding member. The codec enforces length limits on inbound `group.info`. SQLite migration v16 adds both columns. `GroupsService` emits idempotent system hints and broadcasts info on change. Renderer shows edit buttons in `GroupPanel` with `GroupDescDialog` and `GroupAnnounceDialog` modal popups. Wire protocol remains v0.51; SQLite advances to v16. Repository version 0.53.0 → **0.53.1**.
