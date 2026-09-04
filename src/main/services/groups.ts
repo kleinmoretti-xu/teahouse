@@ -560,10 +560,12 @@ export class GroupsService extends EventEmitter {
       adminsChanged ||
       avatarChanged
     if (textChanged) {
-      // 每个 rev 只能变更一个文本字段，且文本更新不能夹带成员/角色/名称/头像变更。
-      if (descriptionChanged && announceChanged) return false
-      if (structuralChanged) return false
-      return actorRole === 'owner' || actorRole === 'admin' || passwordCompatible
+      if (actorRole !== 'owner' && actorRole !== 'admin' && !passwordCompatible) return false
+      // info 是全量快照：漏掉中间 rev 时可累积变化，但版本差须覆盖操作数。
+      const operations = Number(descriptionChanged) + Number(announceChanged) + Number(structuralChanged)
+      if (operations > 1 && incoming.rev - local.rev < operations) return false
+      if (!structuralChanged) return true
+      // 文本权限通过后，结构变化继续按原有权限矩阵逐项校验。
     }
 
     if (isSelfLeave(local, incoming)) return true

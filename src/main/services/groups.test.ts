@@ -1412,3 +1412,58 @@ describe('GroupsService 群简介与群公告', () => {
     expect(repo.get(local.groupId)).toEqual(local)
   })
 })
+
+
+describe('GroupsService 跨版本全量快照补齐', () => {
+  it('漏掉中间 rev 后通过 need/info 补齐文本与各类合法管理变化', () => {
+    const secondOperations: GroupPatch[] = [
+      { kind: 'set-announce', announce: '新的群公告' },
+      { kind: 'rename', name: '新的群名' },
+      { kind: 'set-avatar', avatarHash: 'a'.repeat(64) },
+      { kind: 'invite', memberIds: ['node-new'] },
+      { kind: 'remove', memberIds: ['node-target'] },
+      { kind: 'set-admin', memberId: 'node-target', enabled: true }
+    ]
+    for (const patch of secondOperations) {
+      const ownerRepo = new FakeGroupRepo()
+      const ownerMessenger = new FakeMessenger()
+      const owner = service({ selfId: 'node-owner', selfIp: '127.0.0.1', groupRepo: ownerRepo, messenger: ownerMessenger })
+      const memberRepo = new FakeGroupRepo()
+      const memberMessenger = new FakeMessenger()
+      service({ selfId: 'node-member', selfIp: '127.0.0.1', groupRepo: memberRepo, messenger: memberMessenger })
+      const group = owner.createGroup('补齐测试组', ['node-member', 'node-target'])!
+      memberMessenger.emit('incoming', ownerMessenger.sent[0].env)
+      owner.updateGroup(group.groupId, { kind: 'set-description', description: '新的群简介' })
+      owner.updateGroup(group.groupId, patch)
+      ownerMessenger.emit('incoming', makeEnvelope<GroupPayload>(MSG_TYPES.group, 'node-member', { op: 'need', groupId: group.groupId }))
+      const latest = ownerMessenger.sent[ownerMessenger.sent.length - 1].env
+      expect(decode(encode(latest))).toMatchObject({ ok: true, known: true })
+      memberMessenger.emit('incoming', latest)
+      expect(memberRepo.get(group.groupId), patch.kind).toEqual(ownerRepo.get(group.groupId))
+      expect(memberRepo.get(group.groupId)?.rev).toBe(3)
+    }
+  })
+
+  it('跨版本快照仍拒绝文本越权、结构越权与不足以覆盖操作数的版本差', () => {
+    const repo = new FakeGroupRepo()
+    const owner = service({ selfId: 'node-owner', selfIp: '127.0.0.1', groupRepo: repo })
+    const group = owner.createGroup('权限测试组', ['node-admin', 'node-member'])!
+    owner.updateGroup(group.groupId, { kind: 'set-admin', memberId: 'node-admin', enabled: true })
+    const local = repo.get(group.groupId)!
+    const messenger = new FakeMessenger()
+    service({ selfId: 'node-member', selfIp: '127.0.0.1', groupRepo: repo, messenger })
+    const invalidSnapshots: Array<Partial<GroupMeta>> = [
+      { updatedBy: 'node-member', description: '越权简介', announce: '越权公告' },
+      { updatedBy: 'node-member', description: '邀请夹带', members: [...local.members, 'node-new'] },
+      { updatedBy: 'node-admin', description: '角色夹带', adminIds: ['node-admin', 'node-member'] },
+      { updatedBy: 'node-admin', description: '移出群主', members: ['node-admin', 'node-member'], ownerId: 'node-admin', adminIds: [] },
+      { updatedBy: 'node-owner', description: '未知结构组合', name: '改名', avatarHash: 'a'.repeat(64) },
+      { updatedBy: 'node-owner', description: '简介', announce: '公告', name: '改名', rev: local.rev + 2 }
+    ]
+    for (const patch of invalidSnapshots) {
+      const incoming = { ...local, rev: local.rev + 10, updatedTs: local.updatedTs + 1000, ...patch }
+      messenger.emit('incoming', makeEnvelope<GroupPayload>(MSG_TYPES.group, incoming.updatedBy, { op: 'info', group: incoming }))
+      expect(repo.get(group.groupId)).toEqual(local)
+    }
+  })
+})

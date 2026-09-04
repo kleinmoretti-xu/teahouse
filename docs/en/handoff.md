@@ -4,7 +4,7 @@
 
 This is the English current-state handoff for developers and coding agents. Read it together with the [Contributing guide](../../CONTRIBUTING.en.md) and any local automation policy included in your development checkout. The Chinese handoff keeps the complete chronological release notes; `git log` remains authoritative for current implementation history.
 
-Last updated: 2026-09-05 for **v0.54.1** (decision #291, PR #39 group description and announcement review fixes). The application remains pinned to Electron 22.3.27, Node 16.17 main/preload, Chrome 108 renderer, and LAN-only runtime behavior.
+Last updated: 2026-09-05 for **v0.54.2** (decision #292, group snapshot catch-up with independent authorization). The application remains pinned to Electron 22.3.27, Node 16.17 main/preload, Chrome 108 renderer, and LAN-only runtime behavior.
 
 ## 0. Reading order
 
@@ -20,7 +20,7 @@ Last updated: 2026-09-05 for **v0.54.1** (decision #291, PR #39 group descriptio
 
 | Area | State |
 |---|---|
-| Version | 0.54.1 group description and announcement review fixes (decision #291) |
+| Version | 0.54.2 group snapshot catch-up repair (decision #292) |
 | Branch/release base | `main`, previous release tag `v0.53.1` |
 | Core messaging | Private/group text, images, files, stickers, recall, forwarding, mentions, nudge, PK, offline retry |
 | Discovery | Same-subnet broadcast, manual IP/CIDR, gossip, scan-range sharing, confirmed global refresh |
