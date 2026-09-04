@@ -327,7 +327,7 @@ describe('codec', () => {
     })
   })
 
-  it('group.info 校验群角色字段，旧包缺角色字段仍兼容', () => {
+  it('group.info 校验群角色字段，旧包缺角色/简介/公告字段仍兼容', () => {
     const group = {
       groupId: 'group-1',
       name: '项目组',
@@ -358,10 +358,26 @@ describe('codec', () => {
         creatorId: undefined,
         ownerId: undefined,
         adminIds: undefined,
-        avatarHash: undefined
+        avatarHash: undefined,
+        description: undefined,
+        announce: undefined
       }
     })
     expect(decode(encode(legacy))).toMatchObject({ ok: true, known: true })
+
+    for (const invalidTextGroup of [
+      { ...group, description: 1 },
+      { ...group, announce: null }
+    ]) {
+      const invalid = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
+        op: 'info',
+        group: invalidTextGroup
+      })
+      expect(decode(encode(invalid))).toEqual({
+        ok: false,
+        reason: 'bad-payload:group'
+      })
+    }
 
     const badCreator = makeEnvelope(MSG_TYPES.group, 'node-aaaa', {
       op: 'info',

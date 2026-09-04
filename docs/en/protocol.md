@@ -4,7 +4,7 @@
 
 | Field | Value                                                               |
 |---|---------------------------------------------------------------------|
-| Current protocol | v0.51 main protocol; group-text replyTo added by decision #288                   |
+| Current protocol | v0.51 main protocol; v0.54.1 review fixes preserve backward compatibility and isolate group-text permissions |
 | Transport | IPv4 UDP control/message plane and TCP data/control fallback        |
 | Authority | [protocol.md](../protocol.md) is the canonical wire-protocol record |
 
@@ -195,7 +195,7 @@ Received envelope IDs remain in a persistent 24-hour deduplication set. Duplicat
 
 ### 7.3 Discussion groups
 
-Group metadata includes group ID, name, member IDs, monotonic revision, update timestamp/author, creator, owner, administrator IDs, optional avatar hash, optional management-password hash/hint, optional description (≤ 200 characters), and optional announce (≤ 1024 characters). Conflicts use last-writer-wins ordering by `(rev, updatedTs)` as a best-effort peer-to-peer rule. Only the owner, admin, or a member who knows the management password may modify `description` and `announce`; empty string means not set.
+Group metadata includes group ID, name, member IDs, monotonic revision, update timestamp/author, creator, owner, administrator IDs, optional avatar hash, optional management-password hash/hint, optional description (≤ 200 characters), and optional announce (≤ 1024 characters). Conflicts use last-writer-wins ordering by `(rev, updatedTs)` as a best-effort peer-to-peer rule. The owner, an administrator, or a member who knows the management password may modify `description` and `announce`; an empty string clears the field. A legacy packet that omits either field preserves the local known value and defaults to empty on first receipt. Each inbound metadata revision may change only one of these fields and may not combine it with membership, name, role, or avatar changes.
 
 `group{op:"info"}` distributes complete metadata. `group{op:"need"}` requests it when a message references an unknown or newer revision. Group text and media are sent separately to each member with one logical message ID. Membership is capped at 200.
 
@@ -285,8 +285,8 @@ Per-peer list rate is five requests per ten seconds. Requests time out after eig
 | Recall window | 5 minutes |
 | Private/group inline image | 20 MiB / 10 MiB |
 | Group members | 200 |
-| Group description | ≤ 200 characters |
-| Group announce | ≤ 1,024 characters |
+| Group description | ≤ 200 characters; clearable and optional on legacy packets |
+| Group announce | ≤ 1,024 characters; clearable and optional on legacy packets |
 | Avatar source/output | 20 MiB, 8,192px / 32 KiB WebP |
 | Active transfer streams | 3 |
 | Pull wait/idle | 20s / 60s |
@@ -314,4 +314,5 @@ Per-peer list rate is five requests per ten seconds. Requests time out after eig
 - **2026-08-27, decision #287:** local sticker import and grid sizing do not affect the wire. Group stickers reuse the existing `file-ctl offer` fields `purpose:"sticker"`, `groupId/groupRev`, and per-online-member transfer behavior; no field, capability, or port was added. Wire protocol remains v0.50. Repository version 0.51.2 → 0.52.0.
 - **2026-08-29, decision #288:** group-text reply-to. The `group-text` payload gains an optional `replyTo` source-message-ID string. The codec accepts only bounded non-empty strings and rejects empty strings or objects with `senderName`/`text`. Receivers look up the source ID in the local group conversation, populate `ReplyMeta` with sender name and first-line text summary, and store the raw ID in `messages.reply_to`. If the target is absent locally, receipt succeeds and the renderer handles the unavailable-target prompt. Protocol advances to v0.51; SQLite advances to v15. Repository version 0.52.0 → **0.53.0**.
 - **2026-08-29, decision #289:** the ARM64 Wayland capture crash prevention changes only local `desktopCapturer` gating and existing failure feedback. Wire protocol v0.51, capabilities, ports, and transfer behavior are unchanged. Repository version 0.53.0 → **0.53.1**.
-- **2026-08-29, decision #290:** group description and group announce. `GroupMeta` gains `description` (≤ 200 characters) and `announce` (≤ 1024 characters). `GroupPatch` gains `set-description` and `set-announce` operations, executable only by owner/admin or a password-holding member. The codec enforces length limits on inbound `group.info`. SQLite migration v16 adds both columns. `GroupsService` emits idempotent system hints and broadcasts info on change. Renderer shows edit buttons in `GroupPanel` with `GroupDescDialog` and `GroupAnnounceDialog` modal popups. Wire protocol remains v0.51; SQLite advances to v16. Repository version 0.53.0 → **0.53.1**.
+- **2026-08-31, decision #290:** group description and group announcement. `GroupMeta` gains backward-compatible optional `description` (≤ 200 characters) and `announce` (≤ 1024 characters) fields. `GroupPatch` gains `set-description` and `set-announce` operations for owners, administrators, or password-holding members. The codec validates present fields while accepting legacy omission; normalization preserves local known values. Inbound metadata rejects unauthorized or mixed changes. SQLite migration v16 adds both columns, and migration backups preserve them. The renderer uses one shared modal from `GroupPanel`, supports clearing, and routes updates through the existing password-aware admin path. Wire protocol remains v0.51; SQLite advances to v16. Repository version 0.53.1 → **0.54.0**.
+- **2026-09-05, decision #291:** PR #39 review fixes add no wire field. The codec continues accepting omitted description and announcement fields; the service accepts only one text change authorized by an owner, administrator, or correct management password and rejects text bundled with an invite, rename, or second text change. Wire protocol remains v0.51; SQLite remains v16. Repository version 0.54.0 → **0.54.1**.

@@ -52,6 +52,23 @@ describe('group admin helpers', () => {
     })
   })
 
+  it('密码组设置或清空群简介与群公告时复用密码字段', () => {
+    const passwordGroup = group({ hasAdminPassword: true, canManage: false, selfRole: 'member' })
+
+    expect(
+      prepareGroupAdminPatch(passwordGroup, { kind: 'set-description', description: '' }, '  s3cret  ')
+    ).toEqual({
+      ok: true,
+      patch: { kind: 'set-description', description: '', adminPassword: 's3cret' }
+    })
+    expect(
+      prepareGroupAdminPatch(passwordGroup, { kind: 'set-announce', announce: '新公告' }, '  s3cret  ')
+    ).toEqual({
+      ok: true,
+      patch: { kind: 'set-announce', announce: '新公告', adminPassword: 's3cret' }
+    })
+  })
+
   it('群主或管理员在密码组内管理时不附带密码', () => {
     const result = prepareGroupAdminPatch(
       group({ hasAdminPassword: true }),

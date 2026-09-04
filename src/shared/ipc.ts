@@ -424,7 +424,7 @@ export interface GroupView {
   selfRole: GroupRole
   hasAdminPassword: boolean
   adminHint: string
-  /** 当前本机是否可不输入密码直接执行改名/踢人（群主或管理员） */
+  /** 当前本机是否可不输入密码直接执行群管理动作（群主或管理员） */
   canManage: boolean
   /** 群简介；空串表示未设置 */
   description: string

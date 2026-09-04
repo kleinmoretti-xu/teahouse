@@ -71,8 +71,8 @@ export class GroupsService extends EventEmitter {
       hasAdminPassword: meta.adminSecretHash.length > 0,
       adminHint: meta.adminHint,
       canManage: selfRole === 'owner' || selfRole === 'admin',
-      description: meta.description ?? '',
-      announce: meta.announce ?? ''
+      description: normalizeGroupText(meta.description ?? '', LIMITS.groupDescription),
+      announce: normalizeGroupText(meta.announce ?? '', LIMITS.groupAnnounce)
     }
   }
 
@@ -160,10 +160,10 @@ export class GroupsService extends EventEmitter {
       avatarHash = patch.avatarHash
     } else if (patch.kind === 'set-description') {
       if (!this.canManage(meta, patch.adminPassword)) return null
-      description = patch.description.trim().slice(0, 200)
+      description = normalizeGroupText(patch.description, LIMITS.groupDescription)
     } else if (patch.kind === 'set-announce') {
       if (!this.canManage(meta, patch.adminPassword)) return null
-      announce = patch.announce.trim().slice(0, 1024)
+      announce = normalizeGroupText(patch.announce, LIMITS.groupAnnounce)
     }
 
     if (members.length === 0) return null
@@ -547,6 +547,25 @@ export class GroupsService extends EventEmitter {
       (local.creatorIp.length > 0 && sourceIp === local.creatorIp) ||
       (local.creatorId.length > 0 && senderId === local.creatorId && actorId === local.creatorId)
 
+    const descriptionChanged =
+      incoming.description !== normalizeGroupText(local.description ?? '', LIMITS.groupDescription)
+    const announceChanged =
+      incoming.announce !== normalizeGroupText(local.announce ?? '', LIMITS.groupAnnounce)
+    const textChanged = descriptionChanged || announceChanged
+    const structuralChanged =
+      added.length > 0 ||
+      removed.length > 0 ||
+      nameChanged ||
+      ownerChanged ||
+      adminsChanged ||
+      avatarChanged
+    if (textChanged) {
+      // 每个 rev 只能变更一个文本字段，且文本更新不能夹带成员/角色/名称/头像变更。
+      if (descriptionChanged && announceChanged) return false
+      if (structuralChanged) return false
+      return actorRole === 'owner' || actorRole === 'admin' || passwordCompatible
+    }
+
     if (isSelfLeave(local, incoming)) return true
     if (ownerChanged) return isOwnerLeave(local, incoming)
 
@@ -608,6 +627,10 @@ function normalizeAdminHint(raw: string): string {
   return raw.trim().slice(0, LIMITS.groupAdminHint)
 }
 
+function normalizeGroupText(raw: string, max: number): string {
+  return raw.trim().slice(0, max)
+}
+
 function groupAdminSecretHash(groupId: string, password: string): string {
   return createHash('sha256').update(`${groupId}\n${password}`).digest('hex')
 }
@@ -621,6 +644,8 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
     avatarHash?: unknown
     adminSecretHash?: unknown
     adminHint?: unknown
+    description?: unknown
+    announce?: unknown
   }
   const members = [...new Set(meta.members)].filter((id) => id.length > 0)
   const adminSecretHash = typeof raw.adminSecretHash === 'string' ? raw.adminSecretHash : ''
@@ -646,6 +671,14 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
     typeof raw.avatarHash === 'string'
       ? raw.avatarHash
       : local?.avatarHash ?? ''
+  const description = normalizeGroupText(
+    typeof raw.description === 'string' ? raw.description : local?.description ?? '',
+    LIMITS.groupDescription
+  )
+  const announce = normalizeGroupText(
+    typeof raw.announce === 'string' ? raw.announce : local?.announce ?? '',
+    LIMITS.groupAnnounce
+  )
   return {
     ...meta,
     members,
@@ -661,7 +694,9 @@ function normalizeGroupMeta(meta: GroupMeta, local?: GroupMeta): GroupMeta {
     adminHint:
       adminSecretHash && typeof raw.adminHint === 'string'
         ? normalizeAdminHint(raw.adminHint)
-        : ''
+        : '',
+    description,
+    announce
   }
 }
 

@@ -201,7 +201,7 @@ export const MIGRATIONS: ReadonlyArray<string> = [
   ALTER TABLE messages ADD COLUMN reply_to TEXT;
   `,
 
-  // v16：群简介与群公告（群主/管理员可设置）
+  // v16：群简介与群公告（群主、管理员或正确密码持有者可设置）
   `
   ALTER TABLE groups ADD COLUMN description TEXT NOT NULL DEFAULT '';
   ALTER TABLE groups ADD COLUMN announce TEXT NOT NULL DEFAULT '';

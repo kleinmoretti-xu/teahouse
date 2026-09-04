@@ -17,8 +17,7 @@ import AvatarMark from './AvatarMark.vue'
 import AvatarCropDialog from './AvatarCropDialog.vue'
 import GroupAvatar from './GroupAvatar.vue'
 import GroupInviteDialog from './GroupInviteDialog.vue'
-import GroupDescDialog from './GroupDescDialog.vue'
-import GroupAnnounceDialog from './GroupAnnounceDialog.vue'
+import GroupTextDialog from './GroupTextDialog.vue'
 
 // 群成员面板（ui-design §5）：角色徽标 / 任免管理员 / 移除 / 开放邀请 / 改名 / 退出。
 // 角色权限与管理密码兼容规则统一遵循决议 #241。
@@ -32,8 +31,7 @@ const groupsStore = useGroupsStore()
 const renaming = ref(false)
 const newName = ref('')
 const showInviteDialog = ref(false)
-const showDescDialog = ref(false)
-const showAnnounceDialog = ref(false)
+const textDialogKind = ref<'description' | 'announce' | null>(null)
 const adminPassword = ref('')
 const adminFeedback = ref('')
 const adminBusy = ref(false)
@@ -161,6 +159,27 @@ async function removeMember(id: string): Promise<void> {
   await updateAdmin({ kind: 'remove', memberIds: [id] })
 }
 
+function openTextDialog(kind: 'description' | 'announce'): void {
+  adminFeedback.value = ''
+  textDialogKind.value = kind
+}
+
+function closeTextDialog(): void {
+  if (adminBusy.value) return
+  textDialogKind.value = null
+  adminFeedback.value = ''
+}
+
+async function saveText(value: string): Promise<void> {
+  if (!textDialogKind.value || adminBusy.value) return
+  const action: GroupAdminAction =
+    textDialogKind.value === 'description'
+      ? { kind: 'set-description', description: value }
+      : { kind: 'set-announce', announce: value }
+  const ok = await updateAdmin(action)
+  if (ok) textDialogKind.value = null
+}
+
 async function toggleAdmin(id: string): Promise<void> {
   if (adminBusy.value) return
   const enabled = !props.group.adminIds.includes(id)
@@ -183,7 +202,9 @@ async function updateAdmin(patch: GroupAdminAction): Promise<boolean> {
     return false
   }
 
-  return runUpdate(prepared.patch, props.group.hasAdminPassword ? '密码不正确，请重新输入' : '当前节点没有管理权限')
+  const failureMessage =
+    'adminPassword' in prepared.patch ? '密码不正确，请重新输入' : '群管理操作失败，请稍后重试'
+  return runUpdate(prepared.patch, failureMessage)
 }
 
 async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boolean> {
@@ -198,6 +219,9 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
     }
     groupsStore.byId[updated.groupId] = updated
     return true
+  } catch {
+    adminFeedback.value = failureMessage
+    return false
   } finally {
     adminBusy.value = false
   }
@@ -277,7 +301,7 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
         @keydown.enter="renaming ? rename() : undefined"
       />
     </div>
-    <div v-if="adminFeedback" class="admin-feedback">{{ adminFeedback }}</div>
+    <div v-if="adminFeedback && !textDialogKind" class="admin-feedback">{{ adminFeedback }}</div>
     <ul class="members">
       <li v-for="id in group.members" :key="id">
         <AvatarMark
@@ -325,7 +349,7 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
         v-if="canShowAdmin"
         class="add"
         title="设置群简介"
-        @click="showDescDialog = true"
+        @click="openTextDialog('description')"
       >
         <PantryIcon name="edit" :size="14" />群简介
       </button>
@@ -333,7 +357,7 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
         v-if="canShowAdmin"
         class="add"
         title="设置群公告"
-        @click="showAnnounceDialog = true"
+        @click="openTextDialog('announce')"
       >
         <PantryIcon name="bullhorn" :size="14" />群公告
       </button>
@@ -346,15 +370,14 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
       :group="group"
       @close="showInviteDialog = false"
     />
-    <GroupDescDialog
-      v-if="showDescDialog"
+    <GroupTextDialog
+      v-if="textDialogKind"
       :group="group"
-      @close="showDescDialog = false"
-    />
-    <GroupAnnounceDialog
-      v-if="showAnnounceDialog"
-      :group="group"
-      @close="showAnnounceDialog = false"
+      :kind="textDialogKind"
+      :busy="adminBusy"
+      :error="adminFeedback"
+      @close="closeTextDialog"
+      @save="saveText"
     />
     <AvatarCropDialog
       v-if="avatarSource"
@@ -609,7 +632,7 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
   flex-direction: column;
   gap: 4px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg-list);
   border: 1px solid var(--line);
 }
@@ -620,45 +643,30 @@ async function runUpdate(patch: GroupPatch, failureMessage: string): Promise<boo
   gap: 2px;
 }
 .meta-label {
-  font-size: 10px;
+  font-size: var(--font-xs);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
 .meta-value {
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--text-2);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   flex: 1;
-  overflow-y: auto; /* 垂直滚动 */
+  overflow-y: auto;
 }
-/* 群简介：最大 3 行 */
 .description-text {
-  max-height: calc(1.5em * 3); /* 假设行高 1.5em，3行 */
+  max-height: calc(1.5em * 3);
   line-height: 1.5;
   user-select: text;
 }
 
-/* 群公告：最大 8 行 */
 .announce-text {
-  max-height: calc(1.5em * 6); /* 假设行高 1.5em，8行 */
+  max-height: calc(1.5em * 6);
   line-height: 1.5;
   user-select: text;
-}
-/* 滚动条美化 */
-.meta-value::-webkit-scrollbar {
-  width: 4px;
-}
-
-.meta-value::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 2px;
-}
-
-.meta-value::-webkit-scrollbar-track {
-  background: transparent;
 }
 </style>
